@@ -81,3 +81,29 @@ def test_pages_shortfall_keeps_quiet_when_there_is_nothing_to_compare_with():
     assert pages_shortfall(2, None, None, 20) is None
     assert pages_shortfall(9, 9, 9, 20) is None
     assert pages_shortfall(8, None, 9, 20) is None      # падение 11% — в пределах порога
+
+
+def test_a_zero_drop_threshold_forbids_any_drop_at_all():
+    """Порог 0% — «короче прошлого удачного быть не должно», а не «проверки нет»."""
+    assert pages_shortfall(1, None, 2, 0) is not None
+
+
+def test_a_null_drop_threshold_turns_the_check_off():
+    assert pages_shortfall(1, None, 2, None) is None
+
+
+def test_a_config_ceiling_still_gets_checked_for_a_shortfall(project):
+    """Режим больше не смотрит на потолок из конфига — значит, проверка недобора
+    обязана смотреть туда же. Иначе дыру просто перенесли: прогон зовётся полным,
+    а короче прошлого полного становится молча."""
+    project.data["scrape"]["max_pages_drop_percent"] = 20
+    whole_feed(project)
+    first = run_scrape(project)
+    assert first.pages_fetched == 9 and first.errors == 0
+
+    project.data["scrape"]["max_pages"] = 1
+    second = run_scrape(project)
+
+    assert second.pages_fetched == 1
+    assert second.mode == "full"
+    assert "обход оборвался" in (second.notes or "")

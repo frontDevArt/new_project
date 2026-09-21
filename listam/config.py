@@ -88,3 +88,19 @@ def load_config(
     if not isinstance(raw, dict):
         raise ConfigError(f"Конфиг {path} должен быть отображением ключ→значение")
     return Config(_substitute(raw), env=env, path=path)
+
+_MISSING = object()
+
+
+def threshold(config: Config, key: str, default: Any) -> Any:
+    """Порог из конфига. `null` — выключено (None), число — число, в том числе 0.
+
+    `or default` здесь нельзя: ноль — это заданное значение, и на порогах
+    безопасности он означает самый строгий режим, а не отсутствие проверки.
+    Ключа в конфиге нет — берётся значение по умолчанию: человек про этот порог
+    ничего не сказал, и молча снимать его нельзя.
+    """
+    value = config.get(key, _MISSING)
+    if value is _MISSING:
+        return default
+    return value

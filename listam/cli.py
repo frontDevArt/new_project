@@ -104,6 +104,15 @@ def main(argv: list[str] | None = None) -> int:
                 file=sys.stderr,
             )
             return 2
+        # Бессмысленный ввод отклоняется на входе, а не истолковывается:
+        # ноль страниц раньше проваливался в полный обход длиной в 215 страниц.
+        if args.max_pages is not None and args.max_pages < 1:
+            print(
+                f"--max-pages {args.max_pages} не годится: страниц в обходе должна "
+                "быть хотя бы одна. Полный обход — это команда без --max-pages.",
+                file=sys.stderr,
+            )
+            return 2
         return _scrape(config, max_pages=args.max_pages, dry_run=args.dry_run,
                        allow_shrink=args.allow_shrink, resume=args.resume,
                        allow_upload_with_errors=args.allow_upload_with_errors,

@@ -18,7 +18,7 @@ from pathlib import Path
 from listam.adapters.db_sqlite import from_iso
 from listam.adapters.filenames import drop_wal_sidecars
 from listam.adapters.run_lock import LockBusy
-from listam.config import Config
+from listam.config import Config, threshold
 from listam.domain.coverage import Coverage, rules_from as coverage_rules_from
 from listam.domain.models import Listing, Run
 from listam.domain.money import Money
@@ -167,7 +167,7 @@ def pages_shortfall(
     pages_fetched: int,
     expected_min: int | None,
     previous_pages: int | None,
-    drop_percent: float,
+    drop_percent: float | None,
 ) -> str | None:
     """Недобор страниц: обход кончился заметно раньше, чем должен был.
 
@@ -175,13 +175,16 @@ def pages_shortfall(
     пропавшего пагинатора, записывает проценты рынка, и без этой проверки
     такой прогон выглядит удачным. Сверяемся с явным порогом из конфига и с
     прошлым удачным прогоном: сколько страниц он прошёл — столько их и есть.
+
+    Оба порога выключаются значением `null`. Ноль — это ноль: `drop_percent: 0`
+    значит «короче прошлого удачного быть не должно», а не «не проверяем».
     """
-    if expected_min and pages_fetched < int(expected_min):
+    if expected_min is not None and pages_fetched < int(expected_min):
         return (
             f"обход оборвался: пройдено страниц {pages_fetched}, это меньше порога "
             f"scrape.expected_pages_min = {int(expected_min)}"
         )
-    if previous_pages and drop_percent > 0:
+    if previous_pages and drop_percent is not None:
         floor = int(previous_pages) * (1 - float(drop_percent) / 100)
         if pages_fetched < floor:
             return (
@@ -214,17 +217,22 @@ def resume_start_page(previous: Run | None) -> tuple[int, str | None]:
     return page, f"обход продолжен со страницы {page}"
 
 
-def run_mode(*, fresh: bool, resume: bool, limit: int | None) -> str:
+def run_mode(*, fresh: bool, resume: bool, limit_asked: int | None) -> str:
     """Каким был этот обход. От режима зависит, кому он норма и кого он снимает.
 
-    Полным считается только обход без ограничений: укороченный, продолженный
-    и инкрементальный видели не всю ленту.
+    Полным считается обход, который никто не просил укорачивать: продолженный,
+    инкрементальный и укороченный человеком видели не всю ленту.
+
+    Меркой служит именно `--max-pages`, а не итоговый потолок: `scrape.max_pages`
+    в конфиге — рабочая настройка окружения, и она не должна навсегда выключать
+    пометку снятых и проверку недобора. Недобор такому прогону предъявляется
+    наравне с остальными полными — иначе дыру просто перенесли бы.
     """
     if fresh:
         return "fresh"
     if resume:
         return "resume"
-    if limit is not None:
+    if limit_asked is not None:
         return "partial"
     return "full"
 
@@ -234,7 +242,11 @@ DEFAULT_FRESH_MAX_PAGES = 20     # потолок инкрементальног
 
 
 def incremental_stop(
-    *, pages_without_new: int, threshold: int, pages_fetched: int, ceiling: int
+    *,
+    pages_without_new: int,
+    threshold: int | None,
+    pages_fetched: int,
+    ceiling: int | None,
 ) -> tuple[str | None, bool]:
     """Пора ли кончать инкрементальный обход и честный ли это конец.
 
@@ -245,14 +257,17 @@ def incremental_stop(
 
     Потолок — не конец, а сбой: обход не дошёл до известного, значит часть ленты
     он не видел, и следующим должен идти полный обход.
+
+    Оба порога выключаются значением `null`, а не нулём: порог 0 страниц без
+    новых значит «встань на первой же такой странице», а не «иди без конца».
     """
-    if threshold and pages_without_new >= threshold:
+    if threshold is not None and pages_without_new >= threshold:
         return (
             f"{pages_without_new} страниц подряд без новых объявлений "
             f"(scrape.fresh_stop_after_known_pages = {threshold})",
             False,
         )
-    if ceiling and pages_fetched >= ceiling:
+    if ceiling is not None and pages_fetched >= ceiling:
         return (
             f"инкрементальный обход упёрся в потолок scrape.fresh_max_pages = {ceiling}, "
             f"до известных объявлений он не дошёл — нужен полный обход",
@@ -264,15 +279,23 @@ def incremental_stop(
 DEFAULT_MAX_GONE = 10     # доля активных, которая может пропасть с ленты за один обход
 
 
-def gone_refusal(missing: int, active_total: int, max_percent: float) -> str | None:
+def gone_refusal(
+    missing: int, active_total: int, max_percent: float | None
+) -> str | None:
     """Причина, по которой снятыми не помечается ничего. None — помечаем.
 
     С ленты за час уходит десяток объявлений. Если пропала пятая часть базы,
     объяснение не в рынке: обход не дошёл до конца, уехала вёрстка или в разбор
     попала не та страница. Пометить их снятыми — значит выбросить из работы
     тысячи живых квартир, а вернёт их только следующий удачный обход.
+
+    Три случая порога: `None` — проверки нет (её выключили явным `null`);
+    `0` — пропало хоть что-то, значит сбой; число — допустимая доля.
+    Ноль, прочитанный как «предохранителя нет», стоил бы базы.
     """
-    if not missing or not active_total or max_percent <= 0:
+    if max_percent is None:
+        return None
+    if not missing or not active_total:
         return None
     share = missing / active_total * 100
     if share <= max_percent:
@@ -362,6 +385,15 @@ def _fetch_rate(provider) -> tuple[Rate | None, str]:
     return rate, f"курс {rate.value} ({rate.source}{banks})"
 
 
+def _as_int(value) -> int | None:
+    """Порог числом или None. Выключенный порог остаётся выключенным."""
+    return None if value is None else int(value)
+
+
+def _as_float(value) -> float | None:
+    return None if value is None else float(value)
+
+
 def run_scrape(
     config: Config,
     *,
@@ -385,14 +417,31 @@ def run_scrape(
     ничего нового. Полный обход — сотни страниц и десяток минут; раз в час так
     ходить незачем.
     """
-    limit = max_pages if max_pages is not None else config.get("scrape.max_pages")
-    limit = int(limit) if limit else None
+    # Потолок обхода: флаг сильнее конфига, `null` — «сколько есть».
+    # `int(limit) if limit else None` съедал ноль и превращал `--max-pages 0`
+    # в полный обход: тот записывался меркой полноты и помечал снятых.
+    limit_asked = _as_int(max_pages)
+    limit = limit_asked if limit_asked is not None else _as_int(
+        threshold(config, "scrape.max_pages", None)
+    )
+    if limit is not None and limit < 1:
+        raise ValueError(
+            f"страниц для обхода задано {limit}, а должна быть хотя бы одна. "
+            f"Полный обход — это отсутствие --max-pages (и scrape.max_pages: null), "
+            f"а не ноль."
+        )
     category = config.get("scrape.category", 60)
     base_url = config.get("scrape.base_url") or DEFAULT_BASE_URL
 
-    min_cards = int(config.get("scrape.min_cards_per_page", DEFAULT_MIN_CARDS) or 0)
-    max_cards = int(config.get("scrape.max_cards_per_page", DEFAULT_MAX_CARDS) or 0)
-    hard_limit = int(config.get("scrape.hard_page_limit", DEFAULT_HARD_PAGE_LIMIT) or 0)
+    # Пороги читаются одной меркой: `null` — выключено, число — число, в том
+    # числе 0. `or default` здесь был бы дырой: ноль на пороге безопасности
+    # означает самый строгий режим, а не отсутствие проверки.
+    min_cards = _as_int(threshold(config, "scrape.min_cards_per_page", DEFAULT_MIN_CARDS))
+    max_cards = _as_int(threshold(config, "scrape.max_cards_per_page", DEFAULT_MAX_CARDS))
+    # Исключение из правила: `hard_page_limit: 0` остаётся «выключено».
+    # Это не предохранитель данных, а защита от зацикленного пагинатора, и
+    # «потолок в ноль страниц» не значит ничего, кроме «обхода не будет».
+    hard_limit = _as_int(threshold(config, "scrape.hard_page_limit", DEFAULT_HARD_PAGE_LIMIT))
     rules = rules_from(config)
     coverage = Coverage(coverage_rules_from(config))
 
@@ -400,13 +449,17 @@ def run_scrape(
     started_at = datetime.now(timezone.utc)
     # Режим считается до похода за курсом: прогон, который не начался, тоже
     # должен быть отличим в журнале, а не лежать там безрежимным.
-    mode = run_mode(fresh=fresh, resume=resume, limit=limit)
+    mode = run_mode(fresh=fresh, resume=resume, limit_asked=limit_asked)
     stop_reason = None
-    fresh_threshold = int(config.get("scrape.fresh_stop_after_known_pages",
-                                     DEFAULT_FRESH_STOP_PAGES) or 0)
-    fresh_ceiling = int(config.get("scrape.fresh_max_pages", DEFAULT_FRESH_MAX_PAGES) or 0)
+    fresh_threshold = _as_int(
+        threshold(config, "scrape.fresh_stop_after_known_pages", DEFAULT_FRESH_STOP_PAGES)
+    )
+    fresh_ceiling = _as_int(
+        threshold(config, "scrape.fresh_max_pages", DEFAULT_FRESH_MAX_PAGES)
+    )
     if fresh and limit is not None:
-        fresh_ceiling = min(fresh_ceiling or limit, limit)   # --max-pages опускает потолок
+        # --max-pages опускает потолок: ниже него инкрементальный обход не идёт.
+        fresh_ceiling = limit if fresh_ceiling is None else min(fresh_ceiling, limit)
 
     # Курс — предусловие прогона, а не его счётчик: без него все пересчитанные
     # цены вышли бы пустыми и затёрли бы посчитанное прошлым прогоном.
@@ -525,7 +578,7 @@ def run_scrape(
                         note = f"{note}; страница {page}: {exc}"
                         break
 
-                    if max_cards and len(cards) > max_cards:
+                    if max_cards is not None and len(cards) > max_cards:
                         counters.errors += 1
                         stop_reason = "ошибка обхода"
                         note = (
@@ -534,7 +587,7 @@ def run_scrape(
                             f"Столько лента не отдаёт — похоже, в разбор попала не она"
                         )
                         break
-                    if len(cards) < min_cards:
+                    if min_cards is not None and len(cards) < min_cards:
                         counters.errors += 1
                         stop_reason = "ошибка обхода"
                         note = (
@@ -610,12 +663,15 @@ def run_scrape(
                 # Укороченный обход сверяем с полнотой только тогда, когда его никто
                 # не укорачивал нарочно: с --max-pages и --resume это норма, а не сбой.
                 # Инкрементальный обход укорочен нарочно — недобор ему не предъявляется.
-                if limit is None and not resume and not fresh:
+                if limit_asked is None and not resume and not fresh:
                     shortfall = pages_shortfall(
                         counters.pages_fetched,
-                        config.get("scrape.expected_pages_min"),
+                        _as_int(threshold(config, "scrape.expected_pages_min", None)),
                         previous_success.pages_fetched if previous_success else None,
-                        float(config.get("scrape.max_pages_drop_percent", DEFAULT_MAX_PAGES_DROP) or 0),
+                        _as_float(
+                            threshold(config, "scrape.max_pages_drop_percent",
+                                      DEFAULT_MAX_PAGES_DROP)
+                        ),
                     )
                     if shortfall:
                         counters.errors += 1
@@ -652,7 +708,7 @@ def run_scrape(
                     missing = active - seen_ids
                     refusal = gone_refusal(
                         len(missing), len(active),
-                        float(config.get("scrape.max_gone_percent", DEFAULT_MAX_GONE) or 0),
+                        _as_float(threshold(config, "scrape.max_gone_percent", DEFAULT_MAX_GONE)),
                     )
                     if refusal:
                         counters.errors += 1

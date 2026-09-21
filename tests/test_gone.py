@@ -175,3 +175,37 @@ def test_too_many_missing_listings_stop_the_marking(project, tmp_path):
     database = opened(project)
     assert database.get_listing("24100001").status == "active"
     database.close()
+
+
+def test_a_zero_threshold_forbids_marking_instead_of_allowing_everything():
+    """Порог 0 — это «пропало хоть что-то, значит сбой», а не «предохранителя нет».
+    Выключается порог значением null, а не нулём."""
+    assert gone_refusal(missing=1, active_total=1000, max_percent=0) is not None
+
+
+def test_a_null_threshold_turns_the_guard_off():
+    assert gone_refusal(missing=999, active_total=1000, max_percent=None) is None
+
+
+def test_a_config_ceiling_does_not_switch_off_marking(project, tmp_path):
+    """`max_pages` в конфиге — потолок окружения, а не «человек укоротил обход».
+    Пока каждый прогон partial, снятых не помечает никто и мерки полноты нет."""
+    project.data["scrape"]["max_pages"] = 2      # ровно лента фикстуры
+
+    run = run_scrape(project)
+
+    assert run.mode == "full"
+
+
+def test_a_ceiling_asked_for_on_the_command_line_still_marks_nothing(project, tmp_path):
+    """Обратная дыра: `--max-pages` — это «человек укоротил обход», и такой
+    прогон всей ленты не видел, значит помечать снятых ему нельзя."""
+    run_scrape(project)
+    page = tmp_path / "pages" / FEED_PAGE
+    page.write_text(page.read_text(encoding="utf-8").replace("24100001", "99100001"),
+                    encoding="utf-8")
+
+    run = run_scrape(project, max_pages=2)
+
+    assert run.mode == "partial"
+    assert run.gone_marked == 0

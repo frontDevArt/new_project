@@ -338,3 +338,22 @@ def test_changes_refuse_a_negative_limit(project, capsys):
 
     assert code == 2
     assert "строк" in capsys.readouterr().err
+
+
+def test_scrape_refuses_zero_pages(project, capsys):
+    """`--max-pages 0` — это не «полный обход», а бессмысленный ввод.
+
+    Раньше ноль проваливался в полный обход: он записывался меркой полноты
+    и помечал снятых, хотя человек просил укоротить.
+    """
+    code = run(project, "scrape", "--max-pages", "0")
+
+    assert code == 2
+    assert "хотя бы одна" in capsys.readouterr().err
+
+
+def test_scrape_refuses_a_negative_number_of_pages(project, capsys):
+    code = run(project, "scrape", "--max-pages", "-1")
+
+    assert code == 2
+    assert "хотя бы одна" in capsys.readouterr().err

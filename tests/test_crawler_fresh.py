@@ -165,3 +165,15 @@ def test_fresh_run_records_a_price_change(project, tmp_path):
     run = run_scrape(project, fresh=True)
 
     assert run.price_changed == 1
+
+
+def test_a_zero_stop_threshold_is_not_an_endless_crawl():
+    """Порог 0 страниц без новых — это «встань на первой же такой странице»."""
+    assert incremental_stop(pages_without_new=0, threshold=0,
+                            pages_fetched=1, ceiling=20)[0] is not None
+
+
+def test_a_null_stop_threshold_turns_the_stop_off():
+    """Выключается порог значением null: обход идёт до потолка."""
+    assert incremental_stop(pages_without_new=9, threshold=None,
+                            pages_fetched=1, ceiling=20) == (None, False)

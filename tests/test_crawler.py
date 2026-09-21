@@ -963,3 +963,30 @@ def test_a_finished_crawl_says_why_it_stopped(project):
     run = run_scrape(project)
 
     assert "конец ленты" in run.stop_reason
+
+
+def test_a_zero_hard_page_limit_means_no_ceiling_at_all(project):
+    """Единственный порог, у которого ноль значит «выключено».
+
+    `hard_page_limit` — не предохранитель данных, а защита от зацикленного
+    пагинатора: «ноль страниц потолка» как «встань до первой страницы» не значит
+    ничего, кроме «обхода не будет». Поэтому ноль здесь читается как «без потолка».
+    """
+    project.data["scrape"]["hard_page_limit"] = 0
+
+    run = run_scrape(project)
+
+    assert run.pages_fetched == 2
+    assert "hard_page_limit" not in (run.notes or "")
+
+
+def test_a_crawl_of_zero_pages_is_refused_not_turned_into_a_full_one(project):
+    """`run_scrape` зовут и из кода, не только из командной строки.
+
+    Ноль страниц — это не «ограничения нет»: обход всей ленты под видом
+    укороченного становится меркой полноты и помечает снятых.
+    """
+    with pytest.raises(ValueError) as error:
+        run_scrape(project, max_pages=0)
+
+    assert "хотя бы одна" in str(error.value)
