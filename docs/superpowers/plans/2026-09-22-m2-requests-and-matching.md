@@ -3,7 +3,7 @@
 > **Для агента-исполнителя:** одна фаза — одна сессия. В начале сессии читаешь
 > «Общие ограничения», «Принятые решения» и свою фазу; чужие фазы не трогаешь.
 > В конце сессии дописываешь в этот файл раздел «Результат фазы N» и стартовый
-> промпт для следующей фазы, затем делаешь коммит. Шаги помечены `- [ ]` —
+> промпт для следующей фазы, затем делаешь коммит. Шаги помечены `- [x]` —
 > отмечай по ходу.
 
 **Цель:** брокер заводит заявку покупателя во внешней таблице и получает из базы
@@ -96,7 +96,7 @@
 
 **Produces:** схема 7 — колонки, на которые опираются все последующие фазы.
 
-- [ ] **Шаг 1: падающий тест на версию схемы и колонки**
+- [x] **Шаг 1: падающий тест на версию схемы и колонки**
 
 ```python
 # tests/test_migrations.py — дописать
@@ -116,12 +116,12 @@ def test_migration_007_adds_request_and_match_columns(tmp_path):
     db.close()
 ```
 
-- [ ] **Шаг 2: убедиться, что тест падает**
+- [x] **Шаг 2: убедиться, что тест падает**
 
 Запуск: `.venv/Scripts/python.exe -m pytest -q tests/test_migrations.py -k 007`
 Ожидается: FAIL — `schema_version() == 6`.
 
-- [ ] **Шаг 3: написать миграцию**
+- [x] **Шаг 3: написать миграцию**
 
 ```sql
 -- Версия 7: заявки покупателей и матчи.
@@ -165,13 +165,13 @@ CREATE INDEX IF NOT EXISTS idx_listings_status_district ON listings(status, dist
 CREATE INDEX IF NOT EXISTS idx_requests_status ON requests(status);
 ```
 
-- [ ] **Шаг 4: тест проходит, вся батарея тоже**
+- [x] **Шаг 4: тест проходит, вся батарея тоже**
 
 Запуск: `.venv/Scripts/python.exe -m pytest -q`
 Ожидается: 428 passed, 12 skipped. Если падает `test_docs.py` или тест,
 проверяющий число миграций, — поправь его: это ожидаемое следствие, а не находка.
 
-- [ ] **Шаг 5: накат на копию боевой базы**
+- [x] **Шаг 5: накат на копию боевой базы**
 
 ```bash
 PYTHONIOENCODING=utf-8 .venv/Scripts/python.exe -c "import shutil; shutil.copy('data/listam.sqlite', 'data/listam-before-m2-007.sqlite')"
@@ -182,7 +182,7 @@ PYTHONIOENCODING=utf-8 .venv/Scripts/python.exe -c "import shutil; shutil.copy('
 `SELECT COUNT(*) FROM runs` = 8. Боевую базу `data/listam.sqlite` фаза 1
 **не трогает** — она мигрируется в фазе 7.
 
-- [ ] **Шаг 6: коммит**
+- [x] **Шаг 6: коммит**
 
 ```bash
 git add listam/migrations/007_requests_and_matches.sql tests/test_migrations.py
@@ -242,7 +242,7 @@ class Match:
     cluster_spread_usd: float | None = None
 ```
 
-- [ ] **Шаг 1: падающий тест на растянутый бюджет**
+- [x] **Шаг 1: падающий тест на растянутый бюджет**
 
 ```python
 # tests/test_requests.py
@@ -261,12 +261,12 @@ def test_a_request_without_a_budget_has_no_stretch():
     assert Request().stretch(10) is None
 ```
 
-- [ ] **Шаг 2: убедиться, что тест падает**
+- [x] **Шаг 2: убедиться, что тест падает**
 
 Запуск: `.venv/Scripts/python.exe -m pytest -q tests/test_requests.py`
 Ожидается: FAIL — `ImportError: cannot import name 'Request'`.
 
-- [ ] **Шаг 3: добавить `Request` и `Match` в `listam/domain/models.py`**
+- [x] **Шаг 3: добавить `Request` и `Match` в `listam/domain/models.py`**
 
 ```python
 @dataclass
@@ -288,12 +288,12 @@ class Request:
         return self.budget_max * (1 + float(percent) / 100)
 ```
 
-- [ ] **Шаг 4: тест проходит**
+- [x] **Шаг 4: тест проходит**
 
 Запуск: `.venv/Scripts/python.exe -m pytest -q tests/test_requests.py`
 Ожидается: 3 passed.
 
-- [ ] **Шаг 5: коммит**
+- [x] **Шаг 5: коммит**
 
 ```bash
 git add listam/domain/models.py tests/test_requests.py
@@ -324,7 +324,7 @@ def parse_row(row: dict, row_number: int = 0) -> Request      # бросает R
 def parse_rows(rows: Iterable[dict]) -> tuple[list[Request], list[RequestError]]
 ```
 
-- [ ] **Шаг 1: падающие тесты на нормализацию и на отказы**
+- [x] **Шаг 1: падающие тесты на нормализацию и на отказы**
 
 ```python
 # tests/test_requests.py — дописать
@@ -425,12 +425,12 @@ def test_one_broken_row_does_not_cost_the_others():
     assert "budget_max" in errors[0].render()
 ```
 
-- [ ] **Шаг 2: убедиться, что тесты падают**
+- [x] **Шаг 2: убедиться, что тесты падают**
 
 Запуск: `.venv/Scripts/python.exe -m pytest -q tests/test_requests.py`
 Ожидается: FAIL — модуля `listam.domain.requests` нет.
 
-- [ ] **Шаг 3: написать разбор**
+- [x] **Шаг 3: написать разбор**
 
 ```python
 """Разбор строки заявки: нестрогий по форме, строгий по смыслу.
@@ -629,12 +629,12 @@ def parse_rows(rows: Iterable[dict]) -> tuple[list[Request], list[RequestError]]
     return parsed, errors
 ```
 
-- [ ] **Шаг 4: тесты проходят**
+- [x] **Шаг 4: тесты проходят**
 
 Запуск: `.venv/Scripts/python.exe -m pytest -q tests/test_requests.py`
 Ожидается: все зелёные (около 16 штук).
 
-- [ ] **Шаг 5: коммит**
+- [x] **Шаг 5: коммит**
 
 ```bash
 git add listam/domain/requests.py tests/test_requests.py
@@ -654,7 +654,7 @@ Database.iter_requests(status: str | None = "active") -> Iterator[Request]
 Database.get_request(external_id: str) -> Request | None
 ```
 
-- [ ] **Шаг 1: контрактные тесты (новый метод порта — новый контрактный тест)**
+- [x] **Шаг 1: контрактные тесты (новый метод порта — новый контрактный тест)**
 
 ```python
 # tests/contracts/test_database_contract.py — дописать
@@ -707,12 +707,12 @@ def test_an_unknown_request_is_none_and_not_an_error(db):
     assert db.get_request("R-404") is None
 ```
 
-- [ ] **Шаг 2: убедиться, что тесты падают**
+- [x] **Шаг 2: убедиться, что тесты падают**
 
 Запуск: `.venv/Scripts/python.exe -m pytest -q tests/contracts/test_database_contract.py -k request`
 Ожидается: FAIL — `AttributeError: 'SqliteDatabase' object has no attribute 'upsert_request'`.
 
-- [ ] **Шаг 3: объявить методы в порте и реализовать в адаптере**
+- [x] **Шаг 3: объявить методы в порте и реализовать в адаптере**
 
 В `listam/ports/database.py` — три `@abstractmethod` с теми же сигнатурами
 и docstring на каждую, по образцу соседних методов.
@@ -755,12 +755,12 @@ def _split(raw: str | None, cast=str) -> list:
 `_row_to_request` разбирает списки через `_split(raw)` и `_split(raw, int)`
 для `rooms`, флаги — через `bool(row["no_first_floor"])`, даты — через `from_iso`.
 
-- [ ] **Шаг 4: тесты проходят, батарея целиком**
+- [x] **Шаг 4: тесты проходят, батарея целиком**
 
 Запуск: `.venv/Scripts/python.exe -m pytest -q`
 Ожидается: ~455 passed, 12 skipped.
 
-- [ ] **Шаг 5: коммит**
+- [x] **Шаг 5: коммит**
 
 ```bash
 git add listam/ports/database.py listam/adapters/db_sqlite.py tests/contracts/test_database_contract.py
@@ -769,11 +769,106 @@ git commit -m "feat(db): заявки хранятся, читаются и не
 
 ### Конец фазы 1
 
-- [ ] Дописать в этот файл раздел «Результат фазы 1»: что сделано, числа батареи
+- [x] Дописать в этот файл раздел «Результат фазы 1»: что сделано, числа батареи
       (`passed`/`skipped`), версия схемы, что разошлось с планом и почему.
-- [ ] Дописать стартовый промпт для фазы 2 по шаблону из раздела
+- [x] Дописать стартовый промпт для фазы 2 по шаблону из раздела
       «Шаблон стартового промпта» в конце плана.
-- [ ] `git status --short` — чисто; коммит сделан.
+- [x] `git status --short` — чисто; коммит сделан.
+
+---
+
+## Результат фазы 1
+
+**Сделано.** Схема доехала до 7, заявка стала доменной сущностью, строка
+источника превращается в `Request`, заявки лежат в базе и переживают
+перечитывание.
+
+| Что | Значение |
+| --- | --- |
+| Батарея | **452 passed, 12 skipped** |
+| Схема базы | **7** |
+| Боевая база `data/listam.sqlite` | не тронута, схема 6 — мигрируется в фазе 7 |
+| Копия `data/listam-before-m2-007.sqlite` | схема 7, 20 826 объявлений (20 619 активных), 8 прогонов |
+| Коммиты | `dec4739`, `2712a64`, `4f38e8e`, `0c658be` |
+
+Что появилось:
+
+- `listam/migrations/007_requests_and_matches.sql` — единственная миграция M2:
+  7 колонок в `requests`, 6 в `matches`, `runs.new_matches`, 5 индексов.
+- `Request` и `Match` в `listam/domain/models.py`.
+- `listam/domain/requests.py` — `COLUMNS`, `parse_row`, `parse_rows`,
+  `RequestParseError`, `RequestError`.
+- `Database.upsert_request` / `iter_requests` / `get_request` в порте и в
+  SQLite-адаптере, с контрактными тестами.
+
+### Что разошлось с планом и почему
+
+1. **`_number` из плана не отклонял «примерно 100к», а читал его как 100.**
+   Плановый `NOT_A_NUMBER.sub("", raw)` выбрасывает все нецифровые символы и
+   отдаёт остаток во `float`: «примерно 100к» → `100.0`, «100к» → `100.0`.
+   Тест «бюджет не число — это отказ» проходил случайно, потому что
+   «сколько-то» цифр не содержит вовсе. Это молчаливое занижение бюджета
+   вчетверо — ровно то, что решение 2 спеки запрещает. Разбор переписан
+   наоборот: сначала снимаются украшения (пробелы, `$`, `€`, `₽`, `֏`), затем
+   остаток обязан целиком совпасть с одним из трёх образцов — разряды тысяч,
+   дробное, целое; иначе отказ. Правило «точка с тремя цифрами после неё — это
+   разряд» из плана сохранено. Добавлены два теста: на формы числа и на то, что
+   «100к» до 100 не обрезается. **Это находка, а не смягчение порога.**
+2. **`stretch` считается как `budget_max + budget_max * percent / 100`.**
+   Плановая формула `budget_max * (1 + percent/100)` на 100 000 и 10% даёт
+   `110000.00000000001`, и плановый же тест `== 110_000` на ней падает.
+   Арифметика та же, артефакта нет.
+3. **`test_migrations_005_and_006_...` ослаблен с `== 6` до `>= 6`.**
+   Ожидаемое следствие новой миграции, план это прямо разрешает (задача 1.1,
+   шаг 4).
+4. **452 passed вместо «~455».** Не расхождение, а точная арифметика:
+   427 + 1 (миграция) + 18 (`test_requests.py`: 3 на модель, 15 на разбор,
+   включая 2 добавленных) + 6 (контракт заявок) = 452. Оценка в плане была
+   прикидкой.
+5. **Контрактных тестов заявок шесть, а не пять.** Добавлен
+   `test_rereading_the_same_table_does_not_move_the_update_stamp`: план требует
+   «`unchanged` не двигает `updated_at`» словами в задаче 1.4, шаг 3, но ни
+   один тест этого не проверял — а именно на это опирается будущий дайджест
+   «что изменилось со вчера».
+
+### Стартовый промпт для фазы 2
+
+```
+Ты продолжаешь работу над инструментом мониторинга list.am в C:\Users\Admin\Downloads\list.
+
+Прочитай docs/superpowers/plans/2026-09-22-m2-requests-and-matching.md:
+разделы «Global Constraints», «Карта файлов», «Результат фазы 1» и свою
+«Фазу 2». Чужие фазы не трогай. Спека рядом:
+docs/superpowers/specs/2026-09-22-m2-requests-and-matching-design.md —
+из неё читаются «Принятые решения», они в фазах не пересматриваются.
+
+Исходное состояние: HEAD 0c658be (плюс коммит плана), дерево чистое, батарея
+452 passed, 12 skipped, схема базы 7, боевая база 20 826 объявлений
+(20 619 активных, 207 снятых), прогонов 8. Боевая база ещё на схеме 6 —
+она мигрируется в фазе 7; мигрированная копия лежит в
+data/listam-before-m2-007.sqlite. Заявки уже разбираются
+(listam/domain/requests.py: COLUMNS, parse_row, parse_rows) и уже хранятся
+(Database.upsert_request / iter_requests / get_request), но источника,
+откуда брать строки, ещё нет — в тестах фазы 1 они кладутся руками.
+
+Твоя задача — фаза 2: источник заявок. Порт RequestsSource получает rows()
+и describe(), а разбор и отсев остаются в базовом классе — csv и gsheet
+обязаны давать одну и ту же заявку из одной и той же строки (решение 1).
+Появляются адаптеры csv и gsheet, секция requests в конфиге, сборка
+в wiring, команда listam requests и проверка источника в doctor.
+gsheet пишется сразу, но живьём не проверяется: контрактный тест под skipif,
+как у gdrive (решение 11) — отсюда и новый skipped.
+
+Работай по шагам задач: на каждое поведение — падающий тест ДО правки.
+Тесты гоняй только .venv/Scripts/python.exe -m pytest -q, любой прогон CLI
+из скрипта — только с PYTHONIOENCODING=utf-8. Пороги в конфиге не поднимай.
+Новый метод порта — это новый контрактный тест в tests/contracts/.
+Схему меняет только миграция 007 из фазы 1, новых миграций в M2 нет.
+
+В конце сессии допиши в план раздел «Результат фазы 2»: что сделано, числа
+батареи, что разошлось с планом и почему, и стартовый промпт для фазы 3.
+Сделай коммит.
+```
 
 ---
 
