@@ -1,6 +1,7 @@
 """Реализация Database поверх SQLite. Один файл — вся база, его удобно возить."""
 from __future__ import annotations
 
+import re
 import sqlite3
 from contextlib import contextmanager
 from datetime import datetime, timezone
@@ -325,10 +326,73 @@ def _row_to_run(row: sqlite3.Row) -> Run:
     )
 
 
+# Слова, после которых `;` перестаёт быть концом оператора: тело триггера
+# и ветвление живут внутри своего BEGIN/CASE … END.
+_BLOCK_OPENERS = ("BEGIN", "CASE")
+_WORD = re.compile(r"[A-Za-z_][A-Za-z_0-9]*")
+
+
 def _statements(script: str) -> list[str]:
-    """Режет миграцию на операторы. Комментарии `--` до конца строки выбрасываются."""
-    without_comments = "\n".join(line.split("--", 1)[0] for line in script.splitlines())
-    return [part.strip() for part in without_comments.split(";") if part.strip()]
+    """Режет миграцию на операторы, зная про кавычки и блоки `BEGIN … END`.
+
+    Разрез по каждому `;` резал триггер на огрызки, а `;` внутри строкового
+    литерала — на неверный SQL. Поэтому текст читается посимвольно: внутри
+    кавычек и комментариев точка с запятой ничего не значит, а внутри
+    `BEGIN … END` она разделяет операторы тела, а не саму миграцию.
+    """
+    parts: list[str] = []
+    current: list[str] = []
+    depth = 0
+    index, length = 0, len(script)
+    while index < length:
+        char = script[index]
+        pair = script[index:index + 2]
+
+        if pair == "--":                       # комментарий до конца строки
+            end = script.find("\n", index)
+            index = length if end == -1 else end
+            continue
+        if pair == "/*":
+            end = script.find("*/", index + 2)
+            index = length if end == -1 else end + 2
+            continue
+        if char in "'\"`":                      # литерал или имя в кавычках
+            closing = script.find(char, index + 1)
+            while closing != -1 and script[closing:closing + 2] == char * 2:
+                closing = script.find(char, closing + 2)   # удвоенная кавычка — это она сама
+            closing = length - 1 if closing == -1 else closing
+            current.append(script[index:closing + 1])
+            index = closing + 1
+            continue
+        if char == "[":                        # [имя в скобках] — тоже идентификатор
+            closing = script.find("]", index + 1)
+            closing = length - 1 if closing == -1 else closing
+            current.append(script[index:closing + 1])
+            index = closing + 1
+            continue
+
+        word = _WORD.match(script, index)
+        if word:
+            upper = word.group(0).upper()
+            if upper in _BLOCK_OPENERS:
+                depth += 1
+            elif upper == "END" and depth:
+                depth -= 1
+            current.append(word.group(0))
+            index = word.end()
+            continue
+
+        if char == ";" and depth == 0:
+            parts.append("".join(current))
+            current = []
+            index += 1
+            continue
+
+        current.append(char)
+        index += 1
+
+    parts.append("".join(current))
+    return [part.strip() for part in parts if part.strip()]
 
 
 def _to_int(value: bool | None) -> int | None:

@@ -103,3 +103,62 @@ def test_migration_003_adds_the_amount_in_original_currency(tmp_path):
     }
     assert "price_amount" in columns
     database.close()
+
+
+def test_a_trigger_survives_the_split_into_statements(tmp_path):
+    """Находка 17: `;` внутри BEGIN…END резал триггер на огрызки.
+
+    Разрез по каждому `;` превращал тело триггера в отдельный оператор:
+    миграция падала на первой же половине, а схема оставалась без триггера.
+    """
+    directory = migrations(
+        tmp_path,
+        **{
+            "001_initial.sql": (
+                "CREATE TABLE a (id INTEGER, note TEXT);\n"
+                "CREATE TABLE log (id INTEGER);\n"
+                "CREATE TRIGGER a_logged AFTER INSERT ON a\n"
+                "BEGIN\n"
+                "  INSERT INTO log(id) VALUES (NEW.id);\n"
+                "  UPDATE a SET note = 'записано' WHERE id = NEW.id;\n"
+                "END;\n"
+            )
+        },
+    )
+    database = opened(tmp_path, directory)
+
+    database.migrate()
+
+    database.conn.execute("INSERT INTO a(id) VALUES (7)")
+    assert database.conn.execute("SELECT id FROM log").fetchone()["id"] == 7
+    assert database.schema_version() == 1
+    database.close()
+
+
+def test_a_semicolon_inside_a_literal_is_not_a_statement_break(tmp_path):
+    directory = migrations(
+        tmp_path,
+        **{"001_initial.sql": "CREATE TABLE a (id INTEGER, note TEXT DEFAULT 'раз; два');"},
+    )
+    database = opened(tmp_path, directory)
+
+    database.migrate()
+
+    database.conn.execute("INSERT INTO a(id) VALUES (1)")
+    assert database.conn.execute("SELECT note FROM a").fetchone()["note"] == "раз; два"
+    database.close()
+
+
+def test_two_dashes_inside_a_literal_are_not_a_comment(tmp_path):
+    """`--` в строке — это данные, а не начало комментария."""
+    directory = migrations(
+        tmp_path,
+        **{"001_initial.sql": "CREATE TABLE a (note TEXT DEFAULT 'до -- после');"},
+    )
+    database = opened(tmp_path, directory)
+
+    database.migrate()
+
+    database.conn.execute("INSERT INTO a DEFAULT VALUES")
+    assert database.conn.execute("SELECT note FROM a").fetchone()["note"] == "до -- после"
+    database.close()
