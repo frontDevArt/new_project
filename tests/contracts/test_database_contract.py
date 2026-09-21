@@ -6,7 +6,7 @@ from datetime import datetime, timezone
 import pytest
 
 from listam.adapters.db_sqlite import SqliteDatabase
-from listam.domain.models import Listing
+from listam.domain.models import Listing, Request
 from listam.ports.database import Database
 
 NOW = datetime(2026, 9, 21, 10, 0, tzinfo=timezone.utc)
@@ -591,3 +591,59 @@ def test_a_listing_born_inside_the_window_is_not_a_price_change(db):
     )
 
     assert db.price_changes_since(LATER) == []
+
+
+# --- заявки ---------------------------------------------------------------
+
+def make_request(external_id="R-1", **over) -> Request:
+    fields = dict(
+        external_id=external_id, client_name="Ани", client_phone="+374 00 000000",
+        status="active", budget_max=120_000.0, districts=["Кентрон", "Арабкир"],
+        districts_priority=["Кентрон"], rooms=[2, 3], area_min=60.0, area_max=95.0,
+        floor_min=2, no_first_floor=True,
+    )
+    fields.update(over)
+    return Request(**fields)
+
+
+def test_a_new_request_is_stored_and_read_back_whole(db):
+    assert db.upsert_request(make_request(), NOW) == "new"
+    stored = db.get_request("R-1")
+    assert stored.districts == ["Кентрон", "Арабкир"]
+    assert stored.districts_priority == ["Кентрон"]
+    assert stored.rooms == [2, 3]
+    assert stored.no_first_floor is True
+    assert stored.created_at == NOW
+
+
+def test_the_same_request_read_twice_is_not_a_change(db):
+    db.upsert_request(make_request(), NOW)
+    assert db.upsert_request(make_request(), LATER) == "unchanged"
+
+
+def test_a_changed_request_is_an_update_and_keeps_its_birthday(db):
+    db.upsert_request(make_request(), NOW)
+    assert db.upsert_request(make_request(budget_max=150_000.0), LATER) == "updated"
+    stored = db.get_request("R-1")
+    assert stored.budget_max == 150_000.0
+    assert stored.created_at == NOW
+    assert stored.updated_at == LATER
+
+
+def test_rereading_the_same_table_does_not_move_the_update_stamp(db):
+    """«Не изменилась» значит не изменилась: перечитывание раз в час не имеет
+    права выглядеть как правка всех пятидесяти заявок разом."""
+    db.upsert_request(make_request(), NOW)
+    db.upsert_request(make_request(), LATER)
+    assert db.get_request("R-1").updated_at == NOW
+
+
+def test_only_active_requests_are_iterated_by_default(db):
+    db.upsert_request(make_request("R-1"), NOW)
+    db.upsert_request(make_request("R-2", status="paused"), NOW)
+    assert [item.external_id for item in db.iter_requests()] == ["R-1"]
+    assert len(list(db.iter_requests(status=None))) == 2
+
+
+def test_an_unknown_request_is_none_and_not_an_error(db):
+    assert db.get_request("R-404") is None

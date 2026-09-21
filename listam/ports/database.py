@@ -1,10 +1,10 @@
-"""Порт Database: хранение объявлений, истории цен и журнала прогонов."""
+"""Порт Database: хранение объявлений, истории цен, заявок и журнала прогонов."""
 from __future__ import annotations
 
 from abc import ABC, abstractmethod
 from datetime import datetime
 
-from listam.domain.models import Listing, PricePoint, Run
+from listam.domain.models import Listing, PricePoint, Request, Run
 
 
 class Database(ABC):
@@ -122,6 +122,31 @@ class Database(ABC):
 
     @abstractmethod
     def price_history(self, listing_id: str) -> list[PricePoint]: ...
+
+    @abstractmethod
+    def upsert_request(self, request: Request, now: datetime) -> str:
+        """Возвращает 'new' | 'updated' | 'unchanged'.
+
+        `unchanged` — источник перечитан, а заявка та же. Отметка правки
+        при этом **не двигается**: иначе чтение таблицы раз в час выглядело
+        бы как правка всех пятидесяти заявок разом, и «что изменилось
+        со вчера» перестало бы отвечать на вопрос.
+
+        Дата рождения ставится один раз, при вставке: правка бюджета
+        не делает заявку новой.
+        """
+
+    @abstractmethod
+    def iter_requests(self, status: str | None = "active"):
+        """Заявки в порядке внешнего идентификатора; `status=None` — все.
+
+        По умолчанию только `active`: матчатся они, а `paused` и `closed`
+        лежат в базе ради истории звонков, а не ради новых матчей.
+        """
+
+    @abstractmethod
+    def get_request(self, external_id: str) -> Request | None:
+        """Заявка по внешнему идентификатору; незнакомая — None, а не ошибка."""
 
     @abstractmethod
     def start_run(self, started_at: datetime, rate_amd_per_usd: float | None,

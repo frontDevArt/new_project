@@ -4,11 +4,12 @@ from __future__ import annotations
 import re
 import sqlite3
 from contextlib import contextmanager
+from dataclasses import fields as dataclass_fields
 from datetime import datetime, timezone
 from pathlib import Path
 from typing import Iterator
 
-from listam.domain.models import Listing, PricePoint, Run
+from listam.domain.models import Listing, PricePoint, Request, Run
 from listam.ports.database import Database
 
 MIGRATIONS_DIR = Path(__file__).resolve().parent.parent / "migrations"
@@ -24,6 +25,25 @@ TRACKED_FIELDS = (
     "title", "district", "street", "price_raw", "currency", "price_amount",
     "area", "rooms", "floor", "floors_total", "seller_type", "verified", "new_build",
 )
+
+
+# Поля заявки, изменение которых считаем содержательным: всё, что влияет
+# на матчинг и на разговор с клиентом. `updated_at` и `source_row` сюда
+# не входят — иначе перечитывание одной и той же таблицы каждый час
+# выглядело бы как правка всех пятидесяти заявок разом.
+REQUEST_FIELDS = (
+    "client_name", "client_phone", "status", "budget_max", "budget_stretch",
+    "districts", "districts_priority", "rooms", "area_min", "area_max",
+    "floor_min", "floor_max", "no_first_floor", "no_last_floor",
+    "must_have", "nice_to_have", "floor_rules", "notes",
+)
+
+# Списки в TEXT-колонках: базе они нужны цельными, а не отдельной таблицей —
+# по ним не ищут, их читают вместе с заявкой.
+LIST_FIELDS = ("districts", "districts_priority", "rooms")
+
+FLAG_FIELDS = ("no_first_floor", "no_last_floor")
+
 
 # Цена шевельнулась — это про сырую цену со страницы, а не про пересчёт.
 PRICE_FIELDS = ("price_raw", "currency")
@@ -413,6 +433,63 @@ class SqliteDatabase(Database):
             for r in rows
         ]
 
+    # --- заявки -----------------------------------------------------------
+    def upsert_request(self, request: Request, now: datetime) -> str:
+        values = {name: _request_value(request, name) for name in REQUEST_FIELDS}
+        existing = self.get_request(request.external_id)
+        if existing is None:
+            values["external_id"] = request.external_id
+            values["source_row"] = request.source_row
+            values["created_at"] = to_iso(now)
+            values["updated_at"] = to_iso(now)
+            columns = ", ".join(values)
+            placeholders = ", ".join(f":{name}" for name in values)
+            with self.transaction():
+                self.conn.execute(
+                    f"INSERT INTO requests ({columns}) VALUES ({placeholders})", values
+                )
+            return "new"
+
+        same = all(
+            _normalize(values[name]) == _normalize(_request_value(existing, name))
+            for name in REQUEST_FIELDS
+        )
+        if same:
+            # Ничего не поменялось — отметку правки не двигаем. `source_row`
+            # в сравнение не входит: перестановка колонок в таблице источника
+            # не делает заявку другой.
+            return "unchanged"
+
+        updates = dict(values)
+        updates["source_row"] = request.source_row
+        updates["updated_at"] = to_iso(now)
+        updates["external_id"] = request.external_id
+        assignments = ", ".join(
+            f"{name} = :{name}" for name in updates if name != "external_id"
+        )
+        with self.transaction():
+            self.conn.execute(
+                f"UPDATE requests SET {assignments} WHERE external_id = :external_id",
+                updates,
+            )
+        return "updated"
+
+    def iter_requests(self, status: str | None = "active") -> Iterator[Request]:
+        query = "SELECT * FROM requests"
+        params: tuple = ()
+        if status is not None:
+            query += " WHERE status = ?"
+            params = (status,)
+        query += " ORDER BY external_id"
+        for row in self.conn.execute(query, params):
+            yield _row_to_request(row)
+
+    def get_request(self, external_id: str) -> Request | None:
+        row = self.conn.execute(
+            "SELECT * FROM requests WHERE external_id = ?", (external_id,)
+        ).fetchone()
+        return _row_to_request(row) if row else None
+
     # --- журнал прогонов -------------------------------------------------
     def start_run(self, started_at: datetime, rate_amd_per_usd: float | None,
                   mode: str = "full") -> int:
@@ -628,3 +705,39 @@ def _row_to_listing(row: sqlite3.Row) -> Listing:
     data["gone_at"] = from_iso(data.get("gone_at"))
     data["returned_at"] = from_iso(data.get("returned_at"))
     return Listing(**{k: v for k, v in data.items() if k in Listing.field_names()})
+
+
+def _join(values) -> str | None:
+    """Список в TEXT-колонку. Пустой список и None — одно и то же: «не задано»."""
+    if not values:
+        return None
+    return ",".join(str(value) for value in values)
+
+
+def _split(raw: str | None, cast=str) -> list:
+    if not raw:
+        return []
+    return [cast(part.strip()) for part in raw.split(",") if part.strip()]
+
+
+def _request_value(request: Request, name: str):
+    """Поле заявки в том виде, в каком оно лежит в базе: списки строкой, флаги числом."""
+    value = getattr(request, name)
+    if name in LIST_FIELDS:
+        return _join(value)
+    if name in FLAG_FIELDS:
+        return _to_int(value)
+    return value
+
+
+def _row_to_request(row: sqlite3.Row) -> Request:
+    data = dict(row)
+    data["districts"] = _split(data.get("districts"))
+    data["districts_priority"] = _split(data.get("districts_priority"))
+    data["rooms"] = _split(data.get("rooms"), int)
+    data["no_first_floor"] = bool(data.get("no_first_floor"))
+    data["no_last_floor"] = bool(data.get("no_last_floor"))
+    data["created_at"] = from_iso(data.get("created_at"))
+    data["updated_at"] = from_iso(data.get("updated_at"))
+    known = {f.name for f in dataclass_fields(Request)}
+    return Request(**{k: v for k, v in data.items() if k in known})
