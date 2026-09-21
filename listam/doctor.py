@@ -13,6 +13,8 @@ from pathlib import Path
 from listam.config import Config, threshold
 from listam.crawler import DEFAULT_FRESH_MAX_PAGES, DEFAULT_FRESH_STOP_PAGES, \
     DEFAULT_MAX_GONE, DEFAULT_MAX_PAGES_DROP
+from listam.domain.clustering import DEFAULT_AREA_TOLERANCE
+from listam.domain.scoring import DEFAULT_STRETCH_PERCENT, DEFAULT_WEIGHTS
 from listam.ports.requests_source import EmptyRequestsSource
 from listam.wiring import build_exporter, build_fetcher, build_rate_provider, \
     build_requests_source, build_storage, database_path
@@ -129,6 +131,58 @@ def thresholds_check(config: Config) -> Check:
     return Check(name="Пороги прогона", ok=not harm, details=details, warn=bool(warn))
 
 
+def match_check(config: Config) -> Check:
+    """С чем поедет матчинг: веса факторов, пороги и допуск кластеров.
+
+    Балл 0–100 сам по себе не говорит ничего: «68» складывается из весов,
+    и если вес опечатан или обнулён, человек узнает об этом только по
+    странной витрине. Конфиг `doctor` не правит (решение 7 плана QA M1) —
+    он его показывает.
+    """
+    section = config.section("match")
+    weights = config.section("match.weights") or dict(DEFAULT_WEIGHTS)
+    hot = threshold(config, "match.thresholds.hot", None)
+    digest = threshold(config, "match.thresholds.digest", None)
+    stretch = threshold(config, "match.budget_stretch_percent", DEFAULT_STRETCH_PERCENT)
+    tolerance = threshold(config, "match.cluster.area_tolerance", DEFAULT_AREA_TOLERANCE)
+
+    listed = ", ".join(f"{name} = {_printed(value)}" for name, value in weights.items())
+    details = (f"веса: {listed}; пороги: hot = {_printed(hot)}, "
+               f"digest = {_printed(digest)}; budget_stretch_percent = {_printed(stretch)}; "
+               f"area_tolerance = {_printed(tolerance)}")
+
+    harm: list[str] = []
+    warn: list[str] = []
+
+    if sum(float(value or 0) for value in weights.values()) == 0:
+        harm.append(
+            "все веса по нулю: это не «выключено», а матчинг, который каждому "
+            "объявлению ставит 0 баллов — витрина будет ранжирована ничем"
+        )
+
+    unknown = sorted(set(weights) - set(DEFAULT_WEIGHTS))
+    if unknown:
+        warn.append(
+            f"вес неизвестного фактора не читается ничем и в балл не войдёт: "
+            f"{', '.join(unknown)}"
+        )
+
+    if hot is not None and digest is not None and hot < digest:
+        warn.append(
+            f"hot = {hot} ниже digest = {digest}: «горячим» окажется всё, что попало "
+            f"в дайджест, и немедленным уведомлением станет обычный поток"
+        )
+
+    if not section:
+        warn.append(
+            "секции match в конфиге нет — матчинг поедет на значениях по умолчанию "
+            "из спеки; поправить их будет негде"
+        )
+
+    details = "; ".join([details] + harm + warn)
+    return Check(name="Матчинг", ok=not harm, details=details, warn=bool(warn))
+
+
 def requests_check(config: Config) -> Check:
     """Заработает ли матчинг: есть ли источник заявок и читается ли он.
 
@@ -169,6 +223,7 @@ def run_doctor(config: Config, check_network: bool = True) -> DoctorReport:
     report.add("Конфиг", True, f"{config.path} (APP_ENV={config.env})")
     report.checks.append(thresholds_check(config))
     report.checks.append(requests_check(config))
+    report.checks.append(match_check(config))
 
     # --- хранилище ----------------------------------------------------
     try:

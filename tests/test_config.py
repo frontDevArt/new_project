@@ -5,6 +5,7 @@ from pathlib import Path
 import pytest
 
 from listam.config import ConfigError, load_config, threshold
+from listam.domain.scoring import DEFAULT_WEIGHTS
 
 
 def write_cfg(tmp_path, name, text):
@@ -135,3 +136,39 @@ def test_shipped_configs_keep_every_safety_threshold_off_zero(env, tmp_path, mon
         value = threshold(config, key, "ключа нет")
         assert value != "ключа нет", f"{env}.yaml: порог {key} не задан вовсе"
         assert value != 0, f"{env}.yaml: порог {key} — ноль, это снятый предохранитель"
+
+
+# Секция `match` (фаза 4 M2): веса, пороги и допуск кластеров. Ключ,
+# который читается только кодом, а в поставляемом конфиге отсутствует, —
+# это настройка, о которой человек не узнает: он её не увидит и не поправит.
+MATCH_KEYS = (
+    "match.weights",
+    "match.thresholds.hot",
+    "match.thresholds.digest",
+    "match.budget_stretch_percent",
+    "match.cluster.area_tolerance",
+    "match.limit",
+)
+
+
+@pytest.mark.parametrize("env", ["dev", "prod"])
+def test_shipped_configs_carry_the_whole_match_section(env, tmp_path, monkeypatch):
+    monkeypatch.setenv("GDRIVE_FOLDER", "folder-abc123")
+    monkeypatch.setenv("GDRIVE_CREDENTIALS_FILE", "credentials.json")
+    config = load_config(env=env, config_dir=ROOT / "config",
+                         dotenv_path=tmp_path / ".env")
+
+    for key in MATCH_KEYS:
+        assert threshold(config, key, "ключа нет") != "ключа нет", \
+            f"{env}.yaml: ключ {key} не задан вовсе"
+
+
+@pytest.mark.parametrize("env", ["dev", "prod"])
+def test_shipped_configs_name_every_scoring_factor(env, tmp_path, monkeypatch):
+    """Вес, которого нет в конфиге, не читается ничем: фактор молча пропадает."""
+    monkeypatch.setenv("GDRIVE_FOLDER", "folder-abc123")
+    monkeypatch.setenv("GDRIVE_CREDENTIALS_FILE", "credentials.json")
+    config = load_config(env=env, config_dir=ROOT / "config",
+                         dotenv_path=tmp_path / ".env")
+
+    assert set(config.section("match.weights")) == set(DEFAULT_WEIGHTS)

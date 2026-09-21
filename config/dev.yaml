@@ -35,6 +35,22 @@ requests:
   # credentials_file: ${GDRIVE_CREDENTIALS_FILE}
   # range: A1:Z1000                   # сколько строк листа читаем
 
+match:                          # движок подбора: `python -m listam match`
+  weights:                      # веса факторов, сумма значения не имеет
+    budget: 30                  # попадание в бюджет
+    district: 20                # район: приоритетный выше просто допустимого
+    price_per_sqm: 20           # выгодность против медианы района
+    area_rooms: 15              # площадь и комнаты
+    floor: 10                   # штраф за первый и последний, если клиент против
+    seller_type: 5              # собственник выше агентства
+  thresholds:
+    hot: 70                     # немедленное уведомление (заработает на M3)
+    digest: 40                  # дневной дайджест
+  budget_stretch_percent: 10    # на столько растягиваем бюджет, если заявка молчит
+  cluster:
+    area_tolerance: 2           # м²: на столько могут разойтись обмеры одной квартиры
+  limit: 50                     # сколько строк показывает `matches`
+
 export:
   kind: xlsx_local
   path: ./out

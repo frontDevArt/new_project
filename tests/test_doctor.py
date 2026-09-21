@@ -218,3 +218,75 @@ def test_a_source_without_active_requests_is_a_warning(tmp_path):
     assert report.ok is True
     assert source(report).warn is True
     assert "матчить нечего" in source(report).details
+
+
+# --- матчинг (фаза 4 M2) ----------------------------------------------
+# Веса и пороги — территория человека, и `doctor` их не правит (решение 7
+# плана QA M1). Но показать, с чем поедет матчинг, он обязан: балл 0–100
+# ничего не говорит о том, из чего он сложился.
+
+MATCH = {
+    "weights": {"budget": 30, "district": 20, "price_per_sqm": 20,
+                "area_rooms": 15, "floor": 10, "seller_type": 5},
+    "thresholds": {"hot": 70, "digest": 40},
+    "budget_stretch_percent": 10,
+    "cluster": {"area_tolerance": 2},
+    "limit": 50,
+}
+
+
+def matching(report):
+    return next(c for c in report.checks if "матчинг" in c.name.lower())
+
+
+def test_doctor_shows_the_matching_weights_and_thresholds(tmp_path):
+    report = run_doctor(cfg(tmp_path, match=dict(MATCH)), check_network=False)
+    line = matching(report)
+
+    assert line.ok is True and line.warn is False
+    assert "70" in line.details and "40" in line.details
+    assert "budget = 30" in line.details
+
+
+def test_a_hot_threshold_below_the_digest_one_is_a_warning(tmp_path):
+    broken = dict(MATCH, thresholds={"hot": 30, "digest": 40})
+    report = run_doctor(cfg(tmp_path, match=broken), check_network=False)
+
+    assert matching(report).warn or not matching(report).ok
+
+
+def test_zero_weights_everywhere_is_a_failure_not_a_silent_zero_score(tmp_path):
+    # Ноль значит ноль: все веса по нулю — это не «выключено», это матчинг,
+    # который всегда отдаёт 0 баллов. Такое надо показать, а не проглотить.
+    zeroed = dict(MATCH, weights={key: 0 for key in MATCH["weights"]})
+    report = run_doctor(cfg(tmp_path, match=zeroed), check_network=False)
+
+    assert report.ok is False
+    assert matching(report).ok is False
+
+
+def test_a_missing_match_section_falls_back_to_the_spec_defaults(tmp_path):
+    """Секции нет — матчинг работает на значениях спеки, но человек об этом знает."""
+    report = run_doctor(cfg(tmp_path), check_network=False)
+    line = matching(report)
+
+    assert line.ok is True
+    assert line.warn is True
+    assert "по умолчанию" in line.details
+
+
+def test_a_zero_area_tolerance_is_listed_and_not_read_as_off(tmp_path):
+    """Ноль в допуске — рабочая настройка «площади обязаны совпадать», и её видно."""
+    strict = dict(MATCH, cluster={"area_tolerance": 0})
+    report = run_doctor(cfg(tmp_path, match=strict), check_network=False)
+
+    assert "area_tolerance = 0" in matching(report).details
+
+
+def test_an_unknown_weight_is_a_warning_because_nothing_will_read_it(tmp_path):
+    """Опечатка в имени фактора молча выбрасывает его вес из балла."""
+    typo = dict(MATCH, weights=dict(MATCH["weights"], distrikt=20))
+    report = run_doctor(cfg(tmp_path, match=typo), check_network=False)
+
+    assert matching(report).warn is True
+    assert "distrikt" in matching(report).details
