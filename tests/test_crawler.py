@@ -756,3 +756,16 @@ def test_cloudflare_stub_served_with_code_200_is_a_failed_run(project):
     assert run.listings_seen == 0
     assert run.errors >= 1
     assert "Cloudflare" in (run.notes or "")
+
+
+def test_apply_rate_keeps_zero_price(monkeypatch):
+    """ВЫСОКИЙ 12: ноль — это цена, а не «не смог посчитать»."""
+    from listam.crawler import apply_rate
+    from listam.domain.models import Listing
+
+    listing = Listing(id="1", url="u", price_raw="0 $", currency="USD", price_usd=0.0)
+
+    apply_rate(listing, 363.25)
+
+    assert listing.price_usd == 0.0
+    assert listing.price_amd == 0.0

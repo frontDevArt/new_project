@@ -46,25 +46,50 @@ class Money:
         return None
 
 
-def _detect_currency(text: str) -> str | None:
+def _detect_currency(text: str, near: tuple[int, int] | None = None) -> str | None:
+    """Валюта цены. Знаков в строке бывает больше одного — берём ближайший к числу.
+
+    «23 800 000 ֏ (около $ 65 000)» — это драмы: доллары здесь чужие, они
+    стоят у другого числа. Перебор словаря по порядку отдал бы доллары.
+    """
     lowered = text.lower()
+    best: str | None = None
+    closest: int | None = None
     for sign, code in CURRENCY_SIGNS.items():
-        if sign in lowered:
-            return code
-    return None
+        start = lowered.find(sign)
+        while start != -1:
+            distance = _distance((start, start + len(sign)), near)
+            if closest is None or distance < closest:
+                best, closest = code, distance
+            start = lowered.find(sign, start + 1)
+    return best
 
 
-def _to_number(digits: str) -> float | None:
-    """Убирает разделители тысяч. На сайте встречаются пробел, запятая и точка."""
+def _distance(span: tuple[int, int], other: tuple[int, int] | None) -> int:
+    if other is None:
+        return 0
+    return max(other[0] - span[1], span[0] - other[1], 0)
+
+
+def to_number(digits: str | None) -> float | None:
+    """Разделители тысяч и дробная часть. На сайте бывают пробел, запятая и точка.
+
+    Решает позиция **последнего** разделителя: если за ним одна-две цифры —
+    это дробная часть, всё остальное разрядные разделители; если три и больше —
+    разрядные все. Счётчик точек так не годится: в «123,456,789.00» точка одна,
+    но она не разрядная.
+    """
+    if digits is None:
+        return None
     cleaned = re.sub(r"[\s  ']", "", digits)
-    # Разделители тысяч в группах по три: 59.500.000, 48,500,000
-    if re.fullmatch(r"\d{1,3}([.,]\d{3})+", cleaned):
-        cleaned = re.sub(r"[.,]", "", cleaned)
+    if not re.fullmatch(r"\d+([.,]\d+)*", cleaned):
+        return None
+    last = max(cleaned.rfind(","), cleaned.rfind("."))
+    if last != -1 and len(cleaned) - last - 1 <= 2:
+        whole = re.sub(r"[.,]", "", cleaned[:last])
+        cleaned = f"{whole}.{cleaned[last + 1:]}"
     else:
-        # Единственная точка/запятая с одним-двумя знаками — дробная часть
-        cleaned = cleaned.replace(",", ".")
-        if cleaned.count(".") > 1:
-            cleaned = cleaned.replace(".", "")
+        cleaned = re.sub(r"[.,]", "", cleaned)
     try:
         return float(cleaned)
     except ValueError:
@@ -77,7 +102,7 @@ def parse_price(raw: str | None) -> Money:
     match = NUMBER.search(raw)
     if not match:
         return Money(raw=raw, amount=None, currency=None)
-    amount = _to_number(match.group(0))
+    amount = to_number(match.group(0))
     if amount is None:
         return Money(raw=raw, amount=None, currency=None)
-    return Money(raw=raw, amount=amount, currency=_detect_currency(raw))
+    return Money(raw=raw, amount=amount, currency=_detect_currency(raw, match.span()))

@@ -56,8 +56,11 @@ def apply_rate(listing: Listing, rate_amd_per_usd: float | None) -> Listing:
     """
     amount = listing.price_usd if listing.currency == "USD" else listing.price_amd
     money = Money(raw=listing.price_raw, amount=amount, currency=listing.currency)
-    listing.price_usd = money.to_usd(rate_amd_per_usd) or listing.price_usd
-    listing.price_amd = money.to_amd(rate_amd_per_usd) or listing.price_amd
+    recomputed_usd = money.to_usd(rate_amd_per_usd)
+    recomputed_amd = money.to_amd(rate_amd_per_usd)
+    # Явная проверка на None, а не `or`: ноль — это цена, и она не «не смог».
+    listing.price_usd = recomputed_usd if recomputed_usd is not None else listing.price_usd
+    listing.price_amd = recomputed_amd if recomputed_amd is not None else listing.price_amd
     if listing.price_usd is not None and listing.area:
         listing.price_per_sqm = round(listing.price_usd / listing.area, 2)
     return listing

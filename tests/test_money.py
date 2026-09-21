@@ -1,7 +1,7 @@
 """Разбор цен с list.am: цены встречаются и в долларах, и в драмах."""
 import pytest
 
-from listam.domain.money import Money, parse_price
+from listam.domain.money import Money, parse_price, to_number
 
 
 @pytest.mark.parametrize(
@@ -50,3 +50,35 @@ def test_to_amd_uses_rate_for_usd_prices():
 
 def test_unknown_currency_does_not_convert():
     assert parse_price("1 500 000 ₽").to_usd(rate_amd_per_usd=385.0) is None
+
+
+# --- L1: знаков в строке бывает больше одного ---
+
+def test_currency_is_the_sign_that_stands_next_to_the_number():
+    """Два знака в одной цене — берём тот, что у числа, а не первый по словарю."""
+    assert parse_price("23 800 000 ֏ (около $ 65 000)").currency == "AMD"
+    assert parse_price("$ 65 000 (это 23 800 000 ֏)").currency == "USD"
+
+
+def test_a_single_sign_is_found_wherever_it_stands():
+    assert parse_price("23 800 000 ֏").currency == "AMD"
+    assert parse_price("$132,000").currency == "USD"
+    assert parse_price("132 000 долл.").currency == "USD"
+
+
+# --- СРЕДНИЙ 11: разряды и дробная часть по позиции последнего разделителя ---
+
+@pytest.mark.parametrize(
+    "raw, expected",
+    [
+        ("290,000", 290000.0),
+        ("33 912 000", 33912000.0),
+        ("1.200", 1200.0),
+        ("56,5", 56.5),
+        ("1,250", 1250.0),
+        ("123,456,789.00", 123456789.0),
+        ("12.345.678", 12345678.0),
+    ],
+)
+def test_to_number_separators(raw, expected):
+    assert to_number(raw) == expected
