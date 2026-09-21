@@ -893,7 +893,7 @@ RequestsSource.active_requests() -> list[Request]   # реализован в б
 RequestsSource.read() -> tuple[list[Request], list[RequestError]]  # реализован в базовом классе
 ```
 
-- [ ] **Шаг 1: контрактный тест порта**
+- [x] **Шаг 1: контрактный тест порта**
 
 ```python
 """Контрактный тест порта RequestsSource: одинаков для любой реализации."""
@@ -973,12 +973,12 @@ def test_reading_twice_gives_the_same_thing(source):
     assert [item.external_id for item in first] == [item.external_id for item in second]
 ```
 
-- [ ] **Шаг 2: убедиться, что тест падает**
+- [x] **Шаг 2: убедиться, что тест падает**
 
 Запуск: `.venv/Scripts/python.exe -m pytest -q tests/contracts/test_requests_source_contract.py`
 Ожидается: FAIL — `listam.adapters.requests_csv` не существует.
 
-- [ ] **Шаг 3: переписать порт**
+- [x] **Шаг 3: переписать порт**
 
 ```python
 """Порт RequestsSource: откуда берутся заявки покупателей.
@@ -1024,7 +1024,7 @@ class EmptyRequestsSource(RequestsSource):
         return "источник заявок не настроен (requests.kind: none)"
 ```
 
-- [ ] **Шаг 4: написать `listam/adapters/requests_csv.py`**
+- [x] **Шаг 4: написать `listam/adapters/requests_csv.py`**
 
 ```python
 """Заявки из CSV-файла: отладочный источник и он же запасной для боевого.
@@ -1062,7 +1062,7 @@ class CsvRequestsSource(RequestsSource):
         return f"CSV: {self.path}"
 ```
 
-- [ ] **Шаг 5: написать `listam/adapters/requests_gsheet.py`**
+- [x] **Шаг 5: написать `listam/adapters/requests_gsheet.py`**
 
 ```python
 """Заявки из Google Sheet: брокер ведёт таблицу руками, скрипт её читает.
@@ -1128,12 +1128,12 @@ class GSheetRequestsSource(RequestsSource):
         return f"Google Sheet: {self.sheet_id}"
 ```
 
-- [ ] **Шаг 6: тесты проходят**
+- [x] **Шаг 6: тесты проходят**
 
 Запуск: `.venv/Scripts/python.exe -m pytest -q tests/contracts/test_requests_source_contract.py`
 Ожидается: 12 passed, 6 skipped (шесть тестов параметра `gsheet`).
 
-- [ ] **Шаг 7: коммит**
+- [x] **Шаг 7: коммит**
 
 ```bash
 git add listam/ports/requests_source.py listam/adapters/requests_csv.py listam/adapters/requests_gsheet.py tests/contracts/test_requests_source_contract.py
@@ -1146,7 +1146,7 @@ git commit -m "feat(requests): порт отдаёт строки, разбор 
 - Изменить: `listam/wiring.py`, `config/dev.yaml`, `config/prod.yaml`, `.env.example`
 - Тест: `tests/test_wiring.py`, `tests/test_config.py`
 
-- [ ] **Шаг 1: падающие тесты на сборку**
+- [x] **Шаг 1: падающие тесты на сборку**
 
 ```python
 # tests/test_wiring.py — дописать
@@ -1180,12 +1180,12 @@ def test_an_unknown_requests_kind_names_the_options():
 (`make_config` — вспомогательная функция, которая уже есть в `tests/test_wiring.py`;
 если её там нет, собери `Config(data, env="test", path=Path("config/test.yaml"))`.)
 
-- [ ] **Шаг 2: убедиться, что тесты падают**
+- [x] **Шаг 2: убедиться, что тесты падают**
 
 Запуск: `.venv/Scripts/python.exe -m pytest -q tests/test_wiring.py -k requests`
 Ожидается: FAIL — `UnknownAdapter: requests.kind = 'csv'`.
 
-- [ ] **Шаг 3: дописать `build_requests_source`**
+- [x] **Шаг 3: дописать `build_requests_source`**
 
 ```python
 def build_requests_source(config: Config) -> RequestsSource:
@@ -1213,7 +1213,7 @@ def build_requests_source(config: Config) -> RequestsSource:
     raise _unknown("requests", kind, ["none", "csv", "gsheet"])
 ```
 
-- [ ] **Шаг 4: конфиги**
+- [x] **Шаг 4: конфиги**
 
 В `config/dev.yaml` секция `requests` становится:
 
@@ -1233,12 +1233,12 @@ requests:
 `.env.example`: под `REQUESTS_SHEET=` дописать комментарий, что ключ сервисного
 аккаунта берётся из `GDRIVE_CREDENTIALS_FILE`.
 
-- [ ] **Шаг 5: тесты проходят**
+- [x] **Шаг 5: тесты проходят**
 
 Запуск: `.venv/Scripts/python.exe -m pytest -q`
 Ожидается: ~467 passed, 18 skipped.
 
-- [ ] **Шаг 6: коммит**
+- [x] **Шаг 6: коммит**
 
 ```bash
 git add listam/wiring.py config/dev.yaml config/prod.yaml .env.example tests/test_wiring.py
@@ -1269,7 +1269,7 @@ class SyncReport:
 def run_requests_sync(config) -> SyncReport
 ```
 
-- [ ] **Шаг 1: падающие тесты**
+- [x] **Шаг 1: падающие тесты**
 
 ```python
 # tests/test_requests_sync.py
@@ -1312,12 +1312,12 @@ def test_a_missing_file_is_an_error_and_the_base_is_untouched(tmp_path, csv_conf
 и `storage.directory` в `tmp_path`, `requests.kind: csv`, `requests.path` —
 на написанный тестом файл. Пороги в фикстурах те же, что в `config/dev.yaml`.
 
-- [ ] **Шаг 2: убедиться, что тесты падают**
+- [x] **Шаг 2: убедиться, что тесты падают**
 
 Запуск: `.venv/Scripts/python.exe -m pytest -q tests/test_requests_sync.py`
 Ожидается: FAIL — модуля `listam.requests_sync` нет.
 
-- [ ] **Шаг 3: написать `listam/requests_sync.py`**
+- [x] **Шаг 3: написать `listam/requests_sync.py`**
 
 Логика: собрать источник и базу через `wiring`; скачать базу из хранилища,
 если локальной копии нет (как делает `_export` в `cli.py`); проверить, что
@@ -1328,7 +1328,7 @@ def test_a_missing_file_is_an_error_and_the_base_is_untouched(tmp_path, csv_conf
 обратно в хранилище, если что-то изменилось. Отклонённые — в `report.rejected`,
 `errors` при этом ноль (решение 2).
 
-- [ ] **Шаг 4: подключить к CLI**
+- [x] **Шаг 4: подключить к CLI**
 
 В `build_parser`:
 
@@ -1356,14 +1356,14 @@ def _requests(config) -> int:
 через `RequestError.render()`, каждая с новой строки под заголовком
 `⚠ Не разобрано: N` — без `None` в тексте (правило, добытое F-09 в M1).
 
-- [ ] **Шаг 5: строка в `doctor`**
+- [x] **Шаг 5: строка в `doctor`**
 
 Новая проверка `requests_check(config)`: собирает источник, зовёт `describe()`,
 пробует `rows()`. `kind: none` — это `OK` с текстом «источник не настроен,
 матчинг работать не будет» и `warn=True`. Недоступный источник — `СБОЙ`.
 Живой — `OK` с числом строк и числом неразобранных (неразобранные — `warn`).
 
-- [ ] **Шаг 6: батарея и живой прогон**
+- [x] **Шаг 6: батарея и живой прогон**
 
 ```bash
 .venv/Scripts/python.exe -m pytest -q
@@ -1379,7 +1379,7 @@ PYTHONIOENCODING=utf-8 .venv/Scripts/python.exe -m listam requests
 на временной базе (`APP_ENV` с конфигом, чей `storage.work_dir` — во временной
 папке). Боевую базу фаза 2 не трогает.
 
-- [ ] **Шаг 7: коммит**
+- [x] **Шаг 7: коммит**
 
 ```bash
 git add listam/requests_sync.py listam/cli.py listam/doctor.py tests/test_requests_sync.py tests/test_doctor.py
@@ -1388,10 +1388,131 @@ git commit -m "feat(cli): команда requests читает источник,
 
 ### Конец фазы 2
 
-- [ ] Раздел «Результат фазы 2» в этот файл: числа батареи, сколько скипов
+- [x] Раздел «Результат фазы 2» в этот файл: числа батареи, сколько скипов
       добавил `gsheet`, что разошлось с планом.
-- [ ] Стартовый промпт для фазы 3.
-- [ ] Коммит, `git status --short` — чисто.
+- [x] Стартовый промпт для фазы 3.
+- [x] Коммит, `git status --short` — чисто.
+
+## Результат фазы 2
+
+**Сделано.** У заявок появился источник. Порт отдаёт строки, разбор остался
+один на всех, `csv` и `gsheet` собираются конфигом, команда `listam requests`
+читает таблицу и кладёт разобранное в базу, `doctor` говорит, заработает ли
+матчинг.
+
+| Что | Значение |
+| --- | --- |
+| Батарея | **487 passed, 18 skipped** |
+| Скипов добавил `gsheet` | **6** (12 → 18): шесть контрактных тестов под `skipif` |
+| Схема базы | 7, новых миграций нет |
+| Боевая база `data/listam.sqlite` | не тронута, схема 6 — мигрируется в фазе 7 |
+| Коммиты | `c71cf57`, `b648979`, `56ebf2c` |
+
+Что появилось:
+
+- `listam/ports/requests_source.py` — `rows()` и `describe()` абстрактные,
+  `read()` и `active_requests()` реализованы в базовом классе через
+  `parse_rows` (решение 1).
+- `listam/adapters/requests_csv.py` (`CsvRequestsSource`, `MissingRequestsFile`)
+  и `listam/adapters/requests_gsheet.py` (`GSheetRequestsSource`,
+  `GSheetUnavailable`).
+- `tests/contracts/test_requests_source_contract.py` — 6 тестов × 3 параметра.
+- `build_requests_source` в `listam/wiring.py` собирает `none`/`csv`/`gsheet`;
+  секция `requests` в `config/dev.yaml` (`kind: csv`) и `config/prod.yaml`
+  (`kind: none`, закомментированный блок `gsheet`).
+- `listam/requests_sync.py` — `SyncReport` и `run_requests_sync`.
+- `listam requests` в `listam/cli.py`, `requests_check` в `listam/doctor.py`.
+- `config/requests.example.csv` — образец таблицы заявок.
+
+**Живой прогон** (временная база в scratchpad, боевая не тронута): таблица из
+двух строк, одна с `budget_max = «примерно 100к»`. Первый прогон — «новых 1»,
+`⚠ Не разобрано: 1` с названной колонкой и значением, код 0. Второй прогон —
+«без изменений 1», заливки нет. `doctor` — жёлтая строка «Источник заявок» с
+числом заявок и текстом отказа, код 0.
+
+### Что разошлось с планом и почему
+
+1. **`config/dev.yaml` с `kind: csv` делал `listam doctor` красным на чистом
+   клоне.** Плановая секция указывает на `./data/requests.csv`, а `data/`
+   целиком в `.gitignore` — файла нет ни у кого, кто только что склонировал
+   репозиторий, и настроенный-но-недоступный источник по спеке это сбой
+   (и остаётся сбоем: смягчать нечего). Заведён образец
+   `config/requests.example.csv` — он вне `data/` и коммитится; комментарий
+   в `dev.yaml` говорит, что его надо скопировать. **Это находка плана,
+   а не смягчение проверки.**
+2. **В `doctor` добавлено предупреждение «активных заявок нет».** План называет
+   три исхода проверки (`none` — ⚠, недоступен — СБОЙ, живой — OK). Четвёртый
+   исход — таблица читается, но активных заявок в ней ноль — по плану был бы
+   зелёным, и человек узнал бы про пустой матчинг только по пустой витрине.
+   Это ровно тот же смысл, что у `kind: none`, и помечается так же.
+3. **Заявки пишутся не «в одной транзакции».** Шаг 3 задачи 2.3 просит обернуть
+   запись одной транзакцией, но `upsert_request` из фазы 1 открывает свою
+   транзакцию на каждый вызов, а вложенный `BEGIN` sqlite не допускает.
+   Атомарна каждая заявка по отдельности; разбор целиком происходит до записи,
+   поэтому «полтаблицы записалось, полтаблицы нет из-за опечатки» невозможно.
+4. **Чтение заявок берёт замок прогона и заливает базу как `recheck`,
+   а не как `export`.** План отсылает к `_export` («скачать, если локальной
+   копии нет»), но `export` только читает, а `requests` пишет в общую базу.
+   Взята схема `recheck`: `build_run_lock` → `take_the_fresher_copy` →
+   запись → снимок → `rotate_backups` → `upload`. Без замка чтение заявок
+   соревновалось бы с идущим обходом за один файл.
+5. **Источник читается до базы.** Спека требует «источник недоступен — база не
+   трогается»; чтобы это было буквально так, `source.read()` стоит раньше
+   замка и подключения. Отсюда усиленные тесты: при недоступном источнике и
+   при уехавшем формате файла базы не существует вовсе.
+6. **487 passed вместо «~475».** 452 + 12 (контракт: 18 тестов, 6 под skip)
+   + 4 (`test_wiring.py`) + 11 (`test_requests_sync.py`) + 5 (`test_doctor.py`)
+   + 3 (`test_cli.py`) = 487. Тестов в задачах 2.3 написано больше плановых
+   пяти: добавлены «источник назван в отчёте», «правка заявки — это updated»,
+   «отклонённая заявка в базу не попала», «пустая таблица — не ошибка»,
+   «`kind: none` не падает», «в отчёте нет `None`».
+7. **Заголовок фазы обещал «13 skipped», шаги задачи 2.1 — «6 skipped».**
+   Правы шаги: параметр `gsheet` даёт по скипу на каждый из шести контрактных
+   тестов, итого 12 + 6 = 18. Число в заголовке фазы было прикидкой; в фазах
+   3–6 оно уже написано верно (18).
+
+### Стартовый промпт для фазы 3
+
+```
+Ты продолжаешь работу над инструментом мониторинга list.am в C:\Users\Admin\Downloads\list.
+
+Прочитай docs/superpowers/plans/2026-09-22-m2-requests-and-matching.md:
+разделы «Global Constraints», «Карта файлов», «Результат фазы 1»,
+«Результат фазы 2» и свою «Фазу 3». Чужие фазы не трогай. Спека рядом:
+docs/superpowers/specs/2026-09-22-m2-requests-and-matching-design.md —
+из неё читаются «Принятые решения», они в фазах не пересматриваются.
+
+Исходное состояние: HEAD на коммите отчёта фазы 2, дерево чистое, батарея
+487 passed, 18 skipped, схема базы 7, новых миграций в M2 нет. Боевая база
+20 826 объявлений (20 619 активных, 207 снятых), прогонов 8, ещё на схеме 6 —
+она мигрируется в фазе 7; мигрированная копия лежит в
+data/listam-before-m2-007.sqlite. Улица заполнена у 16 602 из 20 826 (79,7%) —
+это основание решения 4: объявление без улицы в кластер не сливается.
+
+Заявки уже читаются целиком: порт RequestsSource отдаёт rows() и describe(),
+разбор общий в listam/domain/requests.py, адаптеры csv и gsheet собираются
+конфигом (build_requests_source), команда listam requests кладёт заявки
+в базу, doctor показывает строку «Источник заявок». Кластеров ещё нет:
+listings.cluster_id пуст у всех 20 826.
+
+Твоя задача — фаза 3: дедуп кластеров. Домен listam/domain/clustering.py
+(чистые функции, без базы и без сети), методы базы для cluster_id с
+контрактными тестами, команда listam cluster со сводкой. Ключ и допуск ±2 м² —
+по решениям 4 и 5 спеки: допуск это объединение соседних площадей внутри
+группы, а не бакет; объявление без улицы, района или площади получает кластер
+из самого себя.
+
+Работай по шагам задач: на каждое поведение — падающий тест ДО правки.
+Тесты гоняй только .venv/Scripts/python.exe -m pytest -q, любой прогон CLI
+из скрипта — только с PYTHONIOENCODING=utf-8. Пороги в конфиге не поднимай.
+Новый метод порта — это новый контрактный тест в tests/contracts/.
+Схему меняет только миграция 007 из фазы 1, новых миграций в M2 нет.
+Боевую базу фаза 3 не трогает: пробуй на копии.
+
+В конце сессии допиши в план раздел «Результат фазы 3»: что сделано, числа
+батареи, что разошлось с планом и почему, и стартовый промпт для фазы 4.
+Сделай коммит.
+```
 
 ---
 
