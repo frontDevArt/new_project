@@ -910,3 +910,56 @@ def test_unopenable_database_is_a_run_error_not_a_traceback(project):
     assert run.errors == 1
     assert "файл базы недоступен" in run.notes
     assert not run_lock_path(project).exists()
+
+
+def test_a_full_crawl_is_written_down_as_full(project):
+    run_scrape(project)
+
+    database = opened(project)
+    stored = database.last_run()
+    database.close()
+    assert stored.mode == "full"
+
+
+def test_a_crawl_cut_by_max_pages_is_written_down_as_partial(project):
+    run_scrape(project, max_pages=1)
+
+    database = opened(project)
+    stored = database.last_run()
+    database.close()
+    assert stored.mode == "partial"
+
+
+def test_a_short_run_does_not_become_the_yardstick_for_the_next_full_one(project, tmp_path):
+    """Прогон на одну страницу не имеет права стать нормой: следующий полный
+    обход, вставший на первой странице, обязан быть пойман по прошлому полному."""
+    run_scrape(project)                      # полный: 2 страницы
+    run_scrape(project, max_pages=1)         # укороченный: 1 страница, ошибок нет
+
+    (tmp_path / "pages" / "category-60-2.html").unlink()   # пагинатор ведёт в никуда
+    run = run_scrape(project)
+
+    assert run.errors >= 1
+    assert "прошлый удачный прогон прошёл 2" in run.notes
+
+
+def test_a_changed_price_is_counted_apart_from_other_updates(project, tmp_path):
+    """Смена цены — это и обновление карточки тоже: updated_listings остаётся
+    счётчиком «изменилось хоть что-то», price_changed отвечает на «что с ценой»."""
+    run_scrape(project)
+    page = tmp_path / "pages" / "category-60.html"
+    # 162,000 — карточка 23973917 из самой ленты: цены верхних объявлений
+    # (блок «Топ объявления») парсер в разбор не берёт.
+    page.write_text(page.read_text(encoding="utf-8").replace("162,000", "155,000"),
+                    encoding="utf-8")
+
+    run = run_scrape(project)
+
+    assert run.price_changed == 1
+    assert run.updated_listings == 1
+
+
+def test_a_finished_crawl_says_why_it_stopped(project):
+    run = run_scrape(project)
+
+    assert "конец ленты" in run.stop_reason

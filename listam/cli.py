@@ -105,10 +105,13 @@ def _scrape(config, max_pages: int | None, dry_run: bool, allow_shrink: bool = F
         resume=resume, allow_upload_with_errors=allow_upload_with_errors,
     )
     print(
-        f"Прогон: страниц: {run.pages_fetched}, карточек: {run.listings_seen}, "
+        f"Прогон ({run.mode}): страниц: {run.pages_fetched}, карточек: {run.listings_seen}, "
         f"новых: {run.new_listings}, обновлённых: {run.updated_listings}, "
+        f"сменили цену: {run.price_changed}, снято: {run.gone_marked}, "
         f"ошибок: {run.errors}"
     )
+    if run.stop_reason:
+        print(f"Обход кончился: {run.stop_reason}")
     if run.notes:
         print(run.notes)
     if dry_run:

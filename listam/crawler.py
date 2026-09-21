@@ -214,6 +214,21 @@ def resume_start_page(previous: Run | None) -> tuple[int, str | None]:
     return page, f"обход продолжен со страницы {page}"
 
 
+def run_mode(*, fresh: bool, resume: bool, limit: int | None) -> str:
+    """Каким был этот обход. От режима зависит, кому он норма и кого он снимает.
+
+    Полным считается только обход без ограничений: укороченный, продолженный
+    и инкрементальный видели не всю ленту.
+    """
+    if fresh:
+        return "fresh"
+    if resume:
+        return "resume"
+    if limit is not None:
+        return "partial"
+    return "full"
+
+
 def upload_refusal(
     *, errors: int, shrink: str | None, allowed_errors: bool
 ) -> str | None:
@@ -277,6 +292,8 @@ class _Counters:
     listings_seen: int = 0
     new_listings: int = 0
     updated_listings: int = 0
+    price_changed: int = 0
+    gone_marked: int = 0
     errors: int = 0
 
 
@@ -320,6 +337,10 @@ def run_scrape(
 
     counters = _Counters()
     started_at = datetime.now(timezone.utc)
+    # Режим считается до похода за курсом: прогон, который не начался, тоже
+    # должен быть отличим в журнале, а не лежать там безрежимным.
+    mode = run_mode(fresh=False, resume=resume, limit=limit)   # fresh появится в фазе 2
+    stop_reason = None
 
     # Курс — предусловие прогона, а не его счётчик: без него все пересчитанные
     # цены вышли бы пустыми и затёрли бы посчитанное прошлым прогоном.
@@ -335,6 +356,7 @@ def run_scrape(
             finished_at=datetime.now(timezone.utc),
             rate_amd_per_usd=None,
             errors=counters.errors,
+            mode=mode,
             notes=f"{note}; прогон не начат: без курса база не трогается",
         )
     rate_value = rate.value
@@ -355,6 +377,7 @@ def run_scrape(
                 finished_at=datetime.now(timezone.utc),
                 rate_amd_per_usd=rate_value,
                 errors=counters.errors,
+                mode=mode,
                 notes=f"{note}; {exc}",
             )
 
@@ -390,6 +413,7 @@ def run_scrape(
                     finished_at=datetime.now(timezone.utc),
                     rate_amd_per_usd=rate_value,
                     errors=counters.errors,
+                    mode=mode,
                     notes=f"{note}; файл базы недоступен: {exc}",
                 )
 
@@ -402,7 +426,7 @@ def run_scrape(
             if resume_note:
                 note = f"{note}; {resume_note}"
 
-        run_id = None if dry_run else database.start_run(started_at, rate_value)
+        run_id = None if dry_run else database.start_run(started_at, rate_value, mode=mode)
         seen_ids: set[str] = set()
         try:
             # Падение посреди обхода — это ошибка прогона, а не «ничего не было».
@@ -415,6 +439,7 @@ def run_scrape(
                         html = fetcher.get(page_path(category, page))
                     except FetchError as exc:
                         counters.errors += 1
+                        stop_reason = "ошибка обхода"
                         note = f"{note}; страница {page} не получена: {exc}"
                         break
 
@@ -422,11 +447,13 @@ def run_scrape(
                         cards = parse_listing_cards(html, base_url=base_url)
                     except ListingContainerMissing as exc:
                         counters.errors += 1
+                        stop_reason = "ошибка обхода"
                         note = f"{note}; страница {page}: {exc}"
                         break
 
                     if max_cards and len(cards) > max_cards:
                         counters.errors += 1
+                        stop_reason = "ошибка обхода"
                         note = (
                             f"{note}; страница {page}: карточек {len(cards)}, "
                             f"это больше порога scrape.max_cards_per_page = {max_cards}. "
@@ -435,6 +462,7 @@ def run_scrape(
                         break
                     if len(cards) < min_cards:
                         counters.errors += 1
+                        stop_reason = "ошибка обхода"
                         note = (
                             f"{note}; страница {page}: карточек {len(cards)}, "
                             f"это меньше порога scrape.min_cards_per_page = {min_cards}. "
@@ -460,7 +488,10 @@ def run_scrape(
                         )
                         if outcome == "new":
                             counters.new_listings += 1
-                        elif outcome in ("updated", "price_changed"):
+                        elif outcome == "price_changed":
+                            counters.price_changed += 1
+                            counters.updated_listings += 1
+                        elif outcome == "updated":
                             counters.updated_listings += 1
 
                     if run_id is not None:
@@ -469,9 +500,11 @@ def run_scrape(
                         lock.touch()        # прогон жив: срок замка отсчитывается заново
 
                     if limit is not None and counters.pages_fetched >= limit:
+                        stop_reason = f"лимит страниц: scrape.max_pages = {limit}"
                         break
                     if hard_limit and counters.pages_fetched >= hard_limit:
                         counters.errors += 1
+                        stop_reason = "ошибка обхода"
                         note = (
                             f"{note}; обход упёрся в потолок scrape.hard_page_limit = "
                             f"{hard_limit}: похоже, пагинатор зациклился"
@@ -479,6 +512,7 @@ def run_scrape(
                         break
                     following = parse_next_page(html)
                     if following is None or following <= page:
+                        stop_reason = "конец ленты: пагинатор не дал следующей страницы"
                         break
                     page = following
 
@@ -538,7 +572,10 @@ def run_scrape(
                         listings_seen=counters.listings_seen,
                         new_listings=counters.new_listings,
                         updated_listings=counters.updated_listings,
+                        price_changed=counters.price_changed,
+                        gone_marked=counters.gone_marked,
                         errors=counters.errors,
+                        stop_reason=stop_reason,
                         notes=note,
                     )
 
@@ -595,7 +632,11 @@ def run_scrape(
             listings_seen=counters.listings_seen,
             new_listings=counters.new_listings,
             updated_listings=counters.updated_listings,
+            price_changed=counters.price_changed,
+            gone_marked=counters.gone_marked,
             errors=counters.errors,
+            mode=mode,
+            stop_reason=stop_reason,
             notes=note,
         )
     finally:
