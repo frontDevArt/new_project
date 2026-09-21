@@ -223,7 +223,7 @@ def test_migrations_005_and_006_add_the_return_columns_to_a_filled_database(tmp_
     database.connect()
     database.migrate()
 
-    assert database.schema_version() == 6
+    assert database.schema_version() >= 6     # дальше идут миграции M2
     run_columns = {row["name"] for row in database.conn.execute("PRAGMA table_info(runs)")}
     assert "returned" in run_columns
     columns = {row["name"] for row in database.conn.execute("PRAGMA table_info(listings)")}
@@ -233,3 +233,21 @@ def test_migrations_005_and_006_add_the_return_columns_to_a_filled_database(tmp_
     assert database.last_run().returned == 0
     assert database.last_run().pages_fetched == 9
     database.close()
+
+
+def test_migration_007_adds_request_and_match_columns(tmp_path):
+    """Схема 7: колонки, на которые опирается весь матчинг M2."""
+    db = SqliteDatabase(tmp_path / "m7.sqlite")
+    db.connect()
+    db.migrate()
+
+    assert db.schema_version() == 7
+    requests_columns = {row["name"] for row in db.conn.execute("PRAGMA table_info(requests)")}
+    assert {"districts_priority", "floor_min", "floor_max",
+            "no_first_floor", "no_last_floor", "updated_at", "source_row"} <= requests_columns
+    matches_columns = {row["name"] for row in db.conn.execute("PRAGMA table_info(matches)")}
+    assert {"run_id", "breakdown", "cluster_id", "cluster_size",
+            "cluster_spread_usd", "first_matched_at"} <= matches_columns
+    runs_columns = {row["name"] for row in db.conn.execute("PRAGMA table_info(runs)")}
+    assert "new_matches" in runs_columns
+    db.close()
