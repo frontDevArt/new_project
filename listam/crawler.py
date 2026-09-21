@@ -247,6 +247,8 @@ def incremental_stop(
     threshold: int | None,
     pages_fetched: int,
     ceiling: int | None,
+    ceiling_source: str = "config",
+    ceiling_key: str = "scrape.fresh_max_pages",
 ) -> tuple[str | None, bool]:
     """Пора ли кончать инкрементальный обход и честный ли это конец.
 
@@ -268,8 +270,18 @@ def incremental_stop(
             False,
         )
     if ceiling is not None and pages_fetched >= ceiling:
+        if ceiling_source == "flag":
+            # Потолок с флага — просьба, а не сбой: человек попросил короткий
+            # обход и получил его. Помечать такой прогон ошибкой и отказывать
+            # в заливке базы — перебор, да и объяснять отказ ключом конфига,
+            # которого человек не задавал, нечестно.
+            return (
+                f"инкрементальный обход остановлен на странице {pages_fetched}: "
+                f"столько и просили (--max-pages {ceiling})",
+                False,
+            )
         return (
-            f"инкрементальный обход упёрся в потолок scrape.fresh_max_pages = {ceiling}, "
+            f"инкрементальный обход упёрся в потолок {ceiling_key} = {ceiling}, "
             f"до известных объявлений он не дошёл — нужен полный обход",
             True,
         )
@@ -458,9 +470,18 @@ def run_scrape(
     fresh_ceiling = _as_int(
         threshold(config, "scrape.fresh_max_pages", DEFAULT_FRESH_MAX_PAGES)
     )
+    # Откуда взялся потолок инкрементального обхода — это то, что будет названо
+    # человеку в объяснении остановки, и то, ошибка это или просьба.
+    fresh_ceiling_source = "config"
+    fresh_ceiling_key = "scrape.fresh_max_pages"
     if fresh and limit is not None:
         # --max-pages опускает потолок: ниже него инкрементальный обход не идёт.
-        fresh_ceiling = limit if fresh_ceiling is None else min(fresh_ceiling, limit)
+        if fresh_ceiling is None or limit <= fresh_ceiling:
+            fresh_ceiling = limit
+            if limit_asked is not None:
+                fresh_ceiling_source = "flag"
+            else:
+                fresh_ceiling_key = "scrape.max_pages"
 
     # Курс — предусловие прогона, а не его счётчик: без него все пересчитанные
     # цены вышли бы пустыми и затёрли бы посчитанное прошлым прогоном.
@@ -642,6 +663,8 @@ def run_scrape(
                             threshold=fresh_threshold,
                             pages_fetched=counters.pages_fetched,
                             ceiling=fresh_ceiling,
+                            ceiling_source=fresh_ceiling_source,
+                            ceiling_key=fresh_ceiling_key,
                         )
                         if reason:
                             stop_reason = reason
@@ -708,9 +731,19 @@ def run_scrape(
                 )
                 if counters.errors == 0 and alone and limit != 1:
                     counters.errors += 1
+                    # Человеку объясняем то, что он задавал: потолка не было —
+                    # говорим, чем одна страница плоха сама по себе; потолок
+                    # с флага — называем флаг; из конфига — ключ конфига.
+                    # `scrape.max_pages = None` объяснением не является.
+                    if limit is None:
+                        because = "а лента категории — это сотни страниц"
+                    elif limit_asked is not None:
+                        because = f"хотя просили --max-pages {limit}"
+                    else:
+                        because = f"хотя scrape.max_pages = {limit}"
                     note = (
                         f"{note}; пагинатор не дал следующей страницы: обход кончился "
-                        f"на первой, хотя scrape.max_pages = {limit}"
+                        f"на первой, {because}"
                     )
 
                 # Снятыми помечает только полный удачный обход: он один видел

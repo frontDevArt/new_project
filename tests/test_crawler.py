@@ -990,3 +990,38 @@ def test_a_crawl_of_zero_pages_is_refused_not_turned_into_a_full_one(project):
         run_scrape(project, max_pages=0)
 
     assert "хотя бы одна" in str(error.value)
+
+
+def test_a_single_page_feed_is_explained_without_none(project):
+    """«хотя scrape.max_pages = None» — это не объяснение, а утечка кода в текст.
+
+    Потолка человек не задавал; ему надо сказать, чем обход в одну страницу
+    плох сам по себе, а не печатать содержимое переменной.
+    """
+    only_page(project, page("".join(card(i) for i in range(1, 7))))
+
+    run = run_scrape(project)
+
+    assert "None" not in (run.notes or "")
+    assert "сотни страниц" in (run.notes or "")
+
+
+def test_a_ceiling_from_the_config_is_named_by_its_own_key(project):
+    """Потолок из конфига называется своим ключом, а не флагом, которого не было."""
+    only_page(project, page("".join(card(i) for i in range(1, 7))))
+    project.data["scrape"]["max_pages"] = 5
+
+    run = run_scrape(project)
+
+    assert "scrape.max_pages = 5" in (run.notes or "")
+    assert "None" not in (run.notes or "")
+
+
+def test_a_ceiling_asked_by_hand_is_named_by_the_flag(project):
+    """Человек написал --max-pages 5; ключа scrape.max_pages он не видел."""
+    only_page(project, page("".join(card(i) for i in range(1, 7))))
+
+    run = run_scrape(project, max_pages=5)
+
+    assert "--max-pages 5" in (run.notes or "")
+    assert "scrape.max_pages" not in (run.notes or "")

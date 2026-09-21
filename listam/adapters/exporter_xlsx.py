@@ -15,6 +15,7 @@ from listam.domain.models import Listing
 from listam.ports.exporter import Exporter
 
 SELLER_TYPES = {"owner": "собственник", "agency": "агентство"}
+STATUSES = {"active": "на ленте", "gone": "снято"}
 
 # заголовок, как достать значение, ширина колонки, формат числа
 COLUMNS: list[tuple[str, str, int, str | None]] = [
@@ -97,6 +98,8 @@ def _present(listing: Listing, attribute: str):
         return "открыть" if value else None
     if attribute == "seller_type":
         return SELLER_TYPES.get(value, value)
+    if attribute == "status":
+        return STATUSES.get(value, value)
     if attribute in ("new_build", "verified"):
         return None if value is None else ("да" if value else "нет")
     if isinstance(value, datetime):

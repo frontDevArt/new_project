@@ -177,3 +177,38 @@ def test_a_null_stop_threshold_turns_the_stop_off():
     """Выключается порог значением null: обход идёт до потолка."""
     assert incremental_stop(pages_without_new=9, threshold=None,
                             pages_fetched=1, ceiling=20) == (None, False)
+
+
+def test_a_hand_written_limit_is_blamed_on_the_flag_not_on_the_config():
+    """Человек написал --max-pages 1; ключа scrape.fresh_max_pages он не видел."""
+    reason, is_error = incremental_stop(pages_without_new=0, threshold=2,
+                                        pages_fetched=1, ceiling=1,
+                                        ceiling_source="flag")
+    assert "--max-pages 1" in reason
+    assert "scrape.fresh_max_pages" not in reason
+
+
+def test_a_ceiling_asked_by_hand_does_not_make_the_run_a_failure():
+    """Короткий обход попросили — его и получили: это не ошибка прогона."""
+    _, is_error = incremental_stop(pages_without_new=0, threshold=2,
+                                   pages_fetched=1, ceiling=1,
+                                   ceiling_source="flag")
+    assert is_error is False
+
+
+def test_a_ceiling_from_the_config_is_still_a_failure():
+    """Потолок из конфига значит, что до известных обход не дошёл, — об этом надо знать."""
+    reason, is_error = incremental_stop(pages_without_new=0, threshold=2,
+                                        pages_fetched=20, ceiling=20,
+                                        ceiling_source="config")
+    assert "scrape.fresh_max_pages = 20" in reason
+    assert is_error is True
+
+
+def test_fresh_with_a_hand_written_limit_is_not_recorded_as_an_error(project):
+    """`--fresh --max-pages 1` — короткий обход по просьбе, а не сбой с отказом в заливке."""
+    run = run_scrape(project, fresh=True, max_pages=1)
+
+    assert run.errors == 0
+    assert "--max-pages" in (run.stop_reason or "")
+    assert "scrape.fresh_max_pages" not in (run.stop_reason or "")

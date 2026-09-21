@@ -173,4 +173,25 @@ def test_a_gone_listing_shows_its_status_and_the_day_it_left(exporter):
 
     assert headers[-1] == "Снято"
     assert sheet.cell(row=2, column=len(headers)).value == "2026-09-22 08:00"
-    assert sheet.cell(row=2, column=headers.index("Статус") + 1).value == "gone"
+    assert sheet.cell(row=2, column=headers.index("Статус") + 1).value == "снято"
+
+
+def test_status_is_written_in_russian_like_its_neighbours(exporter):
+    """«Продавец», «Новостройка» и «Проверено» переведены — «Статус» читается так же."""
+    sheet = load_workbook(exporter.export([listing("1", NOW)])).active
+    headers = [cell.value for cell in sheet[1]]
+
+    assert sheet.cell(row=2, column=headers.index("Статус") + 1).value == "на ленте"
+
+
+def test_the_status_column_has_no_latin_left_in_it(exporter):
+    """Латиница в русской таблице — это утечка кода наружу, а не значение."""
+    rows = [listing("1", NOW), Listing(id="2", url="https://www.list.am/ru/item/2",
+                                       status="gone", first_seen=NOW, last_seen=NOW)]
+
+    sheet = load_workbook(exporter.export(rows)).active
+    headers = [cell.value for cell in sheet[1]]
+    column = headers.index("Статус") + 1
+    printed = [sheet.cell(row=r, column=column).value for r in (2, 3)]
+
+    assert not any(any("a" <= ch.lower() <= "z" for ch in value) for value in printed)
