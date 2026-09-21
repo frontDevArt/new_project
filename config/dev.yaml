@@ -28,7 +28,11 @@ coverage:                       # доли заполненности полей
     seller_type: {agency: 0.05}
 
 requests:
-  kind: none                    # none | gsheet | csv — заявки появятся на M2
+  kind: csv                     # none | csv | gsheet
+  path: ./data/requests.csv     # для kind: csv
+  # sheet: ${REQUESTS_SHEET}          # для kind: gsheet
+  # credentials_file: ${GDRIVE_CREDENTIALS_FILE}
+  # range: A1:Z1000                   # сколько строк листа читаем
 
 export:
   kind: xlsx_local

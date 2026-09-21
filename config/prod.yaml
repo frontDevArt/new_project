@@ -29,7 +29,14 @@ coverage:                       # доли заполненности полей
     seller_type: {agency: 0.05}
 
 requests:
-  kind: none                    # на M2 станет gsheet со ${REQUESTS_SHEET}
+  kind: none                    # none | csv | gsheet
+  # Переключение на боевой источник — правка одной строки `kind`.
+  # Живой Google Sheet не проверен (решение 11 спеки): приёмка M2 идёт на csv,
+  # а прод остаётся на none, пока в .env не появится REQUESTS_SHEET.
+  # path: ./data/requests.csv         # для kind: csv
+  # sheet: ${REQUESTS_SHEET}          # для kind: gsheet
+  # credentials_file: ${GDRIVE_CREDENTIALS_FILE}
+  # range: A1:Z1000                   # сколько строк листа читаем
 
 export:
   kind: xlsx_local

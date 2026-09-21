@@ -146,7 +146,25 @@ def build_requests_source(config: Config) -> RequestsSource:
     kind = _kind(config, "requests", "none")
     if kind in ("none", "empty"):
         return EmptyRequestsSource()
-    raise _unknown("requests", kind, ["none"])  # gsheet, csv появятся на M2
+    if kind == "csv":
+        from listam.adapters.requests_csv import CsvRequestsSource
+
+        path = config.get("requests.path")
+        if not path:
+            raise ConfigError(
+                "requests.kind = csv, но requests.path не задан: "
+                "откуда читать заявки — решает конфиг, а не код."
+            )
+        return CsvRequestsSource(path=path)
+    if kind == "gsheet":
+        from listam.adapters.requests_gsheet import GSheetRequestsSource
+
+        return GSheetRequestsSource(
+            sheet_id=config.require("requests.sheet"),
+            credentials_file=config.get("requests.credentials_file"),
+            range_name=config.get("requests.range", "A1:Z1000"),
+        )
+    raise _unknown("requests", kind, ["none", "csv", "gsheet"])
 
 
 def database_path(config: Config) -> Path:

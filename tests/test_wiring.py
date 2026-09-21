@@ -3,7 +3,8 @@ from __future__ import annotations
 
 import pytest
 
-from listam.config import Config
+from listam.adapters.requests_csv import CsvRequestsSource
+from listam.config import Config, ConfigError
 from listam.ports.exporter import Exporter
 from listam.ports.fetcher import Fetcher
 from listam.ports.notifier import Notifier, NullNotifier, StdoutNotifier
@@ -73,10 +74,37 @@ def test_notifier_kind_stdout():
     assert isinstance(build_notifier(cfg({"notify": {"kind": "stdout"}})), Notifier)
 
 
-def test_requests_source_is_empty_until_m2():
+def test_requests_source_is_empty_when_the_config_says_nothing():
     source = build_requests_source(cfg({}))
     assert isinstance(source, RequestsSource)
     assert source.active_requests() == []
+
+
+def test_csv_source_is_built_from_the_config_path(tmp_path):
+    source = build_requests_source(
+        cfg({"requests": {"kind": "csv", "path": str(tmp_path / "r.csv")}})
+    )
+    assert isinstance(source, CsvRequestsSource)
+    assert source.path == tmp_path / "r.csv"
+
+
+def test_csv_source_without_a_path_is_a_config_error():
+    with pytest.raises(ConfigError):
+        build_requests_source(cfg({"requests": {"kind": "csv"}}))
+
+
+def test_gsheet_source_is_built_from_the_config_sheet():
+    source = build_requests_source(cfg({"requests": {"kind": "gsheet",
+                                                     "sheet": "SHEET-ID",
+                                                     "credentials_file": "key.json"}}))
+    assert source.sheet_id == "SHEET-ID"
+    assert source.credentials_file == "key.json"
+
+
+def test_an_unknown_requests_kind_names_the_options():
+    with pytest.raises(UnknownAdapter) as error:
+        build_requests_source(cfg({"requests": {"kind": "телепатия"}}))
+    assert "csv" in str(error.value) and "gsheet" in str(error.value)
 
 
 def test_fetcher_kind_files_reads_saved_pages(tmp_path):
