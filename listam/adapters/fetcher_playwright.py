@@ -47,6 +47,23 @@ CHALLENGE_TITLES = ("just a moment", "один момент", "подождит�
 # все три подряд отдались с кодом 200.
 LAUNCH_ARGS = ("--disable-blink-features=AutomationControlled",)
 
+# Метка «этот каталог завёл адаптер». Без неё сносить профиль нельзя:
+# `_reset_profile` делает rmtree по пути из конфига, и опечатка
+# `profile_dir: ./data` унесла бы боевую базу.
+PROFILE_MARKER = ".listam-browser-profile"
+
+
+def _is_own_profile(path: Path) -> bool:
+    """Наш ли это каталог. Своим считаем помеченный — и профиль Chromium по виду.
+
+    Вторая проверка нужна для профилей, заведённых до появления метки: сносить
+    их можно, а вот чужую папку с базой — нельзя ни при каких условиях.
+    """
+    if (path / PROFILE_MARKER).exists():
+        return True
+    return (path / "Local State").exists() and (path / "Default").is_dir()
+
+
 
 class PlaywrightFetcher(Fetcher):
     def __init__(
@@ -149,9 +166,8 @@ class PlaywrightFetcher(Fetcher):
             context_options["user_agent"] = self.user_agent
         try:
             if self.user_data_dir:
-                self.user_data_dir.mkdir(parents=True, exist_ok=True)
                 self._context = self._playwright.chromium.launch_persistent_context(
-                    str(self.user_data_dir), **launch, **context_options
+                    str(self._ensure_profile_dir()), **launch, **context_options
                 )
             else:
                 self._browser = self._playwright.chromium.launch(**launch)
@@ -210,11 +226,29 @@ class PlaywrightFetcher(Fetcher):
         if not self.user_data_dir or self._profile_reset_done:
             return False
         self._profile_reset_done = True
+        if not _is_own_profile(self.user_data_dir):
+            return False      # чужая папка: путь в конфиге — опечатка, а не разрешение
         self._drop_browser()
         import shutil
 
         shutil.rmtree(self.user_data_dir, ignore_errors=True)
         return True
+
+    def _ensure_profile_dir(self) -> Path:
+        """Заводит каталог профиля и метит его своим — но только если он пуст.
+
+        Непустой чужой каталог не метим: раз мы его не заводили, сносить его
+        потом тоже не станем.
+        """
+        path = self.user_data_dir
+        fresh = not path.exists() or not any(path.iterdir())
+        path.mkdir(parents=True, exist_ok=True)
+        if fresh:
+            (path / PROFILE_MARKER).write_text(
+                "Каталог завёл listam (адаптер playwright). Его можно удалять.",
+                encoding="utf-8",
+            )
+        return path
 
     def _challenge_error(self, target: str) -> FetchError:
         hint = (

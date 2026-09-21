@@ -200,9 +200,9 @@ def test_playwright_hides_the_automation_flag():
 def test_playwright_wipes_a_rotten_profile_once(tmp_path):
     """Протухший профиль сносим — но ровно один раз за прогон, не по кругу."""
     profile = tmp_path / "browser"
-    profile.mkdir()
-    (profile / "Cookies").write_text("протухло", encoding="utf-8")
     fetcher = PlaywrightFetcher(user_data_dir=profile, delay_seconds=0)
+    fetcher._ensure_profile_dir()     # каталог заводит адаптер — только свой он и сносит
+    (profile / "Cookies").write_text("протухло", encoding="utf-8")
 
     assert fetcher._reset_profile() is True
     assert not profile.exists()
