@@ -769,3 +769,26 @@ def test_apply_rate_keeps_zero_price(monkeypatch):
 
     assert listing.price_usd == 0.0
     assert listing.price_amd == 0.0
+
+
+def test_run_says_that_the_layout_check_was_skipped(project):
+    """Находка 14: прогон, который не проверял вёрстку, обязан это сказать.
+
+    Порог `coverage.min_sample` выше числа карточек прогона — проверка не
+    состоялась. Без этой строки такой прогон в журнале неотличим от здорового.
+    """
+    project.data["coverage"] = {"min_sample": 100, "min_filled": {"district": 0.98}}
+
+    run = run_scrape(project)
+
+    assert "карточек меньше coverage.min_sample = 100, проверка вёрстки пропущена" in run.notes
+    assert run.errors == 0     # это предупреждение, а не сбой прогона
+
+
+def test_a_checked_run_keeps_quiet_about_skipping(project):
+    project.data["coverage"] = {"min_sample": 5, "min_filled": {"district": 0.5}}
+
+    run = run_scrape(project)
+
+    assert "проверка вёрстки пропущена" not in run.notes
+

@@ -457,6 +457,12 @@ def run_scrape(
                         counters.errors += 1
                         note = f"{note}; {shortfall}"
 
+                # Проверка, которой не было, обязана сказать о себе: иначе
+                # прогон на малой выборке в журнале выглядит как здоровый.
+                skipped = coverage.skipped_note()
+                if skipped:
+                    note = f"{note}; {skipped}"
+
                 for failure in coverage.failures():
                     counters.errors += 1
                     note = f"{note}; {failure}"

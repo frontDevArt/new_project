@@ -7,7 +7,7 @@ from __future__ import annotations
 
 from pathlib import Path
 
-from listam.config import Config
+from listam.config import Config, ConfigError
 from listam.ports.exporter import Exporter
 from listam.ports.fetcher import Fetcher
 from listam.ports.notifier import Notifier, NullNotifier, StdoutNotifier
@@ -65,6 +65,7 @@ def build_fetcher(config: Config) -> Fetcher:
     if kind in ("playwright", "browser"):
         from listam.adapters.fetcher_playwright import PlaywrightFetcher
 
+        _guard_profile_dir(config)
         return PlaywrightFetcher(
             base_url=config.get("scrape.base_url"),
             delay_seconds=config.get("scrape.delay_seconds", 1.5),
@@ -76,6 +77,38 @@ def build_fetcher(config: Config) -> Fetcher:
             challenge_wait_seconds=config.get("scrape.challenge_wait_seconds", 25.0),
         )
     raise _unknown("scrape", kind, ["http", "files", "playwright"])
+
+
+# Каталоги, которые прогон считает рабочими: профиль браузера не имеет права
+# стоять ни на одном из них. Адаптер сносит профиль целиком, когда тот протух.
+WORKING_DIRS = (
+    "storage.work_dir",
+    "storage.directory",    # при storage.kind: local здесь общая копия базы и бэкапы
+    "scrape.pages_dir",
+    "export.path",
+)
+
+
+def _guard_profile_dir(config: Config) -> None:
+    """Не даёт назначить профилем браузера рабочую папку или её родителя.
+
+    `profile_dir: ./data` — опечатка ценой в боевую базу: протухший профиль
+    адаптер сносит целиком.
+    """
+    profile = config.get("scrape.profile_dir")
+    if not profile:
+        return
+    profile = Path(profile).resolve()
+    for key in WORKING_DIRS:
+        value = config.get(key)
+        if not value:
+            continue
+        other = Path(value).resolve()
+        if other == profile or other.is_relative_to(profile):
+            raise ConfigError(
+                f"scrape.profile_dir = {profile} накрывает {key} = {other}. "
+                f"Протухший профиль сносится целиком — назначь ему отдельную папку."
+            )
 
 
 def build_rate_provider(config: Config, fetcher: Fetcher | None) -> RateProvider:
@@ -120,3 +153,30 @@ def database_path(config: Config) -> Path:
     """Куда кладётся локальная рабочая копия базы на время прогона."""
     work_dir = Path(config.get("storage.work_dir", "./data"))
     return work_dir / config.get("storage.db_filename", "listam.sqlite")
+
+
+def build_database(config: Config):
+    """Рабочая копия базы. Реализация одна, но выбирается всё равно здесь."""
+    kind = _kind(config, "database", "sqlite")
+    if kind == "sqlite":
+        from listam.adapters.db_sqlite import DEFAULT_BUSY_TIMEOUT_MS, SqliteDatabase
+
+        return SqliteDatabase(
+            database_path(config),
+            busy_timeout_ms=config.get("storage.busy_timeout_ms", DEFAULT_BUSY_TIMEOUT_MS),
+        )
+    raise _unknown("database", kind, ["sqlite"])
+
+
+def run_lock_path(config: Config) -> Path:
+    """Файл замка лежит рядом с рабочей копией базы — он про неё и есть."""
+    return database_path(config).with_suffix(".lock")
+
+
+def build_run_lock(config: Config):
+    from listam.adapters.run_lock import DEFAULT_STALE_AFTER, RunLock
+
+    return RunLock(
+        run_lock_path(config),
+        stale_after_seconds=config.get("storage.lock_stale_seconds", DEFAULT_STALE_AFTER),
+    )
