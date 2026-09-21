@@ -4,6 +4,7 @@
     python -m listam scrape          пройти по ленте и обновить базу
     python -m listam recheck         пересчитать пометки по всей базе
     python -m listam export          выгрузить текущую базу в .xlsx
+    python -m listam changes         что принёс последний прогон
 
 Окружение выбирается переменной APP_ENV или флагом --env.
 """
@@ -50,6 +51,16 @@ def build_parser() -> argparse.ArgumentParser:
 
     export = commands.add_parser("export", help="выгрузить базу в .xlsx")
     export.add_argument("--name", help="имя файла выгрузки")
+
+    changes = commands.add_parser("changes", help="что принёс последний прогон")
+    changes.add_argument("--hours", type=float,
+                         help="за сколько часов считать "
+                              "(по умолчанию — с начала прошлого прогона)")
+    # Значения по умолчанию нет: сколько строк показывать — порог из конфига
+    # (`changes.limit`), а не число, зашитое в командную строку.
+    changes.add_argument("--limit", type=int,
+                         help="сколько строк показывать в каждом разделе "
+                              "(по умолчанию — из конфига)")
     return parser
 
 
@@ -104,6 +115,9 @@ def main(argv: list[str] | None = None) -> int:
     if args.command == "export":
         return _export(config, name=args.name)
 
+    if args.command == "changes":
+        return _changes(config, hours=args.hours, limit=args.limit)
+
     return 2
 
 
@@ -144,6 +158,19 @@ def _recheck(config) -> int:
     if report.notes:
         print(report.notes)
     return 1 if report.errors else 0
+
+
+def _changes(config, hours: float | None, limit: int | None) -> int:
+    from listam.changes import render, run_changes
+
+    report = run_changes(config, hours=hours)
+    if report.errors:
+        print(report.notes, file=sys.stderr)
+        return 1
+    if limit is None:
+        limit = config.get("changes.limit", 50)
+    print(render(report, limit=limit))
+    return 0
 
 
 def _export(config, name: str | None) -> int:

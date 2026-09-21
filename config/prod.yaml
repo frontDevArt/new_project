@@ -35,6 +35,10 @@ export:
   kind: xlsx_local
   path: ./out
 
+changes:                        # витрина дельты: `python -m listam changes`
+  limit: 50                     # сколько строк показывать в каждом разделе
+  fallback_hours: 24            # за сколько часов считать, если журнал прогонов пуст
+
 rate:
   kind: rate_am
 

@@ -22,6 +22,8 @@ rate:
 export:
   kind: xlsx_local
   path: {out}
+changes:
+  limit: 2
 scrape:
   kind: files
   pages_dir: {pages}
@@ -251,6 +253,42 @@ def test_export_without_a_database_says_so_instead_of_crashing(project, capsys):
     out = capsys.readouterr()
     assert code == 1
     assert "схема базы 0" in (out.out + out.err)
+
+
+def test_changes_print_what_the_last_run_brought(project, capsys):
+    run(project, "scrape")
+    page = project / "pages" / "category-60-2.html"
+    page.write_text(page.read_text(encoding="utf-8").replace("24100001", "99100001"),
+                    encoding="utf-8")
+    run(project, "scrape")
+    capsys.readouterr()
+
+    assert run(project, "changes") == 0
+
+    out = capsys.readouterr().out
+    assert "Новых: 1" in out
+    assert "99100001" in out
+
+
+def test_changes_take_the_section_limit_from_the_config(project, capsys):
+    """Сколько строк в разделе — порог конфига (`changes.limit`), а не число в коде."""
+    run(project, "scrape")          # все восемь карточек фикстуры — новые
+    capsys.readouterr()
+
+    assert run(project, "changes") == 0
+
+    assert "…и ещё 6" in capsys.readouterr().out       # limit: 2 из конфига
+
+
+def test_changes_refuse_a_database_older_than_the_code(project, capsys):
+    """Решение 10: `changes` читает базу, а не мигрирует её — как `export`."""
+    database_at_schema(project, 1)
+
+    assert run(project, "changes") == 1
+
+    out = capsys.readouterr()
+    assert "схема базы" in (out.out + out.err)
+    assert schema_of(project) == 1       # схема не тронута
 
 
 def test_recheck_reports_what_it_recomputed(project, capsys):
