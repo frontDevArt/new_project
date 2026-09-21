@@ -209,3 +209,25 @@ def test_snapshot_shows_what_has_not_reached_the_main_file_yet(db, tmp_path):
         connection.close()
     assert count == 1
     assert not target.with_name(target.name + "-wal").exists()
+
+
+def test_currency_change_overwrites_recomputed_prices(db):
+    """ВЫСОКИЙ 7: карточка переехала в евро — старые доллары не остаются висеть."""
+    db.upsert_listing(
+        make_listing(price_raw="100,000 $", currency="USD",
+                     price_usd=100000.0, price_amd=None, price_per_sqm=2000.0),
+        seen_at=NOW,
+    )
+
+    db.upsert_listing(
+        make_listing(price_raw="90,000 €", currency="EUR",
+                     price_usd=None, price_amd=None, price_per_sqm=None),
+        seen_at=LATER,
+    )
+
+    stored = db.get_listing("24254997")
+    assert stored.currency == "EUR"
+    assert stored.price_raw == "90,000 €"
+    assert stored.price_usd is None
+    assert stored.price_amd is None
+    assert stored.price_per_sqm is None

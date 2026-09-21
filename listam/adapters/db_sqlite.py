@@ -18,8 +18,9 @@ DEFAULT_BUSY_TIMEOUT_MS = 10_000
 # Поля, изменение которых считаем содержательным обновлением карточки.
 # Только то, что реально пришло с сайта: пересчитанных здесь нет и быть не может,
 # иначе движение курса выглядело бы как изменение цены у всей базы разом.
+# price_amount — та же сырая цена, только числом, поэтому он тут, а не в derived.
 TRACKED_FIELDS = (
-    "title", "district", "street", "price_raw", "currency",
+    "title", "district", "street", "price_raw", "currency", "price_amount",
     "area", "rooms", "floor", "floors_total", "seller_type", "verified", "new_build",
 )
 
@@ -196,15 +197,20 @@ class SqliteDatabase(Database):
         updates["last_seen"] = seen_iso
         updates["status"] = "active"
         updates["id"] = listing.id
+        # Сменились валюта или сырая цена — пересчитанное относится к прошлой цене
+        # и должно уйти целиком, включая NULL. COALESCE бережёт пересчёт только
+        # тогда, когда цена на сайте та же, а курс в этот раз не дался.
+        price_moved = any(name in changed for name in PRICE_FIELDS)
         assignments = ", ".join(
-            f"{name} = COALESCE(:{name}, {name})" if name in DERIVED_FIELDS
+            f"{name} = COALESCE(:{name}, {name})"
+            if name in DERIVED_FIELDS and not price_moved
             else f"{name} = :{name}"
             for name in updates if name != "id"
         )
         outcome = "unchanged"
         with self.transaction():
             self.conn.execute(f"UPDATE listings SET {assignments} WHERE id = :id", updates)
-            if any(name in changed for name in PRICE_FIELDS):
+            if price_moved:
                 self._add_price_point(listing.id, seen_at, listing.price_usd, rate_amd_per_usd)
                 outcome = "price_changed"
             elif changed:
