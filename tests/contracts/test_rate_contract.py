@@ -65,3 +65,12 @@ def test_rate_am_raises_when_page_has_no_rates(http_site):
     )
     with pytest.raises(RateError):
         provider.amd_per_usd()
+
+
+def test_fixed_rate_of_zero_is_an_error_not_a_number():
+    """Пустой rate.amd_per_usd в конфиге — это сбой, а не курс 0."""
+    from listam.adapters.rate_fixed import FixedRateProvider
+    from listam.ports.rate import RateError
+
+    with pytest.raises(RateError):
+        FixedRateProvider(amd_per_usd=0).amd_per_usd()
