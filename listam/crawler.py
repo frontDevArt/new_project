@@ -229,6 +229,38 @@ def run_mode(*, fresh: bool, resume: bool, limit: int | None) -> str:
     return "full"
 
 
+DEFAULT_FRESH_STOP_PAGES = 2     # столько страниц подряд без новых — и хватит
+DEFAULT_FRESH_MAX_PAGES = 20     # потолок инкрементального обхода
+
+
+def incremental_stop(
+    *, pages_without_new: int, threshold: int, pages_fetched: int, ceiling: int
+) -> tuple[str | None, bool]:
+    """Пора ли кончать инкрементальный обход и честный ли это конец.
+
+    Спека говорит «до первого известного ID», но лента переставляет объявление
+    наверх при поднятии: первое известное встречается на первой же странице
+    почти всегда. Поэтому считаем страницы подряд, на которых не было ни одного
+    нового ID: две страницы — это около 190 карточек запаса.
+
+    Потолок — не конец, а сбой: обход не дошёл до известного, значит часть ленты
+    он не видел, и следующим должен идти полный обход.
+    """
+    if threshold and pages_without_new >= threshold:
+        return (
+            f"{pages_without_new} страниц подряд без новых объявлений "
+            f"(scrape.fresh_stop_after_known_pages = {threshold})",
+            False,
+        )
+    if ceiling and pages_fetched >= ceiling:
+        return (
+            f"инкрементальный обход упёрся в потолок scrape.fresh_max_pages = {ceiling}, "
+            f"до известных объявлений он не дошёл — нужен полный обход",
+            True,
+        )
+    return None, False
+
+
 def upload_refusal(
     *, errors: int, shrink: str | None, allowed_errors: bool
 ) -> str | None:
