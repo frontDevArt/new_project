@@ -335,26 +335,38 @@ class SqliteDatabase(Database):
     def price_changes_since(
         self, since: datetime
     ) -> list[tuple[Listing, float | None, float | None]]:
-        """Точки истории после отметки вместе с ценой, которая была до них.
+        """Одна карточка — одна строка: «было на начало окна → стало на конец».
 
-        Прежняя цена берётся подзапросом по той же карточке: у первой точки
-        её нет, и такая строка отбрасывается — это появление объявления,
-        а не смена цены.
+        Запрос идёт по объявлениям, а не по точкам истории: карточка, дважды
+        сменившая цену за окно, — это одна сменившая цену квартира, а не две.
+        «Было» — последняя точка ДО окна, «стало» — последняя точка В окне.
+
+        Точки до окна нет — объявление внутри окна и появилось: это «Новое»,
+        а не смена цены, и такая строка отбрасывается.
+
+        `seen_at` — текст, сравнение строковое; это работает, потому что все
+        отметки пишет `to_iso` в одном формате.
         """
         rows = self.conn.execute(
-            "SELECT h.listing_id AS listing_id, h.price_usd AS new_price, "
+            "WITH moved AS ("
+            "  SELECT listing_id, MAX(id) AS last_id FROM price_history "
+            "   WHERE seen_at >= :since GROUP BY listing_id"
+            ") "
+            "SELECT m.listing_id AS listing_id, "
+            "       (SELECT price_usd FROM price_history WHERE id = m.last_id) AS new_price, "
             "       (SELECT p.price_usd FROM price_history p "
-            "         WHERE p.listing_id = h.listing_id AND p.id < h.id "
+            "         WHERE p.listing_id = m.listing_id AND p.seen_at < :since "
             "         ORDER BY p.id DESC LIMIT 1) AS old_price, "
             "       EXISTS (SELECT 1 FROM price_history p "
-            "                WHERE p.listing_id = h.listing_id AND p.id < h.id) AS has_previous "
-            "  FROM price_history h WHERE h.seen_at >= ? ORDER BY h.id DESC",
-            (to_iso(since),),
+            "                WHERE p.listing_id = m.listing_id AND p.seen_at < :since"
+            "              ) AS has_previous "
+            "  FROM moved m ORDER BY m.last_id DESC",
+            {"since": to_iso(since)},
         ).fetchall()
         changes: list[tuple[Listing, float | None, float | None]] = []
         for row in rows:
             if not row["has_previous"]:
-                continue          # первая точка — это появление, а не смена цены
+                continue          # появление объявления, а не смена цены
             item = self.get_listing(row["listing_id"])
             if item is not None:
                 changes.append((item, row["old_price"], row["new_price"]))
@@ -432,6 +444,19 @@ class SqliteDatabase(Database):
         """
         row = self.conn.execute(
             "SELECT * FROM runs WHERE finished_at IS NOT NULL AND IFNULL(errors, 0) = 0 "
+            "AND IFNULL(mode, 'full') = 'full' ORDER BY id DESC LIMIT 1"
+        ).fetchone()
+        return _row_to_run(row) if row else None
+
+    def last_run_that_could_mark_gone(self) -> Run | None:
+        """Последний завершённый полный обход — мерка для раздела «Снято».
+
+        Ошибки здесь не фильтруются намеренно: пометка снятых случается в конце
+        обхода, а ошибка — чаще после неё, при заливке. Выкинув такой прогон,
+        мы отдали бы окно предыдущему полному и показали бы снятых дважды.
+        """
+        row = self.conn.execute(
+            "SELECT * FROM runs WHERE finished_at IS NOT NULL "
             "AND IFNULL(mode, 'full') = 'full' ORDER BY id DESC LIMIT 1"
         ).fetchone()
         return _row_to_run(row) if row else None

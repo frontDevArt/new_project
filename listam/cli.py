@@ -116,6 +116,24 @@ def main(argv: list[str] | None = None) -> int:
         return _export(config, name=args.name)
 
     if args.command == "changes":
+        # Разбор аргументов — дело командной строки: `run_changes` про коды
+        # возврата ничего не знает. Бессмысленный ввод отклоняется на входе,
+        # а не истолковывается: окно в будущем и раздел без строк — это
+        # молчаливо пустой ответ там, где человек ждал списка.
+        if args.hours is not None and args.hours <= 0:
+            print(
+                f"--hours {args.hours:g} не годится: окно считается назад от «сейчас», "
+                "и отрицательное или нулевое окно всегда пусто. Нужно число больше нуля.",
+                file=sys.stderr,
+            )
+            return 2
+        if args.limit is not None and args.limit <= 0:
+            print(
+                f"--limit {args.limit} не годится: это число строк в разделе, "
+                "и меньше одной строки показывать нечего. Нужно число больше нуля.",
+                file=sys.stderr,
+            )
+            return 2
         return _changes(config, hours=args.hours, limit=args.limit)
 
     return 2

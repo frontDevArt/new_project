@@ -160,3 +160,62 @@ def test_changes_do_not_migrate_the_database(project, tmp_path):
 
     assert report.errors == 1
     assert f"схема базы {behind}" in report.notes
+
+
+def test_gone_survive_an_incremental_run(project, tmp_path):
+    """Снятых ставит только полный обход, а `--fresh` ходит каждый час.
+    Если окно двигает любой прогон, раздел «Снято» человек не увидит никогда."""
+    run_scrape(project)
+    _edit(tmp_path / "pages" / FEED_PAGE, "24100001", "99100001")
+    run_scrape(project)                       # полный: 24100001 ушёл с ленты и помечен
+
+    run_scrape(project, fresh=True)           # обычный час спустя
+
+    report = run_changes(project)
+
+    assert [item.id for item in report.gone] == ["24100001"]
+
+
+def test_a_full_run_resets_the_gone_section(project, tmp_path):
+    """Следующий полный обход — новая мерка: снятые прошлого в список не тянутся."""
+    run_scrape(project)
+    _edit(tmp_path / "pages" / FEED_PAGE, "24100001", "99100001")
+    run_scrape(project)
+    run_scrape(project)                       # следующий полный: мерка сдвинулась
+
+    assert run_changes(project).gone == []
+
+
+def test_without_a_full_run_the_gone_window_falls_back_and_says_so(project):
+    """Журнал без полных прогонов: мерки для снятых нет — берём общую и говорим об этом."""
+    run_scrape(project, fresh=True)
+
+    report = run_changes(project)
+
+    assert report.gone_since == report.since
+    assert "полных прогонов" in report.gone_note
+
+
+def test_render_explains_the_second_yardstick_under_the_gone_section(project, tmp_path):
+    """Мерки разошлись — человеку сказано, с какого обхода считаны снятые."""
+    run_scrape(project)
+    _edit(tmp_path / "pages" / FEED_PAGE, "24100001", "99100001")
+    run_scrape(project)
+    run_scrape(project, fresh=True)
+
+    text = render(run_changes(project), limit=50)
+
+    assert "снятые — с полного обхода 2" in text
+
+
+def test_the_price_counter_counts_listings_and_matches_the_journal(project, tmp_path):
+    """Счётчик «Сменили цену» считает объявления, а не точки истории, —
+    и тогда он сходится с `runs.price_changed`. Это боевая пара 69/68."""
+    run_scrape(project)
+    _edit(tmp_path / "pages" / PRICED_PAGE, "162,000", "153,000")
+    run = run_scrape(project)
+
+    report = run_changes(project)
+
+    assert [move.listing.id for move in report.moved] == [PRICED_ID]
+    assert len(report.moved) == run.price_changed

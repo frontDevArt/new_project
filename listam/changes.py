@@ -37,8 +37,13 @@ class PriceMove:
 
 @dataclass
 class Changes:
+    # Отметок две, и это решение, а не недосмотр: новое и цены приносит любой
+    # прогон, а снятых ставит только полный. Одна мерка на всё стирала бы
+    # раздел «Снято» первым же часовым `--fresh`.
     since: datetime | None = None
     since_note: str = ""
+    gone_since: datetime | None = None
+    gone_note: str = ""
     new: list[Listing] = field(default_factory=list)
     moved: list[PriceMove] = field(default_factory=list)
     gone: list[Listing] = field(default_factory=list)
@@ -73,6 +78,29 @@ def since_point(
     )
 
 
+def gone_since_point(
+    database, since: datetime, since_note: str, hours: float | None
+) -> tuple[datetime, str]:
+    """С какого момента считаем снятых и как это объяснить человеку.
+
+    Снятых ставит только полный обход, а `--fresh` ходит каждый час: мерить
+    их началом последнего прогона — значит гасить раздел до следующей ночи.
+    Мерка — начало последнего завершённого полного обхода.
+
+    `--hours N` задаёт обе отметки: человек попросил окно в часах, и делить
+    его надвое незачем.
+    """
+    if hours is not None:
+        return since, since_note
+    last_full = database.last_run_that_could_mark_gone()
+    if last_full is None or last_full.started_at is None:
+        return since, "полных прогонов в журнале нет — снятые считаны по общей мерке"
+    return last_full.started_at, (
+        f"снятые — с полного обхода {last_full.id} "
+        f"({last_full.started_at:%Y-%m-%d %H:%M} UTC)"
+    )
+
+
 def run_changes(config, *, hours: float | None = None) -> Changes:
     """Собирает дельту из базы. Замок не берётся: команда только читает."""
     storage = build_storage(config)
@@ -97,15 +125,18 @@ def run_changes(config, *, hours: float | None = None) -> Changes:
         since, since_note = since_point(
             database, hours, fallback_hours=config.get("changes.fallback_hours", 24)
         )
+        gone_since, gone_note = gone_since_point(database, since, since_note, hours)
         return Changes(
             since=since,
             since_note=since_note,
+            gone_since=gone_since,
+            gone_note=gone_note,
             new=database.listings_first_seen_since(since),
             moved=[
                 PriceMove(listing=item, was=was, now=now)
                 for item, was, now in database.price_changes_since(since)
             ],
-            gone=database.listings_gone_since(since),
+            gone=database.listings_gone_since(gone_since),
         )
     finally:
         database.close()
@@ -145,12 +176,12 @@ def _head(item: Listing) -> str:
     return f"{item.id:<10} {(item.district or DASH):<12}"
 
 
-def _section(title: str, lines: list[str], limit: int) -> list[str]:
+def _section(title: str, lines: list[str], limit: int, note: str = "") -> list[str]:
     """Раздел, обрезанный до `limit` строк. Обрезано — сказано, сколько осталось."""
     if not lines:
         return []
     shown = lines[:limit]
-    out = ["", title, *shown]
+    out = ["", title, *([f"  {note}"] if note else []), *shown]
     left = len(lines) - len(shown)
     if left:
         out.append(f"  …и ещё {left}")
@@ -186,6 +217,9 @@ def render(changes: Changes, limit: int) -> str:
         ],
         limit,
     )
+    # Про вторую мерку говорим, только когда она разошлась с общей: в остальных
+    # случаях это шум, повторяющий шапку.
+    gone_note = changes.gone_note if changes.gone_since != changes.since else ""
     lines += _section(
         "Снято",
         [
@@ -194,5 +228,6 @@ def render(changes: Changes, limit: int) -> str:
             for item in changes.gone
         ],
         limit,
+        gone_note,
     )
     return "\n".join(lines)

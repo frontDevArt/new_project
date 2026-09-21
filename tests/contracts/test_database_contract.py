@@ -407,3 +407,52 @@ def test_gone_listings_are_the_ones_marked_after_the_mark(db):
     db.mark_gone({"2"}, gone_at=EVEN_LATER)
 
     assert [item.id for item in db.listings_gone_since(LATER)] == ["2"]
+
+
+def test_the_gone_yardstick_is_the_last_finished_full_run(db):
+    """Снятых ставит только полный обход — по нему и считается раздел «Снято».
+    Ошибка прогона его не отменяет: она могла случиться уже при заливке."""
+    full = db.start_run(NOW, 400.0, mode="full")
+    db.finish_run(full, NOW, pages_fetched=215, errors=1)
+    fresh = db.start_run(LATER, 400.0, mode="fresh")
+    db.finish_run(fresh, LATER, pages_fetched=2, errors=0)
+    db.start_run(EVEN_LATER, 400.0, mode="full")      # ещё идёт, снятых не ставил
+
+    assert db.last_run_that_could_mark_gone().id == full
+
+
+def test_an_empty_journal_has_no_gone_yardstick(db):
+    assert db.last_run_that_could_mark_gone() is None
+
+
+def test_two_moves_of_one_listing_collapse_into_one_row(db):
+    """Человеку важно «было → стало» за окно, а не каждая точка истории.
+    Две строки на одну квартиру он читает как две квартиры."""
+    db.upsert_listing(
+        make_listing("1", price_raw="$59,500", price_usd=59_500.0), seen_at=NOW
+    )
+    db.upsert_listing(
+        make_listing("1", price_raw="$100,000", price_usd=100_000.0), seen_at=LATER
+    )
+    db.upsert_listing(
+        make_listing("1", price_raw="$110,000", price_usd=110_000.0), seen_at=EVEN_LATER
+    )
+
+    rows = db.price_changes_since(LATER)
+
+    assert len(rows) == 1
+    item, was, now = rows[0]
+    assert (item.id, was, now) == ("1", 59_500.0, 110_000.0)
+
+
+def test_a_listing_born_inside_the_window_is_not_a_price_change(db):
+    """Появилось и тут же подвинулось — это «Новое», а не «Цены».
+    Цены на начало окна у него нет: показывать было бы нечего."""
+    db.upsert_listing(
+        make_listing("1", price_raw="$100,000", price_usd=100_000.0), seen_at=LATER
+    )
+    db.upsert_listing(
+        make_listing("1", price_raw="$90,000", price_usd=90_000.0), seen_at=EVEN_LATER
+    )
+
+    assert db.price_changes_since(LATER) == []

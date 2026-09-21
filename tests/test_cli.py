@@ -306,3 +306,35 @@ def test_export_works_right_after_a_recheck(project, capsys):
     run(project, "recheck")
 
     assert run(project, "export") == 0
+
+
+def test_changes_refuse_a_window_in_the_future(project, capsys):
+    """`--hours -5` — это окно от «через пять часов» до «сейчас»: оно всегда пусто.
+    Истолковывать бессмыслицу нечем, поэтому это отказ, а не пустой список."""
+    code = run(project, "changes", "--hours", "-5")
+
+    assert code == 2
+    assert "окно" in capsys.readouterr().err
+
+
+def test_changes_refuse_a_window_of_zero_hours(project, capsys):
+    code = run(project, "changes", "--hours", "0")
+
+    assert code == 2
+    assert "окно" in capsys.readouterr().err
+
+
+def test_changes_refuse_a_limit_of_zero(project, capsys):
+    """`--limit 0` печатал «…и ещё 7» вместо строк: заголовок есть, списка нет."""
+    code = run(project, "changes", "--limit", "0")
+
+    assert code == 2
+    assert "строк" in capsys.readouterr().err
+
+
+def test_changes_refuse_a_negative_limit(project, capsys):
+    """`--limit -1` молча резал последнюю строку каждого раздела."""
+    code = run(project, "changes", "--limit", "-1")
+
+    assert code == 2
+    assert "строк" in capsys.readouterr().err
