@@ -1,0 +1,178 @@
+"""Движок скоринга: жёсткие критерии, шесть факторов, разбор балла.
+
+Домен и только домен: ни базы, ни сети, ни конфига. Веса приходят
+аргументом — кто их читает из конфига, модуль не знает.
+"""
+from __future__ import annotations
+
+from listam.domain.models import Request
+from listam.domain.scoring import rejection, score
+
+from tests.contracts.test_database_contract import make_listing
+
+
+def a_request(**over) -> Request:
+    fields = dict(external_id="R-1", budget_max=140_000.0,
+                  districts=["Центр"], districts_priority=["Центр"],
+                  rooms=[3], area_min=70.0, area_max=100.0)
+    fields.update(over)
+    return Request(**fields)
+
+
+# --- жёсткие критерии -------------------------------------------------
+
+def test_a_district_outside_the_list_is_refused():
+    assert rejection(a_request(), make_listing(district="Давташен"), 10) == "район"
+
+
+def test_a_request_without_districts_accepts_any_district():
+    assert rejection(a_request(districts=[]), make_listing(district="Давташен"), 10) is None
+
+
+def test_fewer_rooms_than_asked_is_refused():
+    assert rejection(a_request(rooms=[3, 4]), make_listing(rooms=2), 10) == "комнаты"
+
+
+def test_more_rooms_than_asked_is_not_refused_but_scores_lower():
+    # Четыре комнаты вместо трёх — это всё ещё звонок: клиенту может подойти.
+    assert rejection(a_request(rooms=[3]), make_listing(rooms=4), 10) is None
+    assert score(a_request(rooms=[3]), make_listing(rooms=4)).value < \
+           score(a_request(rooms=[3]), make_listing(rooms=3)).value
+
+
+def test_a_price_above_the_stretched_budget_is_refused():
+    assert rejection(a_request(budget_max=100_000.0), make_listing(price_usd=120_000.0), 10) \
+        == "бюджет"
+
+
+def test_a_price_inside_the_stretch_is_not_refused():
+    assert rejection(a_request(budget_max=100_000.0), make_listing(price_usd=108_000.0), 10) is None
+
+
+def test_a_listing_without_a_price_cannot_pass_the_budget_test():
+    assert rejection(a_request(), make_listing(price_usd=None), 10) == "цена неизвестна"
+
+
+def test_an_area_below_the_minimum_is_refused():
+    assert rejection(a_request(area_min=70.0), make_listing(area=55.0), 10) == "площадь"
+
+
+def test_the_stretch_percent_is_the_callers_word_and_not_a_constant():
+    """Растяжка — порог из конфига: 0 значит «ни доллара сверх бюджета»."""
+    listing = make_listing(price_usd=105_000.0)
+    assert rejection(a_request(budget_max=100_000.0), listing, 10) is None
+    assert rejection(a_request(budget_max=100_000.0), listing, 0) == "бюджет"
+
+
+def test_a_request_without_a_budget_does_not_refuse_a_listing_without_a_price():
+    """Нечем сравнивать — нечего и отклонять: бюджет просто не проверяется."""
+    assert rejection(a_request(budget_max=None), make_listing(price_usd=None), 10) is None
+
+
+# --- баллы ------------------------------------------------------------
+
+def test_a_perfect_fit_scores_a_hundred():
+    listing = make_listing(district="Центр", rooms=3, area=85.0, floor=4, floors_total=9,
+                           price_usd=120_000.0, price_per_sqm=1_000.0, seller_type="owner")
+    result = score(a_request(), listing, median_by_district={"Центр": 1_400.0})
+    assert result.value == 100
+    assert result.matched
+
+
+def test_a_price_inside_the_stretch_scores_less_than_one_inside_the_budget():
+    inside = score(a_request(budget_max=140_000.0), make_listing(price_usd=130_000.0))
+    stretched = score(a_request(budget_max=140_000.0), make_listing(price_usd=150_000.0))
+    assert stretched.value < inside.value
+
+
+def test_a_priority_district_beats_a_merely_allowed_one():
+    request = a_request(districts=["Центр", "Арабкир"], districts_priority=["Центр"])
+    top = score(request, make_listing(district="Центр"))
+    ok = score(request, make_listing(district="Арабкир"))
+    assert top.value > ok.value
+
+
+def test_below_the_district_median_scores_higher_than_above_it():
+    medians = {"Центр": 1_400.0}
+    cheap = score(a_request(), make_listing(price_per_sqm=1_000.0), median_by_district=medians)
+    dear = score(a_request(), make_listing(price_per_sqm=1_800.0), median_by_district=medians)
+    assert cheap.value > dear.value
+
+
+def test_the_first_floor_is_penalised_only_when_the_client_said_so():
+    listing = make_listing(floor=1)
+    assert score(a_request(no_first_floor=True), listing).value < \
+           score(a_request(no_first_floor=False), listing).value
+
+
+def test_the_last_floor_is_penalised_only_when_the_client_said_so():
+    listing = make_listing(floor=9, floors_total=9)
+    assert score(a_request(no_last_floor=True), listing).value < \
+           score(a_request(no_last_floor=False), listing).value
+
+
+def test_a_floor_outside_the_asked_range_scores_lower():
+    request = a_request(floor_min=3, floor_max=7)
+    assert score(request, make_listing(floor=12)).value < \
+           score(request, make_listing(floor=5)).value
+
+
+def test_an_owner_scores_above_an_agency():
+    assert score(a_request(), make_listing(seller_type="owner")).value > \
+           score(a_request(), make_listing(seller_type="agency")).value
+
+
+def test_a_factor_without_data_is_dropped_from_the_denominator_and_not_a_penalty():
+    # Нет медианы района — фактор «выгодность» не считается вовсе. Иначе
+    # объявление в районе без медианы всегда проигрывало бы двадцать баллов
+    # ни за что.
+    without = score(a_request(), make_listing(price_per_sqm=1_000.0), median_by_district={})
+    assert "price_per_sqm" not in without.breakdown
+    assert without.value == 100
+
+
+def test_a_request_without_an_area_range_is_not_scored_lower_than_one_with_it():
+    """Ровно то, ради чего вес исключается из знаменателя, а не обнуляется."""
+    listing = make_listing(area=85.0, rooms=3)
+    with_range = score(a_request(area_min=70.0, area_max=100.0), listing)
+    without_range = score(a_request(area_min=None, area_max=None), listing)
+    assert without_range.value == with_range.value == 100
+
+
+def test_the_breakdown_names_every_factor_that_counted():
+    result = score(a_request(), make_listing(), median_by_district={"Центр": 1_400.0})
+    assert set(result.breakdown) <= {"budget", "district", "price_per_sqm",
+                                     "area_rooms", "floor", "seller_type"}
+    for got, weight in result.breakdown.values():
+        assert 0 <= got <= weight
+
+
+def test_the_breakdown_adds_up_to_the_value():
+    """«Почему 68, а не 71» должно сходиться из разбора, иначе разбор — украшение."""
+    result = score(a_request(no_first_floor=True), make_listing(floor=1, seller_type="agency"),
+                   median_by_district={"Центр": 1_400.0})
+    got = sum(pair[0] for pair in result.breakdown.values())
+    weights = sum(pair[1] for pair in result.breakdown.values())
+    assert result.value == round(100 * got / weights)
+
+
+def test_a_refused_listing_scores_zero_and_says_why():
+    result = score(a_request(), make_listing(district="Давташен"))
+    assert result.value == 0
+    assert result.rejected_by == "район"
+    assert not result.matched
+    assert result.breakdown == {}
+
+
+def test_weights_come_from_the_caller_and_are_not_wired_into_the_code():
+    listing = make_listing(seller_type="agency")
+    only_seller = score(a_request(), listing, weights={"seller_type": 5})
+    assert set(only_seller.breakdown) == {"seller_type"}
+    assert only_seller.value == 0
+
+
+def test_a_zero_weight_keeps_the_factor_out_of_the_score_without_dividing_by_zero():
+    """Все веса по нулю — балл ноль, а не падение: ноль значит ноль."""
+    result = score(a_request(), make_listing(), weights={"budget": 0, "district": 0})
+    assert result.value == 0
+    assert result.matched
