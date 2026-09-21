@@ -101,3 +101,17 @@ def test_missing_config_reports_clearly_without_traceback(tmp_path, capsys):
     code = main(["--env", "нет-такого", "--config-dir", str(tmp_path), "doctor"])
     assert code == 2
     assert "нет-такого" in capsys.readouterr().err
+
+
+def test_output_survives_a_non_utf8_console(project, monkeypatch, capsys):
+    """Под Windows перенаправленный вывод приходит в cp1252: кириллица не должна ронять прогон."""
+    import io
+    import sys
+
+    stream = io.TextIOWrapper(io.BytesIO(), encoding="cp1252", line_buffering=True)
+    monkeypatch.setattr(sys, "stdout", stream)
+    code = run(project, "scrape")
+    stream.flush()
+    text = stream.buffer.getvalue().decode("utf-8")
+    assert code == 0
+    assert "страниц: 2" in text

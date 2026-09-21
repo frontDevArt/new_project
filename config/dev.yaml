@@ -23,7 +23,7 @@ notify:
   kind: stdout                  # none | stdout — telegram появится на M3
 
 scrape:
-  kind: files                   # playwright — через браузер; http — голые запросы; files — с диска
+  kind: playwright                 # playwright — через браузер; http — голые запросы; files — с диска
   pages_dir: ./data/pages       # откуда берутся страницы при kind: files
   base_url: https://www.list.am/ru
   category: 60                  # продажа квартир

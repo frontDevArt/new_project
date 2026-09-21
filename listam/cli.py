@@ -37,7 +37,26 @@ def build_parser() -> argparse.ArgumentParser:
     return parser
 
 
+def _force_utf8_output() -> None:
+    """Сообщения инструмента на русском, а консоль Windows по умолчанию cp1252.
+
+    Перенаправленный вывод (пайп, `> файл`, запуск из-под другой программы) получает
+    именно её и падает на первой кириллической букве. Печать итога не должна ронять
+    прогон, который уже сходил в сеть и записал базу, поэтому оба потока переводим
+    в UTF-8, а непредставимый символ заменяем, а не бросаем исключение.
+    """
+    for stream in (sys.stdout, sys.stderr):
+        reconfigure = getattr(stream, "reconfigure", None)
+        if reconfigure is None:  # подменённый поток в тестах — трогать нечего
+            continue
+        try:
+            reconfigure(encoding="utf-8", errors="replace")
+        except (ValueError, OSError):  # поток уже закрыт или не перенастраивается
+            pass
+
+
 def main(argv: list[str] | None = None) -> int:
+    _force_utf8_output()
     args = build_parser().parse_args(argv)
     try:
         config = load_config(env=args.env, config_dir=args.config_dir)
