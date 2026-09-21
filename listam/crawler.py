@@ -261,6 +261,30 @@ def incremental_stop(
     return None, False
 
 
+DEFAULT_MAX_GONE = 10     # доля активных, которая может пропасть с ленты за один обход
+
+
+def gone_refusal(missing: int, active_total: int, max_percent: float) -> str | None:
+    """Причина, по которой снятыми не помечается ничего. None — помечаем.
+
+    С ленты за час уходит десяток объявлений. Если пропала пятая часть базы,
+    объяснение не в рынке: обход не дошёл до конца, уехала вёрстка или в разбор
+    попала не та страница. Пометить их снятыми — значит выбросить из работы
+    тысячи живых квартир, а вернёт их только следующий удачный обход.
+    """
+    if not missing or not active_total or max_percent <= 0:
+        return None
+    share = missing / active_total * 100
+    if share <= max_percent:
+        return None
+    return (
+        f"снятыми не помечено ничего: с ленты пропало {missing} объявлений "
+        f"из {active_total} активных ({share:.1f}%), это больше порога "
+        f"scrape.max_gone_percent = {max_percent:.0f}%. Так выглядит оборванный "
+        f"обход, а не рынок"
+    )
+
+
 def upload_refusal(
     *, errors: int, shrink: str | None, allowed_errors: bool
 ) -> str | None:
@@ -620,6 +644,24 @@ def run_scrape(
                         f"{note}; пагинатор не дал следующей страницы: обход кончился "
                         f"на первой, хотя scrape.max_pages = {limit}"
                     )
+
+                # Снятыми помечает только полный удачный обход: он один видел
+                # всю ленту, и только у него «не встретилось» значит «ушло».
+                if mode == "full" and counters.errors == 0 and database is not None:
+                    active = database.active_ids()
+                    missing = active - seen_ids
+                    refusal = gone_refusal(
+                        len(missing), len(active),
+                        float(config.get("scrape.max_gone_percent", DEFAULT_MAX_GONE) or 0),
+                    )
+                    if refusal:
+                        counters.errors += 1
+                        note = f"{note}; {refusal}"
+                    elif missing:
+                        counters.gone_marked = database.mark_gone(
+                            missing, gone_at=datetime.now(timezone.utc)
+                        )
+                        note = f"{note}; снято с публикации: {counters.gone_marked}"
             except BaseException as exc:
                 counters.errors += 1
                 if isinstance(exc, KeyboardInterrupt):

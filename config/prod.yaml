@@ -54,6 +54,7 @@ scrape:
   fresh_max_pages: 20               # потолок инкрементального обхода
   expected_pages_min: null      # обход короче — сбой; null — проверки нет
   max_pages_drop_percent: 20    # на столько процентов обход может быть короче прошлого удачного
+  max_gone_percent: 10          # больше этой доли пропало с ленты — не помечаем, это сбой
   timeout_seconds: 45
   retries: 3
   headless: false               # на сервере без экрана запускать под xvfb-run
