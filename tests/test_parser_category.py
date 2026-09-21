@@ -157,3 +157,29 @@ def test_price_amount_is_filled_for_every_currency(cards):
     assert cards["23973917"].price_amount == 162000.0   # USD
     assert cards["24228087"].price_amount == 23800000.0  # AMD
     assert cards["99999999"].price_amount is None        # цены нет
+
+
+def test_a_page_without_the_feed_container_is_refused():
+    """Находка 15: откат на весь документ превращал шапку и подвал в ленту.
+
+    `soup.find(id="contentr") or soup` на странице-заглушке собирал ссылки
+    `/item/` из шапки и подвала: пяток карточек-огрызков вместо ленты, и прогон
+    считал это удачей.
+    """
+    from listam.parsers.category_list import ListingContainerMissing
+
+    markup = (
+        '<html><body><div id="header"><a href="/ru/item/1"><div class="l">из шапки</div></a></div>'
+        '<div id="footer"><a href="/ru/item/2"><div class="l">из подвала</div></a></div>'
+        "</body></html>"
+    )
+
+    with pytest.raises(ListingContainerMissing) as error:
+        parse_listing_cards(markup)
+
+    assert "контейнер ленты не найден" in str(error.value)
+
+
+def test_the_feed_container_is_enough_to_parse(html):
+    """Контейнер на месте — разбор идёт как обычно."""
+    assert len(parse_listing_cards(html)) == 6

@@ -792,3 +792,54 @@ def test_a_checked_run_keeps_quiet_about_skipping(project):
 
     assert "проверка вёрстки пропущена" not in run.notes
 
+
+def feed_page(cards: int) -> str:
+    """Страница ленты с заданным числом карточек — ровно такой формы, как на сайте."""
+    items = "".join(
+        f'<a href="/ru/item/{9000000 + n}"><div class="l">квартира {n}</div>'
+        f'<div class="at">2 ком., 56 кв.м., 3/9 этаж</div>'
+        f'<div class="at category-data-list-card__location">Аван</div>'
+        f'<span class="category-data-list-card__amount">$ 100,000</span></a>'
+        for n in range(cards)
+    )
+    return f'<html><body><div id="contentr">{items}</div></body></html>'
+
+
+def test_a_page_without_the_feed_container_stops_the_run(project, tmp_path):
+    """Находка 15: заглушка вместо ленты — это сбой, а не пять карточек из шапки."""
+    pages = Path(project.get("scrape.pages_dir"))
+    (pages / "category-60.html").write_text(
+        '<html><body><div id="header"><a href="/ru/item/1"><div class="l">шапка</div></a></div>'
+        "</body></html>",
+        encoding="utf-8",
+    )
+
+    run = run_scrape(project)
+
+    assert run.errors == 1
+    assert "контейнер ленты не найден" in run.notes
+    assert run.listings_seen == 0
+
+
+def test_too_many_cards_on_a_page_stops_the_run(project):
+    """Верхний порог: 140 карточек на странице — это не лента, а склейка."""
+    pages = Path(project.get("scrape.pages_dir"))
+    (pages / "category-60.html").write_text(feed_page(140), encoding="utf-8")
+    project.data["scrape"]["max_cards_per_page"] = 120
+
+    run = run_scrape(project)
+
+    assert run.errors == 1
+    assert "scrape.max_cards_per_page = 120" in run.notes
+
+
+def test_a_page_within_the_upper_limit_is_parsed(project):
+    pages = Path(project.get("scrape.pages_dir"))
+    (pages / "category-60.html").write_text(feed_page(96), encoding="utf-8")
+    project.data["scrape"]["max_cards_per_page"] = 120
+
+    run = run_scrape(project)
+
+    assert "max_cards_per_page" not in run.notes
+    assert run.listings_seen >= 96
+

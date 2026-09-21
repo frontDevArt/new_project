@@ -46,6 +46,7 @@ scrape:
   base_url: https://www.list.am/ru
   category: 60
   min_cards_per_page: 20        # страница отдала меньше — считаем сбоем и встаём
+  max_cards_per_page: 120       # страница отдала больше — в разбор попала не лента
   hard_page_limit: 1000         # потолок обхода: зацикленный пагинатор не крутит вечно
   delay_seconds: 1.5
   max_pages: null               # до конца категории

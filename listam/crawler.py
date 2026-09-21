@@ -21,7 +21,12 @@ from listam.domain.coverage import Coverage, rules_from as coverage_rules_from
 from listam.domain.models import Listing, Run
 from listam.domain.money import Money
 from listam.domain.validate import detect_anomalies, rules_from
-from listam.parsers.category_list import DEFAULT_BASE_URL, parse_listing_cards, parse_next_page
+from listam.parsers.category_list import (
+    DEFAULT_BASE_URL,
+    ListingContainerMissing,
+    parse_listing_cards,
+    parse_next_page,
+)
 from listam.ports.fetcher import FetchError
 from listam.ports.rate import Rate, RateError
 from listam.wiring import (
@@ -35,6 +40,7 @@ from listam.wiring import (
 
 
 DEFAULT_MIN_CARDS = 20        # здоровая страница ленты отдаёт под сотню карточек
+DEFAULT_MAX_CARDS = 120       # больше сотни с лишним — это не лента, а склейка
 DEFAULT_KEEP_BACKUPS = 5      # сколько прежних копий базы держим в хранилище
 DEFAULT_MAX_SHRINK = 10       # на сколько процентов база может усохнуть без разрешения
 DEFAULT_HARD_PAGE_LIMIT = 1000  # потолок обхода: категория 60 — это 215 страниц
@@ -292,6 +298,7 @@ def run_scrape(
     base_url = config.get("scrape.base_url") or DEFAULT_BASE_URL
 
     min_cards = int(config.get("scrape.min_cards_per_page", DEFAULT_MIN_CARDS) or 0)
+    max_cards = int(config.get("scrape.max_cards_per_page", DEFAULT_MAX_CARDS) or 0)
     hard_limit = int(config.get("scrape.hard_page_limit", DEFAULT_HARD_PAGE_LIMIT) or 0)
     rules = rules_from(config)
     coverage = Coverage(coverage_rules_from(config))
@@ -394,7 +401,21 @@ def run_scrape(
                         note = f"{note}; страница {page} не получена: {exc}"
                         break
 
-                    cards = parse_listing_cards(html, base_url=base_url)
+                    try:
+                        cards = parse_listing_cards(html, base_url=base_url)
+                    except ListingContainerMissing as exc:
+                        counters.errors += 1
+                        note = f"{note}; страница {page}: {exc}"
+                        break
+
+                    if max_cards and len(cards) > max_cards:
+                        counters.errors += 1
+                        note = (
+                            f"{note}; страница {page}: карточек {len(cards)}, "
+                            f"это больше порога scrape.max_cards_per_page = {max_cards}. "
+                            f"Столько лента не отдаёт — похоже, в разбор попала не она"
+                        )
+                        break
                     if len(cards) < min_cards:
                         counters.errors += 1
                         note = (

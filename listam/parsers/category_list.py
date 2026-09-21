@@ -19,6 +19,15 @@ from listam.domain.money import parse_price, to_number
 
 DEFAULT_BASE_URL = "https://www.list.am/ru"
 
+# Контейнер ленты. Карточки живут только внутри него: ссылки `/item/` есть
+# и в шапке, и в подвале, и в блоке «похожие».
+FEED_CONTAINER = "contentr"
+
+
+class ListingContainerMissing(Exception):
+    """На странице нет контейнера ленты — разбирать нечего."""
+
+
 ITEM_ID = re.compile(r"/item/(\d+)")
 NEXT_PAGE = re.compile(r"/category/\d+/(\d+)$")
 
@@ -50,8 +59,15 @@ def _card_nodes(soup: BeautifulSoup) -> list[Tag]:
     Топ-блок (`#tp`) повторяется на каждой странице и не подчиняется сортировке
     по дате — из-за него инкрементальный прогон на M1 останавливался бы сразу.
     """
-    container = soup.find(id="contentr") or soup
-    top = container.find(id="tp") if isinstance(container, Tag) else None
+    container = soup.find(id=FEED_CONTAINER)
+    if not isinstance(container, Tag):
+        # Откат на весь документ собирал бы ссылки шапки и подвала: пяток
+        # карточек-огрызков вместо ленты, и прогон считал бы это удачей.
+        raise ListingContainerMissing(
+            f"контейнер ленты не найден: на странице нет #{FEED_CONTAINER}. "
+            f"Так выглядит заглушка Cloudflare с кодом 200 или смена вёрстки"
+        )
+    top = container.find(id="tp")
     top_cards = set()
     if isinstance(top, Tag):
         top_cards = {id(node) for node in top.select('a[href*="/item/"]')}
