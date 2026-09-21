@@ -1,0 +1,2 @@
+id,client_name,client_phone,status,budget_max,budget_stretch,districts,districts_priority,rooms,area_min,area_max,floor_min,floor_max,no_first_floor,no_last_floor,must_have,nice_to_have,floor_rules,notes
+R-1,Имя Фамилия,+374 00 000000,active,120 000 $,135000,"Кентрон, Арабкир",Кентрон,2-3,60,95,2,,да,да,ремонт,балкон,не первый и не последний,строка-образец: скопируй файл в data/requests.csv и замени

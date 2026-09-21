@@ -29,7 +29,8 @@ coverage:                       # доли заполненности полей
 
 requests:
   kind: csv                     # none | csv | gsheet
-  path: ./data/requests.csv     # для kind: csv
+  path: ./data/requests.csv     # для kind: csv; папка data не коммитится,
+                                # образец таблицы — config/requests.example.csv
   # sheet: ${REQUESTS_SHEET}          # для kind: gsheet
   # credentials_file: ${GDRIVE_CREDENTIALS_FILE}
   # range: A1:Z1000                   # сколько строк листа читаем

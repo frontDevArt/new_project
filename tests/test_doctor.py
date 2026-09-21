@@ -149,3 +149,72 @@ def test_the_verdict_does_not_say_everything_is_fine_when_it_warns(tmp_path):
 
     assert "Всё на месте" not in text
     assert "предупреждени" in text
+
+
+# --- источник заявок (фаза 2 M2) --------------------------------------
+# `doctor` отвечает на вопрос «матчинг заработает?». Ненастроенный источник —
+# не сбой окружения, но и не «всё на месте»: без заявок матчить нечего.
+
+def source(report):
+    return next(c for c in report.checks if c.name == "Источник заявок")
+
+
+def requests_csv(tmp_path, rows: str) -> Path:
+    path = tmp_path / "requests.csv"
+    path.write_text(rows, encoding="utf-8")
+    return path
+
+
+HEADER = ("id,client_name,client_phone,status,budget_max,budget_stretch,districts,"
+          "districts_priority,rooms,area_min,area_max,floor_min,floor_max,"
+          "no_first_floor,no_last_floor,must_have,nice_to_have,floor_rules,notes\n")
+GOOD_ROW = "R-1,Ани,+374,active,120000,,Кентрон,,3,60,95,,,да,нет,,,,\n"
+BAD_ROW = "R-2,Ваган,+374,active,примерно 100к,,Кентрон,,3,60,95,,,да,нет,,,,\n"
+
+
+def test_a_source_that_is_not_configured_is_a_warning_not_a_failure(tmp_path):
+    report = run_doctor(cfg(tmp_path, requests={"kind": "none"}), check_network=False)
+
+    assert report.ok is True
+    assert source(report).warn is True
+    assert "не настроен" in source(report).details
+
+
+def test_a_live_csv_source_is_green_and_counts_the_rows(tmp_path):
+    path = requests_csv(tmp_path, HEADER + GOOD_ROW)
+    report = run_doctor(cfg(tmp_path, requests={"kind": "csv", "path": str(path)}),
+                        check_network=False)
+
+    assert source(report).ok is True and source(report).warn is False
+    assert "1" in source(report).details
+
+
+def test_unparsed_rows_are_a_warning(tmp_path):
+    path = requests_csv(tmp_path, HEADER + GOOD_ROW + BAD_ROW)
+    report = run_doctor(cfg(tmp_path, requests={"kind": "csv", "path": str(path)}),
+                        check_network=False)
+
+    assert source(report).ok is True
+    assert source(report).warn is True
+    assert "1" in source(report).details
+
+
+def test_an_unreachable_source_fails_the_report(tmp_path):
+    report = run_doctor(
+        cfg(tmp_path, requests={"kind": "csv", "path": str(tmp_path / "нет.csv")}),
+        check_network=False,
+    )
+
+    assert report.ok is False
+    assert source(report).ok is False
+
+
+def test_a_source_without_active_requests_is_a_warning(tmp_path):
+    """Таблица есть, а матчить нечего: это не сбой окружения, но и не «всё на месте»."""
+    path = requests_csv(tmp_path, HEADER)
+    report = run_doctor(cfg(tmp_path, requests={"kind": "csv", "path": str(path)}),
+                        check_network=False)
+
+    assert report.ok is True
+    assert source(report).warn is True
+    assert "матчить нечего" in source(report).details

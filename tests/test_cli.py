@@ -357,3 +357,60 @@ def test_scrape_refuses_a_negative_number_of_pages(project, capsys):
 
     assert code == 2
     assert "хотя бы одна" in capsys.readouterr().err
+
+
+# --- listam requests (фаза 2 M2) --------------------------------------
+
+REQUESTS_HEADER = (
+    "id,client_name,client_phone,status,budget_max,budget_stretch,districts,"
+    "districts_priority,rooms,area_min,area_max,floor_min,floor_max,"
+    "no_first_floor,no_last_floor,must_have,nice_to_have,floor_rules,notes\n"
+)
+
+
+def with_requests(project, rows: str) -> Path:
+    """Дописывает в конфиг проекта секцию requests на написанный файл."""
+    path = project / "requests.csv"
+    path.write_text(REQUESTS_HEADER + rows, encoding="utf-8")
+    config = project / "config" / "test.yaml"
+    config.write_text(
+        config.read_text(encoding="utf-8")
+        + f"\nrequests:\n  kind: csv\n  path: {path.as_posix()}\n",
+        encoding="utf-8",
+    )
+    return path
+
+
+def test_requests_reads_the_source_and_reports_what_it_stored(project, capsys):
+    with_requests(project, "R-1,Ани,+374,active,120000,,Кентрон,,3,60,95,,,да,нет,,,,\n")
+
+    assert run(project, "requests") == 0
+
+    out = capsys.readouterr().out
+    assert "новых 1" in out
+    assert "CSV" in out
+
+
+def test_requests_names_the_rejected_rows_but_does_not_fail(project, capsys):
+    with_requests(
+        project,
+        "R-1,Ани,+374,active,120000,,Кентрон,,3,60,95,,,да,нет,,,,\n"
+        "R-2,Ваган,+374,active,примерно 100к,,Кентрон,,3,60,95,,,да,нет,,,,\n",
+    )
+
+    assert run(project, "requests") == 0
+
+    out = capsys.readouterr().out
+    assert "Не разобрано: 1" in out
+    assert "budget_max" in out
+
+
+def test_requests_fails_when_the_source_is_unreachable(project, capsys):
+    config = project / "config" / "test.yaml"
+    config.write_text(
+        config.read_text(encoding="utf-8")
+        + f"\nrequests:\n  kind: csv\n  path: {(project / 'нет.csv').as_posix()}\n",
+        encoding="utf-8",
+    )
+
+    assert run(project, "requests") == 1

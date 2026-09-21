@@ -13,8 +13,9 @@ from pathlib import Path
 from listam.config import Config, threshold
 from listam.crawler import DEFAULT_FRESH_MAX_PAGES, DEFAULT_FRESH_STOP_PAGES, \
     DEFAULT_MAX_GONE, DEFAULT_MAX_PAGES_DROP
-from listam.wiring import build_exporter, build_fetcher, build_rate_provider, build_storage, \
-    database_path
+from listam.ports.requests_source import EmptyRequestsSource
+from listam.wiring import build_exporter, build_fetcher, build_rate_provider, \
+    build_requests_source, build_storage, database_path
 
 
 @dataclass
@@ -128,10 +129,46 @@ def thresholds_check(config: Config) -> Check:
     return Check(name="Пороги прогона", ok=not harm, details=details, warn=bool(warn))
 
 
+def requests_check(config: Config) -> Check:
+    """Заработает ли матчинг: есть ли источник заявок и читается ли он.
+
+    Ненастроенный источник — предупреждение, а не сбой: окружение исправно,
+    но матчить нечего, и человек должен узнать об этом здесь, а не по пустой
+    витрине матчей. Неразобранные строки — тоже предупреждение: решение 2
+    спеки говорит, что опечатка не роняет чтение, но молчать о ней нельзя.
+    """
+    try:
+        source = build_requests_source(config)
+    except Exception as exc:
+        return Check(name="Источник заявок", ok=False, details=str(exc))
+
+    described = source.describe()
+    if isinstance(source, EmptyRequestsSource):
+        return Check(
+            name="Источник заявок", ok=True, warn=True,
+            details=f"{described} — матчинг работать не будет: заявок неоткуда взять",
+        )
+
+    try:
+        parsed, rejected = source.read()
+    except Exception as exc:
+        return Check(name="Источник заявок", ok=False, details=f"{described}: {exc}")
+
+    active = sum(1 for item in parsed if item.status == "active")
+    details = f"{described}: заявок {len(parsed)}, из них активных {active}"
+    if rejected:
+        details += f"; не разобрано строк {len(rejected)} — {rejected[0].render()}"
+    if not active:
+        details += "; активных заявок нет — матчить нечего"
+    return Check(name="Источник заявок", ok=True,
+                 warn=bool(rejected) or not active, details=details)
+
+
 def run_doctor(config: Config, check_network: bool = True) -> DoctorReport:
     report = DoctorReport()
     report.add("Конфиг", True, f"{config.path} (APP_ENV={config.env})")
     report.checks.append(thresholds_check(config))
+    report.checks.append(requests_check(config))
 
     # --- хранилище ----------------------------------------------------
     try:

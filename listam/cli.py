@@ -4,6 +4,7 @@
     python -m listam scrape          пройти по ленте и обновить базу
     python -m listam recheck         пересчитать пометки по всей базе
     python -m listam export          выгрузить текущую базу в .xlsx
+    python -m listam requests        прочитать заявки покупателей из источника
     python -m listam changes         что принёс последний прогон
 
 Окружение выбирается переменной APP_ENV или флагом --env.
@@ -51,6 +52,9 @@ def build_parser() -> argparse.ArgumentParser:
 
     export = commands.add_parser("export", help="выгрузить базу в .xlsx")
     export.add_argument("--name", help="имя файла выгрузки")
+
+    commands.add_parser("requests",
+                        help="прочитать заявки из источника и записать в базу")
 
     changes = commands.add_parser("changes", help="что принёс последний прогон")
     changes.add_argument("--hours", type=float,
@@ -124,6 +128,9 @@ def main(argv: list[str] | None = None) -> int:
     if args.command == "export":
         return _export(config, name=args.name)
 
+    if args.command == "requests":
+        return _requests(config)
+
     if args.command == "changes":
         # Разбор аргументов — дело командной строки: `run_changes` про коды
         # возврата ничего не знает. Бессмысленный ввод отклоняется на входе,
@@ -184,6 +191,14 @@ def _recheck(config) -> int:
     )
     if report.notes:
         print(report.notes)
+    return 1 if report.errors else 0
+
+
+def _requests(config) -> int:
+    from listam.requests_sync import run_requests_sync
+
+    report = run_requests_sync(config)
+    print(report.render())
     return 1 if report.errors else 0
 
 
