@@ -39,6 +39,7 @@ COLUMNS: list[tuple[str, str, int, str | None]] = [
     ("Статус", "status", 10, None),
     ("Появилось", "first_seen", 18, None),
     ("Видели", "last_seen", 18, None),
+    ("Снято", "gone_at", 18, None),
 ]
 
 HEADER_FILL = PatternFill("solid", fgColor="1F3864")

@@ -157,6 +157,20 @@ def test_amount_in_original_currency_has_its_own_column(tmp_path):
     sheet = load_workbook(path).active
     headers = [cell.value for cell in sheet[1]]
     assert headers.index("Цена в валюте") == headers.index("Цена как на сайте") + 1
-    assert len(headers) == 21
-    assert sheet.auto_filter.ref.startswith("A1:U")
+    assert len(headers) == 22
+    assert sheet.auto_filter.ref.startswith("A1:V")
     assert sheet.cell(row=2, column=headers.index("Цена в валюте") + 1).value == 140000.0
+
+
+def test_a_gone_listing_shows_its_status_and_the_day_it_left(exporter):
+    """Снятое объявление остаётся в выгрузке: цена ушедшей квартиры — история рынка."""
+    gone = Listing(id="1", url="https://www.list.am/ru/item/1", status="gone",
+                   first_seen=NOW, last_seen=NOW,
+                   gone_at=datetime(2026, 9, 22, 8, 0, tzinfo=timezone.utc))
+
+    sheet = load_workbook(exporter.export([gone])).active
+    headers = [cell.value for cell in sheet[1]]
+
+    assert headers[-1] == "Снято"
+    assert sheet.cell(row=2, column=len(headers)).value == "2026-09-22 08:00"
+    assert sheet.cell(row=2, column=headers.index("Статус") + 1).value == "gone"
