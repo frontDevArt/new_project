@@ -185,6 +185,28 @@ def pages_shortfall(
     return None
 
 
+def resume_start_page(previous: Run | None) -> tuple[int, str | None]:
+    """С какой страницы идёт `--resume` и что об этом сказано в журнале.
+
+    Возобновлять можно только прерванный обход. Прогон, который дошёл до конца
+    без ошибок, продолжать нечего: раньше `--resume` брал его последнюю страницу,
+    проходил её одну и отчитывался успехом — в базе при этом лежала позавчерашняя лента.
+
+    Страница из `last_page` уже разобрана и записана — продолжаем со следующей.
+    """
+    if previous is None:
+        return 1, None
+    if previous.finished_at is not None and not previous.errors:
+        return 1, (
+            "прошлый обход завершён без ошибок, продолжать нечего — "
+            "иду с первой страницы"
+        )
+    if previous.last_page < 1:
+        return 1, "прошлый обход не дошёл ни до одной страницы — иду с первой"
+    page = int(previous.last_page) + 1
+    return page, f"обход продолжен со страницы {page}"
+
+
 def upload_refusal(
     *, errors: int, shrink: str | None, allowed_errors: bool
 ) -> str | None:
@@ -311,204 +333,227 @@ def run_scrape(
                 notes=f"{note}; {exc}",
             )
 
-    # Пробный прогон не трогает диск вообще: ни скачивания базы, ни файла,
-    # ни миграций — иначе «ничего не записано» было бы неправдой.
-    storage = None
-    local_db = database_path(config)
-    remote_name = config.get("storage.db_filename", "listam.sqlite")
-    database = None
-    remote = _Remote(note="")
-    if not dry_run:
-        storage = build_storage(config)
-        remote = take_the_fresher_copy(storage, remote_name, local_db)
-        note = f"{note}; {remote.note}" if remote.note else note
-        database = build_database(config)
-        database.connect()
-        database.migrate()
-
-    # Прошлый удачный прогон — мерка полноты обхода: столько страниц в ленте и есть.
-    previous_success = database.last_successful_run() if database is not None else None
-
-    start_page = 1
-    if resume and database is not None:
-        previous = database.last_run()
-        start_page = max(1, previous.last_page if previous else 1)
-        if start_page > 1:
-            note = f"{note}; обход продолжен со страницы {start_page}"
-
-    run_id = None if dry_run else database.start_run(started_at, rate_value)
-    seen_ids: set[str] = set()
     try:
-        # Падение посреди обхода — это ошибка прогона, а не «ничего не было».
-        # Без этого журнал оставался с errors = 0, а испорченная половинная база
-        # уезжала в хранилище как удачный прогон.
-        try:
-            page = start_page
-            while True:
-                try:
-                    html = fetcher.get(page_path(category, page))
-                except FetchError as exc:
-                    counters.errors += 1
-                    note = f"{note}; страница {page} не получена: {exc}"
-                    break
-
-                cards = parse_listing_cards(html, base_url=base_url)
-                if len(cards) < min_cards:
-                    counters.errors += 1
-                    note = (
-                        f"{note}; страница {page}: карточек {len(cards)}, "
-                        f"это меньше порога scrape.min_cards_per_page = {min_cards}. "
-                        f"Так выглядит смена вёрстки или заглушка Cloudflare с кодом 200"
-                    )
-                    break
-                counters.pages_fetched += 1   # страница засчитана: она разобралась
-
-                for listing in cards:
-                    counters.listings_seen += 1
-                    if listing.id in seen_ids:
-                        continue          # одно и то же объявление бывает на двух страницах подряд
-                    seen_ids.add(listing.id)
-                    coverage.add(listing)
-                    apply_rate(listing, rate_value)
-                    listing.anomaly = detect_anomalies(listing, rules)
-                    if dry_run:
-                        continue
-                    outcome = database.upsert_listing(
-                        listing,
-                        seen_at=datetime.now(timezone.utc),
-                        rate_amd_per_usd=rate_value,
-                    )
-                    if outcome == "new":
-                        counters.new_listings += 1
-                    elif outcome in ("updated", "price_changed"):
-                        counters.updated_listings += 1
-
-                if run_id is not None:
-                    database.mark_page(run_id, page)    # убитый прогон продолжится отсюда
-
-                if limit is not None and counters.pages_fetched >= limit:
-                    break
-                if hard_limit and counters.pages_fetched >= hard_limit:
-                    counters.errors += 1
-                    note = (
-                        f"{note}; обход упёрся в потолок scrape.hard_page_limit = "
-                        f"{hard_limit}: похоже, пагинатор зациклился"
-                    )
-                    break
-                following = parse_next_page(html)
-                if following is None or following <= page:
-                    break
-                page = following
-
-            # Укороченный обход сверяем с полнотой только тогда, когда его никто
-            # не укорачивал нарочно: с --max-pages и --resume это норма, а не сбой.
-            if limit is None and not resume:
-                shortfall = pages_shortfall(
-                    counters.pages_fetched,
-                    config.get("scrape.expected_pages_min"),
-                    previous_success.pages_fetched if previous_success else None,
-                    float(config.get("scrape.max_pages_drop_percent", DEFAULT_MAX_PAGES_DROP) or 0),
-                )
-                if shortfall:
-                    counters.errors += 1
-                    note = f"{note}; {shortfall}"
-
-            for failure in coverage.failures():
-                counters.errors += 1
-                note = f"{note}; {failure}"
-
-            # Продолженный обход законно кончается на первой же своей странице —
-            # это конец ленты, а не сломанный пагинатор.
-            alone = counters.pages_fetched == 1 and not (resume and start_page > 1)
-            if counters.errors == 0 and alone and limit != 1:
-                counters.errors += 1
-                note = (
-                    f"{note}; пагинатор не дал следующей страницы: обход кончился "
-                    f"на первой, хотя scrape.max_pages = {limit}"
-                )
-        except BaseException as exc:
-            counters.errors += 1
-            if isinstance(exc, KeyboardInterrupt):
-                note = f"{note}; прогон прерван человеком"
-            else:
-                note = f"{note}; прогон упал: {type(exc).__name__}: {exc}"
-            raise
-    finally:
-        finished_at = datetime.now(timezone.utc)
-
-        def journal() -> None:
-            """Записывает журнал прогона тем, что известно к этой минуте.
-
-            Зовётся не один раз: отказ от заливки и несделанный снимок — это тоже
-            ошибки прогона, и узнаём мы о них уже после того, как строка записана.
-            """
-            if run_id is not None:
-                database.finish_run(
-                    run_id,
-                    finished_at,
-                    pages_fetched=counters.pages_fetched,
-                    listings_seen=counters.listings_seen,
-                    new_listings=counters.new_listings,
-                    updated_listings=counters.updated_listings,
-                    errors=counters.errors,
-                    notes=note,
-                )
-
-        refusal = None
-        snapshot = None
-        if storage is not None:
-            shrink = shrink_refusal(
-                remote.listings,
-                database.count_listings(),
-                float(config.get("storage.max_shrink_percent", DEFAULT_MAX_SHRINK)) / 100,
-                allow_shrink,
-            )
-            if shrink:
-                counters.errors += 1
-                note = f"{note}; {shrink}"
-            journal()
-            # Снимок — после журнала и на ещё открытой базе: в хранилище уезжает
-            # копия, в которой этот прогон уже записан.
-            snapshot = local_db.with_name(local_db.name + ".snapshot")
+        # Пробный прогон не трогает диск вообще: ни скачивания базы, ни файла,
+        # ни миграций — иначе «ничего не записано» было бы неправдой.
+        storage = None
+        local_db = database_path(config)
+        remote_name = config.get("storage.db_filename", "listam.sqlite")
+        database = None
+        remote = _Remote(note="")
+        if not dry_run:
+            # Файл базы может быть занят другой программой или лежать на папке,
+            # куда нет прав. Это ошибка прогона с внятным текстом, а не трейсбек:
+            # журнала ещё нет, поэтому рассказывает о ней возвращённый Run.
             try:
-                database.snapshot(snapshot)
-            except Exception as exc:      # sqlite3.Error, OSError — заливать нечего
+                storage = build_storage(config)
+                remote = take_the_fresher_copy(storage, remote_name, local_db)
+                note = f"{note}; {remote.note}" if remote.note else note
+                database = build_database(config)
+                database.connect()
+                database.migrate()
+            except OSError as exc:
+                if database is not None:
+                    database.close()
+                fetcher.close()
                 counters.errors += 1
-                note = f"{note}; снимок базы не сделан: {exc}"
-                snapshot = None
-            refusal = upload_refusal(
-                errors=counters.errors,
-                shrink=shrink,
-                allowed_errors=allow_upload_with_errors,
-            )
-            if refusal and refusal is not shrink:
-                note = f"{note}; {refusal}"
-        journal()
-        if database is not None:
-            database.close()
-        fetcher.close()
-        if storage is not None and refusal is None and snapshot is not None:
-            rotate_backups(
-                storage,
-                remote_name,
-                int(config.get("storage.keep_backups", DEFAULT_KEEP_BACKUPS) or 0),
-                local_db.parent,
-            )
-            storage.upload(snapshot, remote_name)
-        if snapshot is not None:
-            snapshot.unlink(missing_ok=True)
+                return Run(
+                    id=None,
+                    started_at=started_at,
+                    finished_at=datetime.now(timezone.utc),
+                    rate_amd_per_usd=rate_value,
+                    errors=counters.errors,
+                    notes=f"{note}; файл базы недоступен: {exc}",
+                )
+
+        # Прошлый удачный прогон — мерка полноты обхода: столько страниц в ленте и есть.
+        previous_success = database.last_successful_run() if database is not None else None
+
+        start_page = 1
+        if resume and database is not None:
+            start_page, resume_note = resume_start_page(database.last_run())
+            if resume_note:
+                note = f"{note}; {resume_note}"
+
+        run_id = None if dry_run else database.start_run(started_at, rate_value)
+        seen_ids: set[str] = set()
+        try:
+            # Падение посреди обхода — это ошибка прогона, а не «ничего не было».
+            # Без этого журнал оставался с errors = 0, а испорченная половинная база
+            # уезжала в хранилище как удачный прогон.
+            try:
+                page = start_page
+                while True:
+                    try:
+                        html = fetcher.get(page_path(category, page))
+                    except FetchError as exc:
+                        counters.errors += 1
+                        note = f"{note}; страница {page} не получена: {exc}"
+                        break
+
+                    cards = parse_listing_cards(html, base_url=base_url)
+                    if len(cards) < min_cards:
+                        counters.errors += 1
+                        note = (
+                            f"{note}; страница {page}: карточек {len(cards)}, "
+                            f"это меньше порога scrape.min_cards_per_page = {min_cards}. "
+                            f"Так выглядит смена вёрстки или заглушка Cloudflare с кодом 200"
+                        )
+                        break
+                    counters.pages_fetched += 1   # страница засчитана: она разобралась
+
+                    for listing in cards:
+                        counters.listings_seen += 1
+                        if listing.id in seen_ids:
+                            continue          # одно и то же объявление бывает на двух страницах подряд
+                        seen_ids.add(listing.id)
+                        coverage.add(listing)
+                        apply_rate(listing, rate_value)
+                        listing.anomaly = detect_anomalies(listing, rules)
+                        if dry_run:
+                            continue
+                        outcome = database.upsert_listing(
+                            listing,
+                            seen_at=datetime.now(timezone.utc),
+                            rate_amd_per_usd=rate_value,
+                        )
+                        if outcome == "new":
+                            counters.new_listings += 1
+                        elif outcome in ("updated", "price_changed"):
+                            counters.updated_listings += 1
+
+                    if run_id is not None:
+                        database.mark_page(run_id, page)    # убитый прогон продолжится отсюда
+                    if lock is not None:
+                        lock.touch()        # прогон жив: срок замка отсчитывается заново
+
+                    if limit is not None and counters.pages_fetched >= limit:
+                        break
+                    if hard_limit and counters.pages_fetched >= hard_limit:
+                        counters.errors += 1
+                        note = (
+                            f"{note}; обход упёрся в потолок scrape.hard_page_limit = "
+                            f"{hard_limit}: похоже, пагинатор зациклился"
+                        )
+                        break
+                    following = parse_next_page(html)
+                    if following is None or following <= page:
+                        break
+                    page = following
+
+                # Укороченный обход сверяем с полнотой только тогда, когда его никто
+                # не укорачивал нарочно: с --max-pages и --resume это норма, а не сбой.
+                if limit is None and not resume:
+                    shortfall = pages_shortfall(
+                        counters.pages_fetched,
+                        config.get("scrape.expected_pages_min"),
+                        previous_success.pages_fetched if previous_success else None,
+                        float(config.get("scrape.max_pages_drop_percent", DEFAULT_MAX_PAGES_DROP) or 0),
+                    )
+                    if shortfall:
+                        counters.errors += 1
+                        note = f"{note}; {shortfall}"
+
+                for failure in coverage.failures():
+                    counters.errors += 1
+                    note = f"{note}; {failure}"
+
+                # Продолженный обход законно кончается на первой же своей странице —
+                # это конец ленты, а не сломанный пагинатор.
+                alone = counters.pages_fetched == 1 and not (resume and start_page > 1)
+                if counters.errors == 0 and alone and limit != 1:
+                    counters.errors += 1
+                    note = (
+                        f"{note}; пагинатор не дал следующей страницы: обход кончился "
+                        f"на первой, хотя scrape.max_pages = {limit}"
+                    )
+            except BaseException as exc:
+                counters.errors += 1
+                if isinstance(exc, KeyboardInterrupt):
+                    note = f"{note}; прогон прерван человеком"
+                else:
+                    note = f"{note}; прогон упал: {type(exc).__name__}: {exc}"
+                raise
+        finally:
+            finished_at = datetime.now(timezone.utc)
+
+            def journal() -> None:
+                """Записывает журнал прогона тем, что известно к этой минуте.
+
+                Зовётся не один раз: отказ от заливки и несделанный снимок — это тоже
+                ошибки прогона, и узнаём мы о них уже после того, как строка записана.
+                """
+                if run_id is not None:
+                    database.finish_run(
+                        run_id,
+                        finished_at,
+                        pages_fetched=counters.pages_fetched,
+                        listings_seen=counters.listings_seen,
+                        new_listings=counters.new_listings,
+                        updated_listings=counters.updated_listings,
+                        errors=counters.errors,
+                        notes=note,
+                    )
+
+            refusal = None
+            snapshot = None
+            if storage is not None:
+                shrink = shrink_refusal(
+                    remote.listings,
+                    database.count_listings(),
+                    float(config.get("storage.max_shrink_percent", DEFAULT_MAX_SHRINK)) / 100,
+                    allow_shrink,
+                )
+                if shrink:
+                    counters.errors += 1
+                    note = f"{note}; {shrink}"
+                journal()
+                # Снимок — после журнала и на ещё открытой базе: в хранилище уезжает
+                # копия, в которой этот прогон уже записан.
+                snapshot = local_db.with_name(local_db.name + ".snapshot")
+                try:
+                    database.snapshot(snapshot)
+                except Exception as exc:      # sqlite3.Error, OSError — заливать нечего
+                    counters.errors += 1
+                    note = f"{note}; снимок базы не сделан: {exc}"
+                    snapshot = None
+                refusal = upload_refusal(
+                    errors=counters.errors,
+                    shrink=shrink,
+                    allowed_errors=allow_upload_with_errors,
+                )
+                if refusal and refusal is not shrink:
+                    note = f"{note}; {refusal}"
+            journal()
+            if database is not None:
+                database.close()
+            fetcher.close()
+            if storage is not None and refusal is None and snapshot is not None:
+                rotate_backups(
+                    storage,
+                    remote_name,
+                    int(config.get("storage.keep_backups", DEFAULT_KEEP_BACKUPS) or 0),
+                    local_db.parent,
+                )
+                storage.upload(snapshot, remote_name)
+            if snapshot is not None:
+                snapshot.unlink(missing_ok=True)
+
+        return Run(
+            id=run_id,
+            started_at=started_at,
+            finished_at=finished_at,
+            rate_amd_per_usd=rate_value,
+            pages_fetched=counters.pages_fetched,
+            listings_seen=counters.listings_seen,
+            new_listings=counters.new_listings,
+            updated_listings=counters.updated_listings,
+            errors=counters.errors,
+            notes=note,
+        )
+    finally:
+        # Замок держится ровно столько, сколько идёт прогон: любой выход отсюда,
+        # включая падение подготовки, обязан его отпустить — иначе папка заперта
+        # до тех пор, пока замок не протухнет или его не снимут руками.
         if lock is not None:
             lock.release()
-
-    return Run(
-        id=run_id,
-        started_at=started_at,
-        finished_at=finished_at,
-        rate_amd_per_usd=rate_value,
-        pages_fetched=counters.pages_fetched,
-        listings_seen=counters.listings_seen,
-        new_listings=counters.new_listings,
-        updated_listings=counters.updated_listings,
-        errors=counters.errors,
-        notes=note,
-    )
