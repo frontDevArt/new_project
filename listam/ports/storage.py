@@ -31,5 +31,13 @@ class Storage(ABC):
         """Заливает файл, перезаписывая прежний."""
 
     @abstractmethod
+    def names(self, prefix: str = "") -> list[str]:
+        """Имена файлов в хранилище по возрастанию. Нужны для ротации копий."""
+
+    @abstractmethod
+    def delete(self, name: str) -> None:
+        """Убирает файл. Нет такого — не ошибка."""
+
+    @abstractmethod
     def check(self) -> CheckReport:
         """Проверяет доступ и право на запись, не трогая рабочие файлы."""
