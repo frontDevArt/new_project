@@ -33,6 +33,20 @@ PRICE_FIELDS = ("price_raw", "currency")
 DERIVED_FIELDS = ("price_usd", "price_amd", "price_per_sqm")
 
 
+def latest_schema_version(migrations_dir: str | Path | None = None) -> int:
+    """Версия схемы, которую ждёт этот код: старшая миграция на диске.
+
+    Числа в коде для этого нет и быть не должно: схему задают файлы миграций,
+    и держать рядом с ними вторую версию, которую надо не забыть поправить, —
+    это способ однажды соврать.
+    """
+    directory = Path(migrations_dir) if migrations_dir else MIGRATIONS_DIR
+    return max(
+        (int(path.name.split("_", 1)[0]) for path in directory.glob("*.sql")),
+        default=0,
+    )
+
+
 def to_iso(value: datetime | None) -> str | None:
     """Все отметки времени храним в UTC в ISO-8601."""
     if value is None:
@@ -157,7 +171,18 @@ class SqliteDatabase(Database):
             raise sqlite3.DatabaseError(f"База повреждена: {answer} ({self.path})")
 
     def schema_version(self) -> int:
-        row = self.conn.execute("SELECT MAX(version) AS v FROM schema_version").fetchone()
+        """Версия схемы базы. Миграции не накатывали ни разу — 0.
+
+        Пустой файл — это версия 0, а не повод падать трейсбеком: спрашивать
+        версию у базы имеет право любой, в том числе выгрузка, которая сама
+        ничего не мигрирует.
+        """
+        try:
+            row = self.conn.execute(
+                "SELECT MAX(version) AS v FROM schema_version"
+            ).fetchone()
+        except sqlite3.OperationalError:
+            return 0
         return int(row["v"] or 0)
 
     def table_names(self) -> set[str]:
@@ -229,6 +254,19 @@ class SqliteDatabase(Database):
             "INSERT INTO price_history (listing_id, seen_at, price_usd, rate_amd_per_usd) "
             "VALUES (?, ?, ?, ?)",
             (listing_id, to_iso(seen_at), price_usd, rate_amd_per_usd),
+        )
+
+    def set_computed(
+        self, listing_id: str, *, anomaly: str | None, price_amount: float | None
+    ) -> None:
+        """Пометка и сумма в валюте оригинала — и больше ничего.
+
+        `last_seen` нарочно не трогаем: пересчёт не видел карточку на сайте,
+        и притворяться, что видел, он не имеет права.
+        """
+        self.conn.execute(
+            "UPDATE listings SET anomaly = ?, price_amount = ? WHERE id = ?",
+            (anomaly, price_amount, listing_id),
         )
 
     def get_listing(self, listing_id: str) -> Listing | None:

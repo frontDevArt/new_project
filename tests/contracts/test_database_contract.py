@@ -242,3 +242,30 @@ def test_amount_in_original_currency_survives_the_roundtrip(db):
     )
 
     assert db.get_listing("24254997").price_amount == 140000.0
+
+
+def test_set_computed_touches_only_the_marks(db):
+    """Блокер 5: пересчёт переписывает пометку и сумму — и ничего больше."""
+    db.upsert_listing(make_listing(price_raw="$ 100,000", currency="USD",
+                                   price_usd=100000.0), seen_at=NOW)
+    before = db.get_listing("24254997")
+    history_before = db.price_history("24254997")
+
+    db.set_computed("24254997", anomaly="price_usd", price_amount=100000.0)
+
+    after = db.get_listing("24254997")
+    assert after.anomaly == "price_usd"
+    assert after.price_amount == 100000.0
+    assert after.price_usd == before.price_usd
+    assert after.last_seen == before.last_seen
+    assert db.price_history("24254997") == history_before
+
+
+def test_set_computed_can_clear_a_mark(db):
+    """Пометка снимается так же, как ставится: порог мог измениться."""
+    db.upsert_listing(make_listing(), seen_at=NOW)
+    db.set_computed("24254997", anomaly="area", price_amount=None)
+
+    db.set_computed("24254997", anomaly=None, price_amount=None)
+
+    assert db.get_listing("24254997").anomaly is None

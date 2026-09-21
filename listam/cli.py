@@ -2,6 +2,7 @@
 
     python -m listam doctor          проверка окружения
     python -m listam scrape          пройти по ленте и обновить базу
+    python -m listam recheck         пересчитать пометки по всей базе
     python -m listam export          выгрузить текущую базу в .xlsx
 
 Окружение выбирается переменной APP_ENV или флагом --env.
@@ -11,6 +12,7 @@ from __future__ import annotations
 import argparse
 import sys
 
+from listam.adapters.db_sqlite import latest_schema_version
 from listam.config import ConfigError, load_config
 from listam.doctor import run_doctor
 from listam.wiring import build_database, build_exporter, build_storage, database_path
@@ -37,6 +39,11 @@ def build_parser() -> argparse.ArgumentParser:
                         help="продолжить прерванный обход с последней пройденной страницы")
     scrape.add_argument("--allow-upload-with-errors", action="store_true",
                         help="залить базу в хранилище, даже если в прогоне были ошибки")
+
+    commands.add_parser(
+        "recheck",
+        help="пересчитать пометки и суммы в валюте по всей базе (разовая операция)",
+    )
 
     export = commands.add_parser("export", help="выгрузить базу в .xlsx")
     export.add_argument("--name", help="имя файла выгрузки")
@@ -80,6 +87,9 @@ def main(argv: list[str] | None = None) -> int:
                        allow_shrink=args.allow_shrink, resume=args.resume,
                        allow_upload_with_errors=args.allow_upload_with_errors)
 
+    if args.command == "recheck":
+        return _recheck(config)
+
     if args.command == "export":
         return _export(config, name=args.name)
 
@@ -106,6 +116,20 @@ def _scrape(config, max_pages: int | None, dry_run: bool, allow_shrink: bool = F
     return 1 if run.errors else 0
 
 
+def _recheck(config) -> int:
+    from listam.recheck import run_recheck
+
+    report = run_recheck(config)
+    print(
+        f"Пересчёт: строк: {report.listings}, помечено: {report.marked}, "
+        f"сумма в валюте оригинала: {report.amounts}, изменено: {report.changed}, "
+        f"ошибок: {report.errors}"
+    )
+    if report.notes:
+        print(report.notes)
+    return 1 if report.errors else 0
+
+
 def _export(config, name: str | None) -> int:
     storage = build_storage(config)
     local_db = database_path(config)
@@ -115,7 +139,20 @@ def _export(config, name: str | None) -> int:
 
     database = build_database(config)
     database.connect()
-    database.migrate()
+    # Выгрузка читает базу, а не чинит её. Молчаливая миграция по дороге к .xlsx
+    # правит общую копию за спиной у человека — и делает это тогда, когда он
+    # просил всего лишь таблицу.
+    required = latest_schema_version()
+    version = database.schema_version()
+    if version < required:
+        database.close()
+        print(
+            f"Выгрузка не сделана: схема базы {version}, а код ждёт {required}. "
+            f"Выгрузка ничего не мигрирует — накати миграции и пересчитай базу: "
+            f"python -m listam recheck",
+            file=sys.stderr,
+        )
+        return 1
     listings = list(database.iter_listings())
     database.close()
 

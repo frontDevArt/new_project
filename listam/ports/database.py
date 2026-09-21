@@ -38,6 +38,20 @@ class Database(ABC):
         """
 
     @abstractmethod
+    def transaction(self):
+        """Контекст, внутри которого записи применяются целиком или никак."""
+
+    @abstractmethod
+    def set_computed(
+        self, listing_id: str, *, anomaly: str | None, price_amount: float | None
+    ) -> None:
+        """Переписывает посчитанное по уже записанному: пометку и сумму в валюте.
+
+        Ни цены, ни даты, ни истории это не касается: пересчёт не узнаёт ничего
+        нового о карточке, он доводит строку до вида, который ожидает код.
+        """
+
+    @abstractmethod
     def get_listing(self, listing_id: str) -> Listing | None: ...
 
     @abstractmethod
