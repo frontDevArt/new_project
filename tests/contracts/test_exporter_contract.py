@@ -101,3 +101,62 @@ def test_export_of_empty_database_still_writes_header(exporter):
     sheet = load_workbook(exporter.export([])).active
     assert sheet.max_row == 1
     assert sheet["A1"].value == "ID"
+
+
+def test_export_has_a_column_for_suspicious_rows(tmp_path):
+    from openpyxl import load_workbook
+
+    from listam.adapters.exporter_xlsx import XlsxExporter
+    from listam.domain.models import Listing
+
+    rows = [
+        Listing(id="1", url="u", district="Центр", area=1.0, rooms=3,
+                anomaly="area,rooms_vs_area"),
+        Listing(id="2", url="u", district="Центр", area=80.0, rooms=3),
+    ]
+    path = XlsxExporter(directory=tmp_path).export(rows, name="report.xlsx")
+
+    sheet = load_workbook(path).active
+    headers = [cell.value for cell in sheet[1]]
+    column = headers.index("Сомнительно") + 1
+    marks = {sheet.cell(row=r, column=1).value: sheet.cell(row=r, column=column).value
+             for r in (2, 3)}
+
+    assert marks["1"] == "area,rooms_vs_area"
+    assert marks["2"] is None
+
+
+# --- M6: имя выгрузки не выводит из папки out/ ---
+
+def test_name_cannot_lead_out_of_the_export_directory(tmp_path):
+    out = tmp_path / "out"
+    path = XlsxExporter(directory=out).export([listing("1", NOW)], name="../../беглец.xlsx")
+
+    assert path.parent == out
+    assert not (tmp_path.parent / "беглец.xlsx").exists()
+    assert not (tmp_path / "беглец.xlsx").exists()
+
+
+def test_name_without_a_filename_falls_back_to_the_default(tmp_path):
+    path = XlsxExporter(directory=tmp_path).export([listing("1", NOW)], name="../")
+
+    assert path.parent == tmp_path
+    assert path.name.startswith("listam-")
+
+
+def test_amount_in_original_currency_has_its_own_column(tmp_path):
+    """ВЫСОКИЙ 9: у EUR пересчитанные колонки пусты, но число видно в «Цене в валюте»."""
+    from openpyxl import load_workbook
+
+    exporter = XlsxExporter(directory=tmp_path)
+    path = exporter.export([
+        Listing(id="1", url="https://www.list.am/ru/item/1", price_raw="140,000 €",
+                currency="EUR", price_amount=140000.0, first_seen=NOW, last_seen=NOW),
+    ])
+
+    sheet = load_workbook(path).active
+    headers = [cell.value for cell in sheet[1]]
+    assert headers.index("Цена в валюте") == headers.index("Цена как на сайте") + 1
+    assert len(headers) == 21
+    assert sheet.auto_filter.ref.startswith("A1:U")
+    assert sheet.cell(row=2, column=headers.index("Цена в валюте") + 1).value == 140000.0

@@ -231,3 +231,14 @@ def test_currency_change_overwrites_recomputed_prices(db):
     assert stored.price_usd is None
     assert stored.price_amd is None
     assert stored.price_per_sqm is None
+
+
+def test_amount_in_original_currency_survives_the_roundtrip(db):
+    """ВЫСОКИЙ 9: курса EUR нет, но само число обязано лежать в базе."""
+    db.upsert_listing(
+        make_listing(price_raw="140,000 €", currency="EUR", price_amount=140000.0,
+                     price_usd=None, price_amd=None, price_per_sqm=None),
+        seen_at=NOW,
+    )
+
+    assert db.get_listing("24254997").price_amount == 140000.0

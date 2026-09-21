@@ -103,3 +103,57 @@ def test_next_page_is_found(html):
 
 def test_last_page_has_no_next():
     assert parse_next_page("<html><body><div id='contentr'></div></body></html>") is None
+
+
+# --- H1: разделитель тысяч в площади не имеет права уменьшать её в тысячу раз ---
+
+AREA_FORMS = [
+    ("2 ком., 56 кв.м., 7/18 этаж", 56.0),
+    ("3 ком., 1 200 кв.м.", 1200.0),            # пробел в разряде
+    ("3 ком., 1\u00a0200 кв.м.", 1200.0),        # неразрывный пробел
+    ("3 ком., 1\u202f200 кв.м.", 1200.0),        # узкий неразрывный пробел
+    ("3 ком., 1,200 кв.м.", 1200.0),            # запятая в разряде
+    ("3 ком., 1.200 кв.м.", 1200.0),            # точка в разряде
+    ("2 ком., 56,5 кв.м.", 56.5),               # запятая как дробная часть
+    ("2 ком., 56.5 кв.м.", 56.5),
+    ("2 ком., 56 кв м", 56.0),                  # без точек
+    ("2 ком., 56 кв. м.", 56.0),
+]
+
+
+@pytest.mark.parametrize("line, expected", AREA_FORMS)
+def test_area_is_read_from_every_form_the_site_uses(line, expected):
+    from listam.parsers.category_list import parse_card
+    from bs4 import BeautifulSoup
+
+    markup = (
+        '<a href="/ru/item/1"><div class="l">квартира</div>'
+        '<div class="at">%s</div></a>' % line
+    )
+    card = BeautifulSoup(markup, "lxml").select_one("a")
+
+    assert parse_card(card).area == expected
+
+
+def test_number_parsing_is_the_same_one_prices_use():
+    """Своего разбора числа у парсера быть не должно: разряды уже разобраны в domain."""
+    from listam.domain.money import to_number
+
+    assert to_number("1,200") == 1200.0
+    assert to_number("1 200") == 1200.0
+    assert to_number("56,5") == 56.5
+
+
+# --- ВЫСОКИЙ 9: сумма в валюте оригинала не теряется ---
+
+def test_euro_amount_is_kept_in_original_currency(cards):
+    """Курса EUR у нас нет, но само число обязано доехать до базы."""
+    card = cards["23598471"]
+    assert card.currency == "EUR"
+    assert card.price_amount == 140000.0
+
+
+def test_price_amount_is_filled_for_every_currency(cards):
+    assert cards["23973917"].price_amount == 162000.0   # USD
+    assert cards["24228087"].price_amount == 23800000.0  # AMD
+    assert cards["99999999"].price_amount is None        # цены нет

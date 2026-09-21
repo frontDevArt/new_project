@@ -16,6 +16,7 @@ class Listing:
     street: str | None = None
     price_raw: str | None = None
     currency: str | None = None
+    price_amount: float | None = None      # сумма в валюте оригинала, как на сайте
     price_usd: float | None = None
     price_amd: float | None = None
     area: float | None = None
@@ -26,6 +27,7 @@ class Listing:
     seller_type: str | None = None        # owner | agency | None
     verified: bool | None = None
     new_build: bool | None = None
+    anomaly: str | None = None            # сработавшие правила проверки через запятую
     cluster_id: str | None = None         # заполняется на M2 (дедуп)
     status: str = "active"                # active | gone
     first_seen: datetime | None = None
@@ -41,6 +43,7 @@ class PricePoint:
     listing_id: str
     seen_at: datetime
     price_usd: float | None
+    rate_amd_per_usd: float | None = None   # курс прогона: без него точку не истолковать
 
 
 @dataclass
@@ -57,3 +60,4 @@ class Run:
     updated_listings: int = 0
     errors: int = 0
     notes: str | None = None
+    last_page: int = 0                      # с неё продолжает `scrape --resume`

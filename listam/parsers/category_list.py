@@ -15,7 +15,7 @@ from urllib.parse import urljoin, urlparse
 from bs4 import BeautifulSoup, Tag
 
 from listam.domain.models import Listing
-from listam.domain.money import parse_price
+from listam.domain.money import parse_price, to_number
 
 DEFAULT_BASE_URL = "https://www.list.am/ru"
 
@@ -24,7 +24,10 @@ NEXT_PAGE = re.compile(r"/category/\d+/(\d+)$")
 
 # "2 ком., 56 кв.м., 7/18 этаж" — части бывают поодиночке и в любом сочетании
 ROOMS = re.compile(r"(\d+)\s*ком")
-AREA = re.compile(r"([\d.,]+)\s*кв\.?\s*м")
+# Площадь пишут по-разному: «56», «56,5», «1 200», «1,200», «1.200»,
+# с неразрывным пробелом внутри разряда и «кв м» без точек. Разбирает число
+# тот же to_number, что и цены: своего разбора у парсера быть не должно.
+AREA = re.compile(r"(\d[\d\s  .,']*\d|\d)\s*кв\.?\s*м")
 FLOORS = re.compile(r"(\d+)\s*/\s*(\d+)\s*этаж")
 
 # "на ул. Ачаряна в Аване", "на пр. Комитаса в Арабкире"
@@ -39,15 +42,6 @@ def _text(node: Tag | None) -> str | None:
         return None
     value = node.get_text(" ", strip=True)
     return re.sub(r"\s+", " ", value) or None
-
-
-def _number(value: str | None) -> float | None:
-    if value is None:
-        return None
-    try:
-        return float(value.replace(",", "."))
-    except ValueError:
-        return None
 
 
 def _card_nodes(soup: BeautifulSoup) -> list[Tag]:
@@ -68,12 +62,19 @@ def _card_nodes(soup: BeautifulSoup) -> list[Tag]:
     ]
 
 
-def _price(card: Tag) -> tuple[str | None, str | None, float | None, float | None]:
+def _price(
+    card: Tag,
+) -> tuple[str | None, str | None, float | None, float | None, float | None]:
+    """Сырая строка, валюта, сумма в валюте оригинала и две валюты, что знаем.
+
+    price_amount — число ровно как на сайте: у EUR и RUB пересчёта не будет
+    никогда, и без этой колонки цена терялась бы совсем.
+    """
     raw = _text(card.select_one(".category-data-list-card__amount"))
     money = parse_price(raw)
     price_usd = money.amount if money.currency == "USD" else None
     price_amd = money.amount if money.currency == "AMD" else None
-    return raw, money.currency, price_usd, price_amd
+    return raw, money.currency, money.amount, price_usd, price_amd
 
 
 def _attributes(card: Tag) -> tuple[int | None, float | None, int | None, int | None]:
@@ -91,7 +92,7 @@ def _attributes(card: Tag) -> tuple[int | None, float | None, int | None, int | 
     floors = FLOORS.search(line)
     return (
         int(rooms.group(1)) if rooms else None,
-        _number(area.group(1)) if area else None,
+        to_number(area.group(1)) if area else None,
         int(floors.group(1)) if floors else None,
         int(floors.group(2)) if floors else None,
     )
@@ -125,7 +126,7 @@ def parse_card(card: Tag, base_url: str = DEFAULT_BASE_URL) -> Listing | None:
         return None
     title = _text(card.select_one("div.l"))
     street = STREET.search(title) if title else None
-    raw, currency, price_usd, price_amd = _price(card)
+    raw, currency, price_amount, price_usd, price_amd = _price(card)
     rooms, area, floor, floors_total = _attributes(card)
     return Listing(
         id=match.group(1),
@@ -135,6 +136,7 @@ def parse_card(card: Tag, base_url: str = DEFAULT_BASE_URL) -> Listing | None:
         street=street.group(1).strip() if street else None,
         price_raw=raw,
         currency=currency,
+        price_amount=price_amount,
         price_usd=price_usd,
         price_amd=price_amd,
         area=area,

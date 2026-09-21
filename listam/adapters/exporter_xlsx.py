@@ -10,6 +10,7 @@ from openpyxl import Workbook
 from openpyxl.styles import Alignment, Font, PatternFill
 from openpyxl.utils import get_column_letter
 
+from listam.adapters.filenames import safe_filename
 from listam.domain.models import Listing
 from listam.ports.exporter import Exporter
 
@@ -25,6 +26,7 @@ COLUMNS: list[tuple[str, str, int, str | None]] = [
     ("Цена, $", "price_usd", 13, "#,##0"),
     ("Цена, ֏", "price_amd", 15, "#,##0"),
     ("Цена как на сайте", "price_raw", 18, None),
+    ("Цена в валюте", "price_amount", 14, "#,##0.##"),
     ("Площадь, м²", "area", 12, "0.0"),
     ("$/м²", "price_per_sqm", 10, "#,##0"),
     ("Комнат", "rooms", 9, "0"),
@@ -33,6 +35,7 @@ COLUMNS: list[tuple[str, str, int, str | None]] = [
     ("Продавец", "seller_type", 14, None),
     ("Новостройка", "new_build", 13, None),
     ("Проверено", "verified", 11, None),
+    ("Сомнительно", "anomaly", 20, None),
     ("Статус", "status", 10, None),
     ("Появилось", "first_seen", 18, None),
     ("Видели", "last_seen", 18, None),
@@ -56,7 +59,9 @@ class XlsxExporter(Exporter):
         )
         self.directory.mkdir(parents=True, exist_ok=True)
         stamp = datetime.now(timezone.utc).strftime("%Y%m%d-%H%M")
-        path = self.directory / (name or f"listam-{stamp}.xlsx")
+        # Имя приходит из командной строки: берём из него только имя файла.
+        # `--name ../../отчёт.xlsx` обязан писать в свою папку, а не мимо неё.
+        path = self.directory / (safe_filename(name) or f"listam-{stamp}.xlsx")
 
         workbook = Workbook()
         sheet = workbook.active
