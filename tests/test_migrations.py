@@ -193,10 +193,43 @@ def test_migration_004_adds_delta_columns_to_a_filled_database(tmp_path):
     database = SqliteDatabase(tmp_path / "listam.sqlite")   # все миграции с диска
     database.connect()
     database.migrate()
-    assert database.schema_version() == 4
+    assert database.schema_version() >= 4
     columns = {row["name"] for row in database.conn.execute("PRAGMA table_info(listings)")}
     assert "gone_at" in columns
     run_columns = {row["name"] for row in database.conn.execute("PRAGMA table_info(runs)")}
     assert {"mode", "price_changed", "gone_marked", "stop_reason"} <= run_columns
     assert database.get_listing("1").price_raw == "100,000"   # данные на месте
+    database.close()
+
+
+def test_migrations_005_and_006_add_the_return_columns_to_a_filled_database(tmp_path):
+    """Схема 4 с данными доезжает до 6, ничего не потеряв.
+
+    Считать возвраты задним числом нечем, и это нормально: колонки заводятся
+    пустыми, а заполняет их первый же прогон новым кодом.
+    """
+    database = SqliteDatabase(tmp_path / "listam.sqlite", migrations_dir=upto(tmp_path, 4))
+    database.connect()
+    database.migrate()
+    database.upsert_listing(
+        Listing(id="1", url="https://www.list.am/ru/item/1", price_raw="100,000", currency="USD"),
+        seen_at=datetime(2026, 9, 21, tzinfo=timezone.utc),
+    )
+    run_id = database.start_run(datetime(2026, 9, 21, tzinfo=timezone.utc), 400.0)
+    database.finish_run(run_id, datetime(2026, 9, 21, tzinfo=timezone.utc), pages_fetched=9)
+    database.close()
+
+    database = SqliteDatabase(tmp_path / "listam.sqlite")   # все миграции с диска
+    database.connect()
+    database.migrate()
+
+    assert database.schema_version() == 6
+    run_columns = {row["name"] for row in database.conn.execute("PRAGMA table_info(runs)")}
+    assert "returned" in run_columns
+    columns = {row["name"] for row in database.conn.execute("PRAGMA table_info(listings)")}
+    assert "returned_at" in columns
+    assert database.get_listing("1").price_raw == "100,000"   # данные на месте
+    assert database.get_listing("1").returned_at is None
+    assert database.last_run().returned == 0
+    assert database.last_run().pages_fetched == 9
     database.close()

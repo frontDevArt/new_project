@@ -360,6 +360,141 @@ def test_last_run_can_be_asked_about_one_mode(db):
     assert db.last_run(mode="full").last_page == 12
 
 
+def test_a_listing_back_from_the_dead_reports_itself(db):
+    """«Вернулось на рынок» — событие рынка, а не правка поля.
+
+    Апсерт обязан сказать об этом отдельно: иначе возврат проходит как
+    `unchanged` и не виден нигде — ни счётчиком, ни разделом дельты.
+    """
+    db.upsert_listing(make_listing(), seen_at=NOW)
+    db.mark_gone(["24254997"], gone_at=LATER)
+
+    assert db.upsert_listing(make_listing(), seen_at=EVEN_LATER) == "returned"
+
+
+def test_a_listing_that_came_back_cheaper_is_still_a_return(db):
+    """Возврат со сменой цены — всё равно возврат.
+
+    Точка в истории цен ставится как обычно, но исход прогон читает как
+    `returned`: «вернулось» — событие крупнее, чем «подвинуло цену», и в
+    обновления оно не входит.
+    """
+    db.upsert_listing(make_listing(), seen_at=NOW)
+    db.mark_gone(["24254997"], gone_at=LATER)
+
+    cheaper = make_listing(price_raw="$120,000", price_usd=120000.0)
+    outcome = db.upsert_listing(cheaper, seen_at=EVEN_LATER, rate_amd_per_usd=400.0)
+
+    assert outcome == "returned"
+    assert [point.price_usd for point in db.price_history("24254997")] == [132000.0, 120000.0]
+
+
+def test_a_listing_still_on_the_feed_is_not_a_return(db):
+    """Обычная встреча возвратом не становится: иначе счётчик считал бы всю ленту."""
+    db.upsert_listing(make_listing(), seen_at=NOW)
+
+    assert db.upsert_listing(make_listing(), seen_at=LATER) == "unchanged"
+
+
+def test_returned_listings_are_the_ones_that_came_back_after_the_mark(db):
+    """Раздел «Вернулись» спрашивается у даты возврата, а не у `last_seen`.
+
+    `last_seen` двигает каждый прогон всей ленте: по нему возврат от обычной
+    встречи не отличить.
+    """
+    db.upsert_listing(make_listing("1"), seen_at=NOW)
+    db.upsert_listing(make_listing("2"), seen_at=NOW)
+    db.mark_gone(["1"], gone_at=NOW)
+    db.upsert_listing(make_listing("1"), seen_at=EVEN_LATER)
+    db.upsert_listing(make_listing("2"), seen_at=EVEN_LATER)   # просто встретилось снова
+
+    assert [item.id for item in db.listings_returned_since(LATER)] == ["1"]
+
+
+def test_a_return_before_the_mark_is_out_of_the_window(db):
+    db.upsert_listing(make_listing("1"), seen_at=NOW)
+    db.mark_gone(["1"], gone_at=NOW)
+    db.upsert_listing(make_listing("1"), seen_at=NOW)
+
+    assert db.listings_returned_since(LATER) == []
+
+
+def test_the_crawl_to_resume_is_just_the_interrupted_full_one(db):
+    """Продолжений не было — продолжать надо сам прерванный полный обход."""
+    full = db.start_run(NOW, 400.0, mode="full")
+    db.mark_page(full, 100)
+    db.finish_run(full, LATER, pages_fetched=100, errors=1)
+
+    assert db.crawl_to_resume().last_page == 100
+
+
+def test_the_crawl_to_resume_counts_the_pages_its_continuations_walked(db):
+    """Обход — это полный прогон плюс продолжающие его `resume`.
+
+    Мерка — самая дальняя пройденная страница среди них, а не последняя
+    строка журнала: иначе второе продолжение выбрасывает всё, что прошло первое.
+    """
+    full = db.start_run(NOW, 400.0, mode="full")
+    db.mark_page(full, 100)
+    db.finish_run(full, LATER, pages_fetched=100, errors=1)
+    first = db.start_run(LATER, 400.0, mode="resume")
+    db.mark_page(first, 150)
+    db.finish_run(first, LATER, pages_fetched=50, errors=1)
+    second = db.start_run(EVEN_LATER, 400.0, mode="resume")
+    db.mark_page(second, 190)
+    db.finish_run(second, EVEN_LATER, pages_fetched=40, errors=1)
+
+    assert db.crawl_to_resume().last_page == 190
+
+
+def test_a_crawl_finished_by_a_continuation_has_nothing_left_to_resume(db):
+    """Продолжение дошло до конца ленты без ошибок — обход закрыт.
+
+    Следующий `--resume` обязан увидеть это и пойти с первой страницы,
+    а не досматривать ленту, которую уже досмотрели.
+    """
+    full = db.start_run(NOW, 400.0, mode="full")
+    db.mark_page(full, 100)
+    db.finish_run(full, LATER, pages_fetched=100, errors=1)
+    done = db.start_run(LATER, 400.0, mode="resume")
+    db.mark_page(done, 215)
+    db.finish_run(done, EVEN_LATER, pages_fetched=115, errors=0)
+
+    crawl = db.crawl_to_resume()
+
+    assert crawl.finished_at is not None and not crawl.errors
+
+
+def test_a_successful_full_crawl_has_nothing_to_resume(db):
+    full = db.start_run(NOW, 400.0, mode="full")
+    db.mark_page(full, 215)
+    db.finish_run(full, LATER, pages_fetched=215, errors=0)
+
+    crawl = db.crawl_to_resume()
+
+    assert crawl.finished_at is not None and not crawl.errors
+
+
+def test_a_fresh_run_is_not_a_continuation_of_the_full_one(db):
+    """`--fresh` идёт по голове ленты, а не по тому месту, где встал полный.
+
+    Его страницы обходу не засчитываются: иначе продолжение прыгнуло бы
+    вперёд, ни разу не увидев середины ленты.
+    """
+    full = db.start_run(NOW, 400.0, mode="full")
+    db.mark_page(full, 100)
+    db.finish_run(full, LATER, pages_fetched=100, errors=1)
+    fresh = db.start_run(LATER, 400.0, mode="fresh")
+    db.mark_page(fresh, 2)
+    db.finish_run(fresh, LATER, pages_fetched=2, errors=0)
+
+    assert db.crawl_to_resume().last_page == 100
+
+
+def test_an_empty_journal_has_no_crawl_to_resume(db):
+    assert db.crawl_to_resume() is None
+
+
 def test_legacy_runs_without_a_mode_count_as_full(db):
     """Прогоны M0 писались без режима. Они были полными — так их и читаем."""
     run_id = db.start_run(NOW, 400.0)

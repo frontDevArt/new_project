@@ -233,6 +233,12 @@ class SqliteDatabase(Database):
         updates["status"] = "active"
         updates["gone_at"] = None          # встретили на ленте — значит, вернулось
         updates["id"] = listing.id
+        # Возврат с того света — это про строку, которая лежала снятой, а не про
+        # любую встречу: дату возврата ставим только ей, иначе `returned_at`
+        # двигался бы всей ленте разом и не отличал бы возврат от встречи.
+        came_back = (existing.status or "active") == "gone"
+        if came_back:
+            updates["returned_at"] = seen_iso
         # Сменились валюта или сырая цена — пересчитанное относится к прошлой цене
         # и должно уйти целиком, включая NULL. COALESCE бережёт пересчёт только
         # тогда, когда цена на сайте та же, а курс в этот раз не дался.
@@ -251,7 +257,10 @@ class SqliteDatabase(Database):
                 outcome = "price_changed"
             elif changed:
                 outcome = "updated"
-        return outcome
+        # Вернулось — это крупнее, чем «подвинуло цену» или «поправило заголовок»:
+        # точка истории цен ставится как обычно, но прогон читает исход как
+        # возврат и в обновления его не записывает.
+        return "returned" if came_back else outcome
 
     def _add_price_point(
         self,
@@ -309,8 +318,8 @@ class SqliteDatabase(Database):
         with self.transaction():
             for listing_id in listing_ids:
                 cursor = self.conn.execute(
-                    "UPDATE listings SET status = 'gone', gone_at = COALESCE(gone_at, ?) "
-                    "WHERE id = ? AND status <> 'gone'",
+                    "UPDATE listings SET status = 'gone', gone_at = COALESCE(gone_at, ?), "
+                    "returned_at = NULL WHERE id = ? AND status <> 'gone'",
                     (stamp, listing_id),
                 )
                 marked += cursor.rowcount
@@ -328,6 +337,21 @@ class SqliteDatabase(Database):
         """Снятое с отметки. Дата снятия ставится один раз — по ней и спрашиваем."""
         rows = self.conn.execute(
             "SELECT * FROM listings WHERE gone_at >= ? ORDER BY gone_at DESC, id DESC",
+            (to_iso(since),),
+        )
+        return [_row_to_listing(row) for row in rows]
+
+    def listings_returned_since(self, since: datetime) -> list[Listing]:
+        """Вернувшееся с отметки. Спрашивается у даты возврата — своей колонки.
+
+        По `last_seen` возврат не выбрать: его двигает каждый прогон всей ленте.
+        `returned_at` ставится только строке, которая лежала снятой, и гаснет
+        при следующем снятии — поэтому раздел показывает тех, кто вернулся
+        и остался.
+        """
+        rows = self.conn.execute(
+            "SELECT * FROM listings WHERE returned_at >= ? "
+            "ORDER BY returned_at DESC, id DESC",
             (to_iso(since),),
         )
         return [_row_to_listing(row) for row in rows]
@@ -413,7 +437,8 @@ class SqliteDatabase(Database):
     def finish_run(self, run_id: int, finished_at: datetime, **counters) -> None:
         allowed = {
             "pages_fetched", "listings_seen", "new_listings", "updated_listings",
-            "price_changed", "gone_marked", "errors", "notes", "last_page", "stop_reason",
+            "price_changed", "gone_marked", "returned", "errors", "notes", "last_page",
+            "stop_reason",
         }
         unknown = set(counters) - allowed
         if unknown:
@@ -434,6 +459,36 @@ class SqliteDatabase(Database):
                 (mode,),
             ).fetchone()
         return _row_to_run(row) if row else None
+
+    def crawl_to_resume(self) -> Run | None:
+        """Прерванный обход по полной ленте: последний `full` плюс его `resume`.
+
+        Брать одну строку журнала нельзя: `last_run(mode="full")` всегда отдаёт
+        один и тот же оборванный полный прогон, и второе продолжение
+        выбрасывает всё, что прошло первое.
+
+        Поэтому отдаётся последняя строка обхода — по ней видно, закрыт он или
+        оборвался, — с `last_page`, догнанным максимумом по всему обходу.
+        `fresh` и `partial` сюда не входят: они шли не по полной ленте.
+        """
+        full = self.conn.execute(
+            "SELECT * FROM runs WHERE IFNULL(mode, 'full') = 'full' "
+            "ORDER BY id DESC LIMIT 1"
+        ).fetchone()
+        if full is None:
+            return None
+        last = self.conn.execute(
+            "SELECT * FROM runs WHERE mode = 'resume' AND id > ? ORDER BY id DESC LIMIT 1",
+            (full["id"],),
+        ).fetchone()
+        crawl = _row_to_run(last if last is not None else full)
+        farthest = self.conn.execute(
+            "SELECT MAX(IFNULL(last_page, 0)) AS page FROM runs "
+            "WHERE id = :full OR (mode = 'resume' AND id > :full)",
+            {"full": full["id"]},
+        ).fetchone()
+        crawl.last_page = int(farthest["page"] or 0)
+        return crawl
 
     def last_successful_run(self) -> Run | None:
         """Последний полный обход, который дошёл до конца и не насчитал ошибок.
@@ -477,6 +532,7 @@ def _row_to_run(row: sqlite3.Row) -> Run:
         mode=row["mode"],
         price_changed=row["price_changed"] or 0,
         gone_marked=row["gone_marked"] or 0,
+        returned=row["returned"] or 0,
         stop_reason=row["stop_reason"],
         last_page=row["last_page"] or 0,
     )
@@ -570,4 +626,5 @@ def _row_to_listing(row: sqlite3.Row) -> Listing:
     data["first_seen"] = from_iso(data.get("first_seen"))
     data["last_seen"] = from_iso(data.get("last_seen"))
     data["gone_at"] = from_iso(data.get("gone_at"))
+    data["returned_at"] = from_iso(data.get("returned_at"))
     return Listing(**{k: v for k, v in data.items() if k in Listing.field_names()})

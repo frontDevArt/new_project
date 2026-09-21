@@ -373,6 +373,7 @@ class _Counters:
     updated_listings: int = 0
     price_changed: int = 0
     gone_marked: int = 0
+    returned: int = 0
     errors: int = 0
 
 
@@ -547,9 +548,11 @@ def run_scrape(
 
         start_page = 1
         if resume and database is not None:
-            # --resume продолжает прерванный ПОЛНЫЙ обход: инкрементальный прогон,
-            # прошедший между ними, продолжать нечего.
-            start_page, resume_note = resume_start_page(database.last_run(mode="full"))
+            # --resume продолжает прерванный ОБХОД, а не строку журнала: полный
+            # прогон и продолжающие его `resume` идут по одной ленте, и мерка —
+            # самая дальняя пройденная страница среди них. Инкрементальный
+            # прогон, прошедший между ними, в обход не входит.
+            start_page, resume_note = resume_start_page(database.crawl_to_resume())
             if resume_note:
                 note = f"{note}; {resume_note}"
 
@@ -616,6 +619,10 @@ def run_scrape(
                         )
                         if outcome == "new":
                             counters.new_listings += 1
+                        elif outcome == "returned":
+                            # Возврат к обновлениям не подмешивается: «вернулось
+                            # на рынок» — событие рынка, а не правка поля.
+                            counters.returned += 1
                         elif outcome == "price_changed":
                             counters.price_changed += 1
                             counters.updated_listings += 1
@@ -687,6 +694,11 @@ def run_scrape(
                     counters.errors += 1
                     note = f"{note}; {failure}"
 
+                # Возврат считает любой обход, а не только полный: встретить
+                # снятое объявление на голове ленты `--fresh` умеет не хуже.
+                if counters.returned:
+                    note = f"{note}; вернулось на ленту: {counters.returned}"
+
                 # Продолженный обход законно кончается на первой же своей странице —
                 # это конец ленты, а не сломанный пагинатор.
                 alone = (
@@ -744,6 +756,7 @@ def run_scrape(
                         updated_listings=counters.updated_listings,
                         price_changed=counters.price_changed,
                         gone_marked=counters.gone_marked,
+                        returned=counters.returned,
                         errors=counters.errors,
                         stop_reason=stop_reason,
                         notes=note,
@@ -804,6 +817,7 @@ def run_scrape(
             updated_listings=counters.updated_listings,
             price_changed=counters.price_changed,
             gone_marked=counters.gone_marked,
+            returned=counters.returned,
             errors=counters.errors,
             mode=mode,
             stop_reason=stop_reason,

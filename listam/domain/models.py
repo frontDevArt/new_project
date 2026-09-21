@@ -31,6 +31,7 @@ class Listing:
     cluster_id: str | None = None         # заполняется на M2 (дедуп)
     status: str = "active"                # active | gone
     gone_at: datetime | None = None       # когда объявление ушло с ленты; вернулось — снова None
+    returned_at: datetime | None = None   # когда снятое объявление снова встретилось на ленте
     first_seen: datetime | None = None
     last_seen: datetime | None = None
 
@@ -64,5 +65,6 @@ class Run:
     mode: str | None = None                 # full | partial | resume | fresh
     price_changed: int = 0                  # карточек, у которых сменилась сырая цена
     gone_marked: int = 0                    # объявлений, помеченных снятыми
+    returned: int = 0                       # снятых объявлений, вернувшихся на ленту
     stop_reason: str | None = None          # чем кончился обход
     last_page: int = 0                      # с неё продолжает `scrape --resume`

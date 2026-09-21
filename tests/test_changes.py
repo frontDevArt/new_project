@@ -219,3 +219,45 @@ def test_the_price_counter_counts_listings_and_matches_the_journal(project, tmp_
 
     assert [move.listing.id for move in report.moved] == [PRICED_ID]
     assert len(report.moved) == run.price_changed
+
+
+def test_returned_listings_have_their_own_section(project, tmp_path):
+    """Вернуться может только помеченное снятым, поэтому мерка у возврата та же,
+    что у снятых, — последний полный обход."""
+    page = tmp_path / "pages" / FEED_PAGE
+    original = page.read_text(encoding="utf-8")
+    run_scrape(project)
+    _edit(page, "24100001", "99100001")
+    run_scrape(project)                       # полный: 24100001 помечен снятым
+
+    page.write_text(original, encoding="utf-8")
+    run_scrape(project)                       # полный: объявление вернулось
+
+    report = run_changes(project)
+
+    assert [item.id for item in report.returned] == ["24100001"]
+    assert "Вернулись" in render(report, limit=50)
+
+
+def test_nothing_comes_back_when_nothing_was_gone(project):
+    run_scrape(project)
+    run_scrape(project)
+
+    assert run_changes(project).returned == []
+
+
+def test_the_returned_section_explains_its_yardstick_in_its_own_words(project, tmp_path):
+    """Мерка у возврата та же, что у снятых, но нота про «снятых» под разделом
+    «Вернулись» читается как чужая."""
+    page = tmp_path / "pages" / FEED_PAGE
+    original = page.read_text(encoding="utf-8")
+    run_scrape(project)
+    _edit(page, "24100001", "99100001")
+    run_scrape(project)
+    page.write_text(original, encoding="utf-8")
+    run_scrape(project)
+    run_scrape(project, fresh=True)           # мерки разошлись
+
+    text = render(run_changes(project), limit=50)
+
+    assert "вернувшиеся — с полного обхода 3" in text

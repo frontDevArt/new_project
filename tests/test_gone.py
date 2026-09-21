@@ -209,3 +209,38 @@ def test_a_ceiling_asked_for_on_the_command_line_still_marks_nothing(project, tm
 
     assert run.mode == "partial"
     assert run.gone_marked == 0
+
+
+def test_a_run_counts_the_listings_that_came_back(project, tmp_path):
+    """Возврат с того света — событие рынка, и в журнале оно обязано быть числом.
+
+    Живая лента переставляет карточки под ногами у многочасового обхода, и часть
+    пометок «снято» самоисправляется следующим прогоном. Пока этого числа нет,
+    самоисправление выглядит как «ничего не происходит».
+    """
+    page = tmp_path / "pages" / FEED_PAGE
+    original = page.read_text(encoding="utf-8")
+    run_scrape(project)
+    page.write_text(original.replace("24100001", "99100001"), encoding="utf-8")
+    run_scrape(project)
+
+    page.write_text(original, encoding="utf-8")     # объявление вернулось на ленту
+    run = run_scrape(project)
+
+    assert run.returned == 1
+    assert "вернулось" in (run.notes or "")
+
+
+def test_a_listing_that_came_back_is_not_counted_as_an_update(project, tmp_path):
+    """Возврат считается своим счётчиком, а не подмешивается к обновлениям:
+    иначе «вернулось на рынок» неотличимо от «поправили заголовок»."""
+    page = tmp_path / "pages" / FEED_PAGE
+    original = page.read_text(encoding="utf-8")
+    run_scrape(project)
+    page.write_text(original.replace("24100001", "99100001"), encoding="utf-8")
+    run_scrape(project)
+
+    page.write_text(original, encoding="utf-8")
+    run = run_scrape(project)
+
+    assert run.updated_listings == 0

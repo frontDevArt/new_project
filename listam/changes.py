@@ -20,6 +20,9 @@ DASH = "—"
 # Настоящий минус U+2212, а не дефис: в колонке чисел дефис теряется.
 MINUS = "−"
 
+# Стрелка возврата: объявление, которое уже снимали, снова на ленте.
+RETURN = "↩"
+
 
 @dataclass
 class PriceMove:
@@ -47,12 +50,15 @@ class Changes:
     new: list[Listing] = field(default_factory=list)
     moved: list[PriceMove] = field(default_factory=list)
     gone: list[Listing] = field(default_factory=list)
+    # Вернуться может только помеченное снятым, поэтому мерка у возврата та же,
+    # что у снятых: полный обход, который пометку и ставил.
+    returned: list[Listing] = field(default_factory=list)
     errors: int = 0
     notes: str | None = None
 
     @property
     def empty(self) -> bool:
-        return not (self.new or self.moved or self.gone)
+        return not (self.new or self.moved or self.gone or self.returned)
 
 
 def since_point(
@@ -137,6 +143,7 @@ def run_changes(config, *, hours: float | None = None) -> Changes:
                 for item, was, now in database.price_changes_since(since)
             ],
             gone=database.listings_gone_since(gone_since),
+            returned=database.listings_returned_since(gone_since),
         )
     finally:
         database.close()
@@ -189,11 +196,11 @@ def _section(title: str, lines: list[str], limit: int, note: str = "") -> list[s
 
 
 def render(changes: Changes, limit: int) -> str:
-    """Шапка и три раздела: новое (`+`), цены (`$`), снятое (`−`)."""
+    """Шапка и четыре раздела: новое, цены, снятое и вернувшееся на ленту."""
     lines = [
         f"Изменения {changes.since_note}".rstrip(),
         f"Новых: {len(changes.new)}   Сменили цену: {len(changes.moved)}   "
-        f"Снято: {len(changes.gone)}",
+        f"Снято: {len(changes.gone)}   Вернулось: {len(changes.returned)}",
     ]
     if changes.empty:
         lines.append("изменений нет")
@@ -229,5 +236,22 @@ def render(changes: Changes, limit: int) -> str:
         ],
         limit,
         gone_note,
+    )
+    # Вернувшееся считано той же меркой, что и снятое: пометку ставил полный
+    # обход, и возврат отменяет именно её. Но говорится об этом своими словами:
+    # под разделом «Вернулись» нота про снятых читается как чужая.
+    returned_note = (
+        "" if changes.gone_since == changes.since
+        else changes.gone_note.replace("снятые —", "вернувшиеся —", 1)
+    )
+    lines += _section(
+        "Вернулись",
+        [
+            f"{RETURN} {_head(item)} {_size(item):<16} {money(item.price_usd):>10}  "
+            f"{item.url}"
+            for item in changes.returned
+        ],
+        limit,
+        returned_note,
     )
     return "\n".join(lines)
