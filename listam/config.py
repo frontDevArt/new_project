@@ -1,0 +1,90 @@
+"""Загрузка конфигурации.
+
+Правило проекта: ни один путь, идентификатор и ключ не зашит в код.
+Всё внешнее приходит отсюда: config/<env>.yaml + переменные окружения.
+Секреты — только в переменных окружения, в yaml лежат ссылки ${VAR}.
+"""
+from __future__ import annotations
+
+import os
+import re
+from pathlib import Path
+from typing import Any
+
+import yaml
+from dotenv import load_dotenv
+
+PLACEHOLDER = re.compile(r"\$\{([A-Za-z_][A-Za-z0-9_]*)\}")
+
+
+class ConfigError(Exception):
+    """Конфигурация не найдена, неполна или ссылается на пустую переменную."""
+
+
+class Config:
+    def __init__(self, data: dict, env: str, path: Path):
+        self.data = data
+        self.env = env
+        self.path = path
+
+    def get(self, key: str, default: Any = None) -> Any:
+        node: Any = self.data
+        for part in key.split("."):
+            if not isinstance(node, dict) or part not in node:
+                return default
+            node = node[part]
+        return node
+
+    def require(self, key: str) -> Any:
+        sentinel = object()
+        value = self.get(key, sentinel)
+        if value is sentinel or value is None:
+            raise ConfigError(f"В конфиге {self.path} не задан обязательный ключ: {key}")
+        return value
+
+    def section(self, key: str) -> dict:
+        value = self.get(key, {}) or {}
+        if not isinstance(value, dict):
+            raise ConfigError(f"Ключ {key} в {self.path} должен быть секцией")
+        return value
+
+    def __repr__(self) -> str:  # pragma: no cover - диагностика
+        return f"Config(env={self.env!r}, path={self.path!r})"
+
+
+def _substitute(node: Any) -> Any:
+    if isinstance(node, dict):
+        return {k: _substitute(v) for k, v in node.items()}
+    if isinstance(node, list):
+        return [_substitute(v) for v in node]
+    if isinstance(node, str):
+        def replace(m: re.Match) -> str:
+            name = m.group(1)
+            value = os.environ.get(name)
+            if value is None or value == "":
+                raise ConfigError(
+                    f"Переменная окружения {name} не задана, а конфиг на неё ссылается. "
+                    f"Добавь её в .env (образец — .env.example)."
+                )
+            return value
+        return PLACEHOLDER.sub(replace, node)
+    return node
+
+
+def load_config(
+    env: str | None = None,
+    config_dir: str | Path = "config",
+    dotenv_path: str | Path = ".env",
+) -> Config:
+    """Читает .env (не перетирая уже заданное окружение), затем config/<env>.yaml."""
+    dotenv_path = Path(dotenv_path)
+    if dotenv_path.exists():
+        load_dotenv(dotenv_path, override=False)
+    env = env or os.environ.get("APP_ENV", "dev")
+    path = Path(config_dir) / f"{env}.yaml"
+    if not path.exists():
+        raise ConfigError(f"Нет файла конфигурации {path} (APP_ENV={env})")
+    raw = yaml.safe_load(path.read_text(encoding="utf-8")) or {}
+    if not isinstance(raw, dict):
+        raise ConfigError(f"Конфиг {path} должен быть отображением ключ→значение")
+    return Config(_substitute(raw), env=env, path=path)

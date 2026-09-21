@@ -1,0 +1,38 @@
+# Окружение для отладки: всё локально, в сеть ходим только за курсом и лентой.
+# Секретов здесь нет и быть не должно — только ссылки ${VAR} на переменные из .env.
+env: dev
+
+storage:
+  kind: local                   # local | gdrive
+  directory: ./data/remote      # «удалённое» хранилище при отладке
+  work_dir: ./data              # куда кладётся рабочая копия базы на время прогона
+  db_filename: listam.sqlite
+
+requests:
+  kind: none                    # none | gsheet | csv — заявки появятся на M2
+
+export:
+  kind: xlsx_local
+  path: ./out
+
+rate:
+  kind: rate_am                 # rate_am | fixed
+  # amd_per_usd: 363.25         # используется только при kind: fixed
+
+notify:
+  kind: stdout                  # none | stdout — telegram появится на M3
+
+scrape:
+  kind: files                   # playwright — через браузер; http — голые запросы; files — с диска
+  pages_dir: ./data/pages       # откуда берутся страницы при kind: files
+  base_url: https://www.list.am/ru
+  category: 60                  # продажа квартир
+  delay_seconds: 1.5            # пауза между запросами, никаких параллельных пачек
+  max_pages: 20                 # в prod — null, то есть до конца
+  timeout_seconds: 45           # браузер медленнее голого запроса
+  retries: 3
+  # --- только для kind: playwright ---
+  headless: false               # true Cloudflare отличает и режет; на сервере — xvfb-run
+  browser_channel:              # пусто — chromium из playwright; chrome — системный Chrome
+  profile_dir: ./data/browser   # профиль браузера: кука cf_clearance переживает перезапуск
+  challenge_wait_seconds: 25    # сколько ждём, пока проверка Cloudflare отработает

@@ -1,0 +1,52 @@
+"""Разбор цен с list.am: цены встречаются и в долларах, и в драмах."""
+import pytest
+
+from listam.domain.money import Money, parse_price
+
+
+@pytest.mark.parametrize(
+    "raw, amount, currency",
+    [
+        ("$132,000", 132000.0, "USD"),
+        ("$ 132 000", 132000.0, "USD"),
+        ("132,000 $", 132000.0, "USD"),
+        ("48,500,000 ֏", 48500000.0, "AMD"),
+        ("48 500 000 драм", 48500000.0, "AMD"),
+        ("59.500.000 ֏", 59500000.0, "AMD"),
+        ("1 500 000 ₽", 1500000.0, "RUB"),
+        ("€95,000", 95000.0, "EUR"),
+    ],
+)
+def test_parses_amount_and_currency(raw, amount, currency):
+    money = parse_price(raw)
+    assert money.amount == amount
+    assert money.currency == currency
+    assert money.raw == raw
+
+
+def test_keeps_raw_string_untouched():
+    assert parse_price("  $132,000  ").raw == "  $132,000  "
+
+
+@pytest.mark.parametrize("raw", ["", None, "Договорная", "—"])
+def test_unparseable_price_gives_empty_money(raw):
+    money = parse_price(raw)
+    assert money.amount is None
+    assert money.currency is None
+
+
+def test_converts_amd_to_usd_with_given_rate():
+    money = parse_price("48,500,000 ֏")
+    assert money.to_usd(rate_amd_per_usd=385.0) == pytest.approx(125974.03, abs=0.01)
+
+
+def test_usd_price_converts_to_itself_regardless_of_rate():
+    assert parse_price("$132,000").to_usd(rate_amd_per_usd=385.0) == 132000.0
+
+
+def test_to_amd_uses_rate_for_usd_prices():
+    assert parse_price("$100,000").to_amd(rate_amd_per_usd=385.0) == 38500000.0
+
+
+def test_unknown_currency_does_not_convert():
+    assert parse_price("1 500 000 ₽").to_usd(rate_amd_per_usd=385.0) is None

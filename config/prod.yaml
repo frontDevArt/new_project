@@ -1,0 +1,36 @@
+# Рабочее окружение: база живёт в Google Drive, обход идёт до конца категории.
+# Идентификаторы и ключи сюда не пишутся — только ссылки на переменные из .env.
+env: prod
+
+storage:
+  kind: gdrive
+  folder: ${GDRIVE_FOLDER}
+  credentials_file: ${GDRIVE_CREDENTIALS_FILE}
+  work_dir: ./data
+  db_filename: listam.sqlite
+
+requests:
+  kind: none                    # на M2 станет gsheet со ${REQUESTS_SHEET}
+
+export:
+  kind: xlsx_local
+  path: ./out
+
+rate:
+  kind: rate_am
+
+notify:
+  kind: stdout
+
+scrape:
+  kind: playwright
+  base_url: https://www.list.am/ru
+  category: 60
+  delay_seconds: 1.5
+  max_pages: null               # до конца категории
+  timeout_seconds: 45
+  retries: 3
+  headless: false               # на сервере без экрана запускать под xvfb-run
+  browser_channel:
+  profile_dir: ./data/browser
+  challenge_wait_seconds: 25
