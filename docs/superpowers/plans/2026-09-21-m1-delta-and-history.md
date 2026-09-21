@@ -1616,7 +1616,7 @@ def price_changes_since(self, since: datetime) -> list[tuple[Listing, float | No
     """
 ```
 
-- [ ] **Шаг 1. Падающие контрактные тесты.**
+- [x] **Шаг 1. Падающие контрактные тесты.**
 
 ```python
 def test_new_listings_are_the_ones_first_seen_after_the_mark(database):
@@ -1657,13 +1657,13 @@ def test_gone_listings_are_the_ones_marked_after_the_mark(database):
 `listing(...)` — тот же помощник файла, что у тестов задачи 1.2; если он не принимает
 `price_raw`/`price_usd`, дописать их туда параметрами со значением `None` по умолчанию.
 
-- [ ] **Шаг 2. Прогнать — падает.**
+- [x] **Шаг 2. Прогнать — падает.**
 
 ```bash
 .venv/Scripts/python.exe -m pytest tests/contracts/test_database_contract.py -q
 ```
 
-- [ ] **Шаг 3. Реализовать.**
+- [x] **Шаг 3. Реализовать.**
 
 ```python
 # listam/adapters/db_sqlite.py
@@ -1711,7 +1711,8 @@ def test_gone_listings_are_the_ones_marked_after_the_mark(database):
 
 плюс три абстрактных метода в `listam/ports/database.py` с теми же объяснениями.
 
-- [ ] **Шаг 4. Прогнать батарею.** Ожидается 353 passed, 12 skipped.
+- [x] **Шаг 4. Прогнать батарею.** Ожидается 354 passed, 12 skipped (350 плюс четыре теста шага 1;
+  в плане стояло 353 — арифметика разошлась на один).
 
 - [ ] **Шаг 5. Коммит.**
 

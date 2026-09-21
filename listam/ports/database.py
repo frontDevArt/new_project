@@ -78,6 +78,32 @@ class Database(ABC):
         """
 
     @abstractmethod
+    def listings_first_seen_since(self, since: datetime) -> list[Listing]:
+        """Объявления, впервые увиденные после отметки: это и есть «новое».
+
+        Мерка — `first_seen`, а не `last_seen`: карточка, которую обход
+        встретил сегодня в сотый раз, новой не стала.
+        """
+
+    @abstractmethod
+    def listings_gone_since(self, since: datetime) -> list[Listing]:
+        """Объявления, помеченные снятыми после отметки.
+
+        Дата снятия живёт в своей колонке и ставится один раз, поэтому
+        «снято за последний прогон» спрашивается именно у неё.
+        """
+
+    @abstractmethod
+    def price_changes_since(
+        self, since: datetime
+    ) -> list[tuple[Listing, float | None, float | None]]:
+        """(объявление, прежняя цена в $, новая цена в $) — по точкам price_history.
+
+        Первая точка объявления изменением не считается: у неё нет прежней цены,
+        это появление, а не смена цены.
+        """
+
+    @abstractmethod
     def price_history(self, listing_id: str) -> list[PricePoint]: ...
 
     @abstractmethod

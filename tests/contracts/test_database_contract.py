@@ -367,3 +367,43 @@ def test_legacy_runs_without_a_mode_count_as_full(db):
     db.finish_run(run_id, LATER, pages_fetched=215, errors=0)
 
     assert db.last_successful_run().pages_fetched == 215
+
+
+def test_new_listings_are_the_ones_first_seen_after_the_mark(db):
+    db.upsert_listing(make_listing("1"), seen_at=NOW)
+    db.upsert_listing(make_listing("2"), seen_at=EVEN_LATER)
+
+    fresh = db.listings_first_seen_since(LATER)
+
+    assert [item.id for item in fresh] == ["2"]
+
+
+def test_a_price_change_carries_the_price_it_had_before(db):
+    db.upsert_listing(
+        make_listing("1", price_raw="100,000", price_usd=100_000.0), seen_at=NOW
+    )
+    db.upsert_listing(
+        make_listing("1", price_raw="90,000", price_usd=90_000.0), seen_at=LATER
+    )
+
+    changes = db.price_changes_since(LATER)
+
+    assert len(changes) == 1
+    item, was, now = changes[0]
+    assert (item.id, was, now) == ("1", 100_000.0, 90_000.0)
+
+
+def test_the_first_point_of_a_listing_is_not_a_price_change(db):
+    """Появление объявления — не смена цены: прежней цены у него нет."""
+    db.upsert_listing(make_listing("1", price_usd=100_000.0), seen_at=LATER)
+
+    assert db.price_changes_since(NOW) == []
+
+
+def test_gone_listings_are_the_ones_marked_after_the_mark(db):
+    db.upsert_listing(make_listing("1"), seen_at=NOW)
+    db.upsert_listing(make_listing("2"), seen_at=NOW)
+    db.mark_gone({"1"}, gone_at=NOW)
+    db.mark_gone({"2"}, gone_at=EVEN_LATER)
+
+    assert [item.id for item in db.listings_gone_since(LATER)] == ["2"]

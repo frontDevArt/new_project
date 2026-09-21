@@ -316,6 +316,50 @@ class SqliteDatabase(Database):
                 marked += cursor.rowcount
         return marked
 
+    def listings_first_seen_since(self, since: datetime) -> list[Listing]:
+        """Новое с отметки. Мерка — `first_seen`: встреченное заново новым не стало."""
+        rows = self.conn.execute(
+            "SELECT * FROM listings WHERE first_seen >= ? ORDER BY first_seen DESC, id DESC",
+            (to_iso(since),),
+        )
+        return [_row_to_listing(row) for row in rows]
+
+    def listings_gone_since(self, since: datetime) -> list[Listing]:
+        """Снятое с отметки. Дата снятия ставится один раз — по ней и спрашиваем."""
+        rows = self.conn.execute(
+            "SELECT * FROM listings WHERE gone_at >= ? ORDER BY gone_at DESC, id DESC",
+            (to_iso(since),),
+        )
+        return [_row_to_listing(row) for row in rows]
+
+    def price_changes_since(
+        self, since: datetime
+    ) -> list[tuple[Listing, float | None, float | None]]:
+        """Точки истории после отметки вместе с ценой, которая была до них.
+
+        Прежняя цена берётся подзапросом по той же карточке: у первой точки
+        её нет, и такая строка отбрасывается — это появление объявления,
+        а не смена цены.
+        """
+        rows = self.conn.execute(
+            "SELECT h.listing_id AS listing_id, h.price_usd AS new_price, "
+            "       (SELECT p.price_usd FROM price_history p "
+            "         WHERE p.listing_id = h.listing_id AND p.id < h.id "
+            "         ORDER BY p.id DESC LIMIT 1) AS old_price, "
+            "       EXISTS (SELECT 1 FROM price_history p "
+            "                WHERE p.listing_id = h.listing_id AND p.id < h.id) AS has_previous "
+            "  FROM price_history h WHERE h.seen_at >= ? ORDER BY h.id DESC",
+            (to_iso(since),),
+        ).fetchall()
+        changes: list[tuple[Listing, float | None, float | None]] = []
+        for row in rows:
+            if not row["has_previous"]:
+                continue          # первая точка — это появление, а не смена цены
+            item = self.get_listing(row["listing_id"])
+            if item is not None:
+                changes.append((item, row["old_price"], row["new_price"]))
+        return changes
+
     def count_listings(self) -> int:
         return int(self.conn.execute("SELECT COUNT(*) AS n FROM listings").fetchone()["n"])
 
