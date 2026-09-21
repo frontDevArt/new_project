@@ -185,6 +185,10 @@ class SqliteDatabase(Database):
             return 0
         return int(row["v"] or 0)
 
+    def _columns(self, table: str) -> set[str]:
+        """Имена колонок таблицы — какие они в базе сейчас, а не какие ждёт модель."""
+        return {row["name"] for row in self.conn.execute(f"PRAGMA table_info({table})")}
+
     def table_names(self) -> set[str]:
         rows = self.conn.execute("SELECT name FROM sqlite_master WHERE type='table'")
         return {row["name"] for row in rows}
@@ -202,6 +206,11 @@ class SqliteDatabase(Database):
             values["status"] = listing.status or "active"
             values["verified"] = _to_int(listing.verified)
             values["new_build"] = _to_int(listing.new_build)
+            values["gone_at"] = to_iso(listing.gone_at)
+            # Модель бежит впереди базы, пока миграции не накатаны: пишем те поля,
+            # которые в таблице есть, а не те, которые знает dataclass.
+            known = self._columns("listings")
+            values = {name: value for name, value in values.items() if name in known}
             columns = ", ".join(values)
             placeholders = ", ".join(f":{name}" for name in values)
             with self.transaction():

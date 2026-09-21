@@ -6,6 +6,7 @@ from pathlib import Path
 
 import pytest
 
+from listam.adapters.db_sqlite import latest_schema_version
 from listam.cli import main
 
 CONFIG = """
@@ -237,7 +238,7 @@ def test_recheck_reports_what_it_recomputed(project, capsys):
 
     out = capsys.readouterr().out
     assert "Пересчёт: строк: 8" in out
-    assert "схема 3" in out
+    assert f"схема {latest_schema_version()}" in out
 
 
 def test_export_works_right_after_a_recheck(project, capsys):

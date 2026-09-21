@@ -13,7 +13,11 @@ from pathlib import Path
 
 import pytest
 
-from listam.adapters.db_sqlite import MIGRATIONS_DIR, SqliteDatabase
+from listam.adapters.db_sqlite import (
+    MIGRATIONS_DIR,
+    SqliteDatabase,
+    latest_schema_version,
+)
 from listam.config import Config
 from listam.recheck import run_recheck
 from listam.wiring import database_path, run_lock_path
@@ -121,7 +125,7 @@ def test_recheck_brings_the_base_to_the_schema_the_code_expects(project):
     version = database.schema_version()
     database.close()
 
-    assert version == 3
+    assert version == latest_schema_version()
 
 
 def test_recheck_fills_the_amount_in_the_original_currency(project):

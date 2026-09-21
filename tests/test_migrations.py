@@ -6,11 +6,15 @@ schema_version — иначе следующий запуск попробует
 """
 from __future__ import annotations
 
+import shutil
 import sqlite3
+from datetime import datetime, timezone
+from pathlib import Path
 
 import pytest
 
-from listam.adapters.db_sqlite import SqliteDatabase
+from listam.adapters.db_sqlite import MIGRATIONS_DIR, SqliteDatabase
+from listam.domain.models import Listing
 
 
 def migrations(tmp_path, **files):
@@ -19,6 +23,16 @@ def migrations(tmp_path, **files):
     for name, body in files.items():
         (directory / name).write_text(body, encoding="utf-8")
     return directory
+
+
+def upto(tmp_path: Path, version: int) -> Path:
+    """Папка с миграциями по N-ю включительно: имитация базы, отставшей на версию."""
+    partial = tmp_path / f"migrations-{version}"
+    partial.mkdir()
+    for path in sorted(MIGRATIONS_DIR.glob("*.sql")):
+        if int(path.name.split("_", 1)[0]) <= version:
+            shutil.copyfile(path, partial / path.name)
+    return partial
 
 
 def opened(tmp_path, directory) -> SqliteDatabase:
@@ -97,7 +111,7 @@ def test_migration_003_adds_the_amount_in_original_currency(tmp_path):
     database.connect()
     database.migrate()
 
-    assert database.schema_version() == 3
+    assert database.schema_version() >= 3
     columns = {
         row[1] for row in database.conn.execute("PRAGMA table_info(listings)").fetchall()
     }
@@ -161,4 +175,28 @@ def test_two_dashes_inside_a_literal_are_not_a_comment(tmp_path):
 
     database.conn.execute("INSERT INTO a DEFAULT VALUES")
     assert database.conn.execute("SELECT note FROM a").fetchone()["note"] == "до -- после"
+    database.close()
+
+
+def test_migration_004_adds_delta_columns_to_a_filled_database(tmp_path):
+    """Схема 3 с данными доезжает до 4, ничего не потеряв: базу на 20 000 строк
+    никто заново собирать не будет."""
+    database = SqliteDatabase(tmp_path / "listam.sqlite", migrations_dir=upto(tmp_path, 3))
+    database.connect()
+    database.migrate()
+    database.upsert_listing(
+        Listing(id="1", url="https://www.list.am/ru/item/1", price_raw="100,000", currency="USD"),
+        seen_at=datetime(2026, 9, 21, tzinfo=timezone.utc),
+    )
+    database.close()
+
+    database = SqliteDatabase(tmp_path / "listam.sqlite")   # все миграции с диска
+    database.connect()
+    database.migrate()
+    assert database.schema_version() == 4
+    columns = {row["name"] for row in database.conn.execute("PRAGMA table_info(listings)")}
+    assert "gone_at" in columns
+    run_columns = {row["name"] for row in database.conn.execute("PRAGMA table_info(runs)")}
+    assert {"mode", "price_changed", "gone_marked", "stop_reason"} <= run_columns
+    assert database.get_listing("1").price_raw == "100,000"   # данные на месте
     database.close()

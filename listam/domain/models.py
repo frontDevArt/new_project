@@ -30,6 +30,7 @@ class Listing:
     anomaly: str | None = None            # сработавшие правила проверки через запятую
     cluster_id: str | None = None         # заполняется на M2 (дедуп)
     status: str = "active"                # active | gone
+    gone_at: datetime | None = None       # когда объявление ушло с ленты; вернулось — снова None
     first_seen: datetime | None = None
     last_seen: datetime | None = None
 
@@ -60,4 +61,8 @@ class Run:
     updated_listings: int = 0
     errors: int = 0
     notes: str | None = None
+    mode: str | None = None                 # full | partial | resume | fresh
+    price_changed: int = 0                  # карточек, у которых сменилась сырая цена
+    gone_marked: int = 0                    # объявлений, помеченных снятыми
+    stop_reason: str | None = None          # чем кончился обход
     last_page: int = 0                      # с неё продолжает `scrape --resume`
