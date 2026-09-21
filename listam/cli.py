@@ -13,7 +13,7 @@ import sys
 
 from listam.config import ConfigError, load_config
 from listam.doctor import run_doctor
-from listam.wiring import build_exporter, build_storage, database_path
+from listam.wiring import build_database, build_exporter, build_storage, database_path
 
 
 def build_parser() -> argparse.ArgumentParser:
@@ -31,6 +31,12 @@ def build_parser() -> argparse.ArgumentParser:
                         help="сколько страниц пройти (по умолчанию — из конфига)")
     scrape.add_argument("--dry-run", action="store_true",
                         help="разобрать страницы, но ничего не записывать")
+    scrape.add_argument("--allow-shrink", action="store_true",
+                        help="разрешить заливку, если база заметно усохла")
+    scrape.add_argument("--resume", action="store_true",
+                        help="продолжить прерванный обход с последней пройденной страницы")
+    scrape.add_argument("--allow-upload-with-errors", action="store_true",
+                        help="залить базу в хранилище, даже если в прогоне были ошибки")
 
     export = commands.add_parser("export", help="выгрузить базу в .xlsx")
     export.add_argument("--name", help="имя файла выгрузки")
@@ -70,7 +76,9 @@ def main(argv: list[str] | None = None) -> int:
         return 0 if report.ok else 1
 
     if args.command == "scrape":
-        return _scrape(config, max_pages=args.max_pages, dry_run=args.dry_run)
+        return _scrape(config, max_pages=args.max_pages, dry_run=args.dry_run,
+                       allow_shrink=args.allow_shrink, resume=args.resume,
+                       allow_upload_with_errors=args.allow_upload_with_errors)
 
     if args.command == "export":
         return _export(config, name=args.name)
@@ -78,10 +86,14 @@ def main(argv: list[str] | None = None) -> int:
     return 2
 
 
-def _scrape(config, max_pages: int | None, dry_run: bool) -> int:
-    from listam.crawler import run_scrape
+def _scrape(config, max_pages: int | None, dry_run: bool, allow_shrink: bool = False,
+            resume: bool = False, allow_upload_with_errors: bool = False) -> int:
+    import listam.crawler
 
-    run = run_scrape(config, max_pages=max_pages, dry_run=dry_run)
+    run = listam.crawler.run_scrape(
+        config, max_pages=max_pages, dry_run=dry_run, allow_shrink=allow_shrink,
+        resume=resume, allow_upload_with_errors=allow_upload_with_errors,
+    )
     print(
         f"Прогон: страниц: {run.pages_fetched}, карточек: {run.listings_seen}, "
         f"новых: {run.new_listings}, обновлённых: {run.updated_listings}, "
@@ -95,15 +107,13 @@ def _scrape(config, max_pages: int | None, dry_run: bool) -> int:
 
 
 def _export(config, name: str | None) -> int:
-    from listam.adapters.db_sqlite import SqliteDatabase
-
     storage = build_storage(config)
     local_db = database_path(config)
     remote_name = config.get("storage.db_filename", "listam.sqlite")
     if not local_db.exists():
         storage.download(remote_name, local_db)
 
-    database = SqliteDatabase(local_db)
+    database = build_database(config)
     database.connect()
     database.migrate()
     listings = list(database.iter_listings())

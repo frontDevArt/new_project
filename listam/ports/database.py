@@ -15,6 +15,10 @@ class Database(ABC):
     def close(self) -> None: ...
 
     @abstractmethod
+    def snapshot(self, target) -> None:
+        """Целая копия базы в отдельный файл — с тем, что ещё не в основном файле."""
+
+    @abstractmethod
     def migrate(self) -> None:
         """Приводит схему к последней версии. Только версионированными миграциями."""
 
@@ -25,8 +29,13 @@ class Database(ABC):
     def table_names(self) -> set[str]: ...
 
     @abstractmethod
-    def upsert_listing(self, listing: Listing, seen_at: datetime) -> str:
-        """Возвращает 'new' | 'price_changed' | 'updated' | 'unchanged'."""
+    def upsert_listing(
+        self, listing: Listing, seen_at: datetime, rate_amd_per_usd: float | None = None
+    ) -> str:
+        """Возвращает 'new' | 'price_changed' | 'updated' | 'unchanged'.
+
+        `rate_amd_per_usd` — курс прогона, он уходит в точку истории цен.
+        """
 
     @abstractmethod
     def get_listing(self, listing_id: str) -> Listing | None: ...
@@ -47,4 +56,12 @@ class Database(ABC):
     def finish_run(self, run_id: int, finished_at: datetime, **counters) -> None: ...
 
     @abstractmethod
+    def mark_page(self, run_id: int, page: int) -> None:
+        """Запоминает номер пройденной страницы: с неё продолжит `scrape --resume`."""
+
+    @abstractmethod
     def last_run(self) -> Run | None: ...
+
+    @abstractmethod
+    def last_successful_run(self) -> Run | None:
+        """Последний завершённый прогон без ошибок. Мерка полноты для следующего."""

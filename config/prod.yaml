@@ -8,6 +8,25 @@ storage:
   credentials_file: ${GDRIVE_CREDENTIALS_FILE}
   work_dir: ./data
   db_filename: listam.sqlite
+  keep_backups: 5               # сколько прежних копий базы держим в хранилище
+  max_shrink_percent: 10        # насколько база может усохнуть без --allow-shrink
+  busy_timeout_ms: 10000        # сколько ждать, пока чужая запись отпустит базу
+  lock_stale_seconds: 10800     # замок прогона старше этого считается брошенным
+
+validate:                       # пороги «это опечатка продавца, а не данные»
+  price_usd: {min: 5000, max: 5000000}
+  price_per_sqm: {min: 100, max: 20000}
+  area: {min: 5, max: 2000}
+  min_area_per_room: 8          # метров на комнату: меньше — опечатка в площади
+
+coverage:                       # доли заполненности полей: уехавшую вёрстку видно сразу
+  min_sample: 100               # на меньшем числе карточек доля ничего не значит
+  min_filled:                   # доля карточек, где поле не пустое
+    title: 0.99
+    price_raw: 0.95
+    district: 0.98
+  min_share:                    # доля карточек с конкретным значением поля
+    seller_type: {agency: 0.05}
 
 requests:
   kind: none                    # на M2 станет gsheet со ${REQUESTS_SHEET}
@@ -26,8 +45,12 @@ scrape:
   kind: playwright
   base_url: https://www.list.am/ru
   category: 60
+  min_cards_per_page: 20        # страница отдала меньше — считаем сбоем и встаём
+  hard_page_limit: 1000         # потолок обхода: зацикленный пагинатор не крутит вечно
   delay_seconds: 1.5
   max_pages: null               # до конца категории
+  expected_pages_min: null      # обход короче — сбой; null — проверки нет
+  max_pages_drop_percent: 20    # на столько процентов обход может быть короче прошлого удачного
   timeout_seconds: 45
   retries: 3
   headless: false               # на сервере без экрана запускать под xvfb-run

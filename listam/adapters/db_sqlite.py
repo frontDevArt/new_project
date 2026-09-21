@@ -2,6 +2,7 @@
 from __future__ import annotations
 
 import sqlite3
+from contextlib import contextmanager
 from datetime import datetime, timezone
 from pathlib import Path
 from typing import Iterator
@@ -11,11 +12,23 @@ from listam.ports.database import Database
 
 MIGRATIONS_DIR = Path(__file__).resolve().parent.parent / "migrations"
 
-# Поля, изменение которых считаем содержательным обновлением карточки
+# Сколько ждать, пока чужая запись отпустит базу. Рабочее значение — из конфига.
+DEFAULT_BUSY_TIMEOUT_MS = 10_000
+
+# Поля, изменение которых считаем содержательным обновлением карточки.
+# Только то, что реально пришло с сайта: пересчитанных здесь нет и быть не может,
+# иначе движение курса выглядело бы как изменение цены у всей базы разом.
 TRACKED_FIELDS = (
-    "title", "district", "street", "price_raw", "currency", "price_usd", "price_amd",
+    "title", "district", "street", "price_raw", "currency",
     "area", "rooms", "floor", "floors_total", "seller_type", "verified", "new_build",
 )
+
+# Цена шевельнулась — это про сырую цену со страницы, а не про пересчёт.
+PRICE_FIELDS = ("price_raw", "currency")
+
+# Пересчитанные поля: их считает прогон по курсу, а не отдаёт сайт.
+# Пустое значение здесь означает «не смог посчитать» — таким не затираем.
+DERIVED_FIELDS = ("price_usd", "price_amd", "price_per_sqm")
 
 
 def to_iso(value: datetime | None) -> str | None:
@@ -35,22 +48,57 @@ def from_iso(value: str | None) -> datetime | None:
 
 
 class SqliteDatabase(Database):
-    def __init__(self, path: str | Path):
+    def __init__(
+        self,
+        path: str | Path,
+        migrations_dir: str | Path | None = None,
+        busy_timeout_ms: int = DEFAULT_BUSY_TIMEOUT_MS,
+    ):
         self.path = Path(path)
+        self.migrations_dir = Path(migrations_dir) if migrations_dir else MIGRATIONS_DIR
+        self.busy_timeout_ms = int(busy_timeout_ms)
         self._conn: sqlite3.Connection | None = None
 
     # --- жизненный цикл -------------------------------------------------
     def connect(self) -> None:
         self.path.parent.mkdir(parents=True, exist_ok=True)
-        self._conn = sqlite3.connect(self.path)
+        # isolation_level=None: транзакциями управляем сами. Без этого sqlite3
+        # не открывает транзакцию под DDL, и миграция накатывалась бы по
+        # оператору — падение посреди неё оставляло бы половину схемы.
+        self._conn = sqlite3.connect(self.path, isolation_level=None)
         self._conn.row_factory = sqlite3.Row
         self._conn.execute("PRAGMA foreign_keys = ON")
+        # WAL: выгрузка читает базу, пока прогон в неё пишет, а не падает с
+        # «database is locked». busy_timeout — сколько ждать чужой записи,
+        # прежде чем сдаться; берётся из конфига.
+        self._conn.execute("PRAGMA journal_mode = WAL")
+        self._conn.execute(f"PRAGMA busy_timeout = {self.busy_timeout_ms}")
 
     def close(self) -> None:
         if self._conn:
             self._conn.commit()
+            # Перенос WAL в основной файл: обычно его делает закрытие последнего
+            # соединения, но пока базу держит открытой кто-то ещё, этого не
+            # происходит, и на диске остаётся файл без последних записей.
+            try:
+                self._conn.execute("PRAGMA wal_checkpoint(TRUNCATE)")
+            except sqlite3.Error:
+                pass          # база занята читателем — перенос сделает он
             self._conn.close()
             self._conn = None
+
+    def snapshot(self, target: str | Path) -> None:
+        """Целая копия базы в отдельный файл — её и заливаем в хранилище.
+
+        `VACUUM INTO` пишет новый файл из текущего состояния соединения: в нём
+        уже есть то, что лежит ещё в `-wal`, и нет собственных спутников.
+        Копировать вместо этого файл базы означает иногда залить копию без
+        последнего прогона — ровно тогда, когда базу читает кто-то ещё.
+        """
+        target = Path(target)
+        target.parent.mkdir(parents=True, exist_ok=True)
+        target.unlink(missing_ok=True)   # VACUUM INTO не пишет в существующий файл
+        self.conn.execute("VACUUM INTO ?", (str(target),))
 
     @property
     def conn(self) -> sqlite3.Connection:
@@ -60,6 +108,12 @@ class SqliteDatabase(Database):
 
     # --- схема ----------------------------------------------------------
     def migrate(self) -> None:
+        """Накатывает недостающие миграции. Каждая — целиком или никак.
+
+        Скрипт и отметка о версии идут одной транзакцией: иначе падение посреди
+        миграции оставило бы половину схемы без строки в `schema_version`,
+        и следующий запуск попытался бы накатить её заново.
+        """
         self.conn.execute(
             "CREATE TABLE IF NOT EXISTS schema_version ("
             " version INTEGER PRIMARY KEY, applied_at TEXT NOT NULL, name TEXT)"
@@ -67,16 +121,38 @@ class SqliteDatabase(Database):
         applied = {
             row["version"] for row in self.conn.execute("SELECT version FROM schema_version")
         }
-        for path in sorted(MIGRATIONS_DIR.glob("*.sql")):
+        for path in sorted(self.migrations_dir.glob("*.sql")):
             version = int(path.name.split("_", 1)[0])
             if version in applied:
                 continue
-            self.conn.executescript(path.read_text(encoding="utf-8"))
+            self._apply(path, version)
+        self._check_integrity()
+
+    @contextmanager
+    def transaction(self):
+        """Всё внутри — одной транзакцией. Границы ставим руками: база в autocommit."""
+        self.conn.execute("BEGIN")
+        try:
+            yield
+        except Exception:
+            self.conn.execute("ROLLBACK")
+            raise
+        self.conn.execute("COMMIT")
+
+    def _apply(self, path: Path, version: int) -> None:
+        with self.transaction():
+            for statement in _statements(path.read_text(encoding="utf-8")):
+                self.conn.execute(statement)
             self.conn.execute(
                 "INSERT INTO schema_version(version, applied_at, name) VALUES (?, ?, ?)",
                 (version, to_iso(datetime.now(timezone.utc)), path.name),
             )
-        self.conn.commit()
+
+    def _check_integrity(self) -> None:
+        row = self.conn.execute("PRAGMA quick_check").fetchone()
+        answer = row[0] if row else "нет ответа"
+        if answer != "ok":
+            raise sqlite3.DatabaseError(f"База повреждена: {answer} ({self.path})")
 
     def schema_version(self) -> int:
         row = self.conn.execute("SELECT MAX(version) AS v FROM schema_version").fetchone()
@@ -87,7 +163,9 @@ class SqliteDatabase(Database):
         return {row["name"] for row in rows}
 
     # --- объявления -----------------------------------------------------
-    def upsert_listing(self, listing: Listing, seen_at: datetime) -> str:
+    def upsert_listing(
+        self, listing: Listing, seen_at: datetime, rate_amd_per_usd: float | None = None
+    ) -> str:
         existing = self.get_listing(listing.id)
         seen_iso = to_iso(seen_at)
         if existing is None:
@@ -99,11 +177,11 @@ class SqliteDatabase(Database):
             values["new_build"] = _to_int(listing.new_build)
             columns = ", ".join(values)
             placeholders = ", ".join(f":{name}" for name in values)
-            self.conn.execute(
-                f"INSERT INTO listings ({columns}) VALUES ({placeholders})", values
-            )
-            self._add_price_point(listing.id, seen_at, listing.price_usd)
-            self.conn.commit()
+            with self.transaction():
+                self.conn.execute(
+                    f"INSERT INTO listings ({columns}) VALUES ({placeholders})", values
+                )
+                self._add_price_point(listing.id, seen_at, listing.price_usd, rate_amd_per_usd)
             return "new"
 
         changed = [
@@ -111,30 +189,39 @@ class SqliteDatabase(Database):
             if _normalize(getattr(listing, name)) != _normalize(getattr(existing, name))
         ]
         updates = {name: getattr(listing, name) for name in TRACKED_FIELDS}
+        updates.update({name: getattr(listing, name) for name in DERIVED_FIELDS})
         updates["verified"] = _to_int(listing.verified)
         updates["new_build"] = _to_int(listing.new_build)
-        updates["price_per_sqm"] = listing.price_per_sqm
+        updates["anomaly"] = listing.anomaly
         updates["last_seen"] = seen_iso
         updates["status"] = "active"
         updates["id"] = listing.id
-        assignments = ", ".join(f"{name} = :{name}" for name in updates if name != "id")
-        self.conn.execute(f"UPDATE listings SET {assignments} WHERE id = :id", updates)
-
+        assignments = ", ".join(
+            f"{name} = COALESCE(:{name}, {name})" if name in DERIVED_FIELDS
+            else f"{name} = :{name}"
+            for name in updates if name != "id"
+        )
         outcome = "unchanged"
-        if "price_usd" in changed:
-            self._add_price_point(listing.id, seen_at, listing.price_usd)
-            outcome = "price_changed"
-        elif changed:
-            outcome = "updated"
-        self.conn.commit()
+        with self.transaction():
+            self.conn.execute(f"UPDATE listings SET {assignments} WHERE id = :id", updates)
+            if any(name in changed for name in PRICE_FIELDS):
+                self._add_price_point(listing.id, seen_at, listing.price_usd, rate_amd_per_usd)
+                outcome = "price_changed"
+            elif changed:
+                outcome = "updated"
         return outcome
 
     def _add_price_point(
-        self, listing_id: str, seen_at: datetime, price_usd: float | None
+        self,
+        listing_id: str,
+        seen_at: datetime,
+        price_usd: float | None,
+        rate_amd_per_usd: float | None = None,
     ) -> None:
         self.conn.execute(
-            "INSERT INTO price_history (listing_id, seen_at, price_usd) VALUES (?, ?, ?)",
-            (listing_id, to_iso(seen_at), price_usd),
+            "INSERT INTO price_history (listing_id, seen_at, price_usd, rate_amd_per_usd) "
+            "VALUES (?, ?, ?, ?)",
+            (listing_id, to_iso(seen_at), price_usd, rate_amd_per_usd),
         )
 
     def get_listing(self, listing_id: str) -> Listing | None:
@@ -163,6 +250,7 @@ class SqliteDatabase(Database):
                 listing_id=r["listing_id"],
                 seen_at=from_iso(r["seen_at"]),
                 price_usd=r["price_usd"],
+                rate_amd_per_usd=r["rate_amd_per_usd"],
             )
             for r in rows
         ]
@@ -176,10 +264,21 @@ class SqliteDatabase(Database):
         self.conn.commit()
         return int(cursor.lastrowid)
 
+    def mark_page(self, run_id: int, page: int) -> None:
+        """Пишется после каждой пройденной страницы, а не в конце прогона.
+
+        Обход 215 страниц идёт часами; убитый на середине прогон не должен
+        начинаться сначала.
+        """
+        self.conn.execute(
+            "UPDATE runs SET last_page = ? WHERE id = ?", (int(page), run_id)
+        )
+        self.conn.commit()
+
     def finish_run(self, run_id: int, finished_at: datetime, **counters) -> None:
         allowed = {
             "pages_fetched", "listings_seen", "new_listings", "updated_listings",
-            "errors", "notes",
+            "errors", "notes", "last_page",
         }
         unknown = set(counters) - allowed
         if unknown:
@@ -193,20 +292,37 @@ class SqliteDatabase(Database):
 
     def last_run(self) -> Run | None:
         row = self.conn.execute("SELECT * FROM runs ORDER BY id DESC LIMIT 1").fetchone()
-        if not row:
-            return None
-        return Run(
-            id=row["id"],
-            started_at=from_iso(row["started_at"]),
-            finished_at=from_iso(row["finished_at"]),
-            rate_amd_per_usd=row["rate_amd_per_usd"],
-            pages_fetched=row["pages_fetched"],
-            listings_seen=row["listings_seen"],
-            new_listings=row["new_listings"],
-            updated_listings=row["updated_listings"],
-            errors=row["errors"],
-            notes=row["notes"],
-        )
+        return _row_to_run(row) if row else None
+
+    def last_successful_run(self) -> Run | None:
+        """Последний прогон, который дошёл до конца и не насчитал ошибок."""
+        row = self.conn.execute(
+            "SELECT * FROM runs WHERE finished_at IS NOT NULL AND IFNULL(errors, 0) = 0 "
+            "ORDER BY id DESC LIMIT 1"
+        ).fetchone()
+        return _row_to_run(row) if row else None
+
+
+def _row_to_run(row: sqlite3.Row) -> Run:
+    return Run(
+        id=row["id"],
+        started_at=from_iso(row["started_at"]),
+        finished_at=from_iso(row["finished_at"]),
+        rate_amd_per_usd=row["rate_amd_per_usd"],
+        pages_fetched=row["pages_fetched"],
+        listings_seen=row["listings_seen"],
+        new_listings=row["new_listings"],
+        updated_listings=row["updated_listings"],
+        errors=row["errors"],
+        notes=row["notes"],
+        last_page=row["last_page"] or 0,
+    )
+
+
+def _statements(script: str) -> list[str]:
+    """Режет миграцию на операторы. Комментарии `--` до конца строки выбрасываются."""
+    without_comments = "\n".join(line.split("--", 1)[0] for line in script.splitlines())
+    return [part.strip() for part in without_comments.split(";") if part.strip()]
 
 
 def _to_int(value: bool | None) -> int | None:

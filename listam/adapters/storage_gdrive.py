@@ -10,6 +10,7 @@ from __future__ import annotations
 
 from pathlib import Path
 
+from listam.adapters.filenames import drop_wal_sidecars
 from listam.ports.storage import CheckReport, Storage, StorageError
 
 SCOPES = ["https://www.googleapis.com/auth/drive"]
@@ -78,6 +79,7 @@ class GDriveStorage(Storage):
             done = False
             while not done:
                 _, done = downloader.next_chunk()
+        drop_wal_sidecars(target)   # спутники относились к прежнему файлу
         return True
 
     def upload(self, source: str | Path, name: str) -> None:
@@ -100,6 +102,31 @@ class GDriveStorage(Storage):
                 fields="id",
                 supportsAllDrives=True,
             ).execute()
+
+    def names(self, prefix: str = "") -> list[str]:
+        service = self._connect()
+        query = f"'{self.folder_id}' in parents and trashed = false"
+        found: list[str] = []
+        token = None
+        while True:
+            result = (
+                service.files()
+                .list(q=query, fields="nextPageToken, files(name)", pageSize=200,
+                      pageToken=token, supportsAllDrives=True,
+                      includeItemsFromAllDrives=True)
+                .execute()
+            )
+            found.extend(item["name"] for item in result.get("files", []))
+            token = result.get("nextPageToken")
+            if not token:
+                break
+        return sorted(name for name in found if name.startswith(prefix))
+
+    def delete(self, name: str) -> None:
+        file_id = self._find(name)
+        if file_id is None:
+            return
+        self._connect().files().delete(fileId=file_id, supportsAllDrives=True).execute()
 
     def check(self) -> CheckReport:
         try:

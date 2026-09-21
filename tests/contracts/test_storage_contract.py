@@ -72,3 +72,57 @@ def test_check_reports_writable_storage(storage):
     report = storage.check()
     assert report.ok is True
     assert report.details
+
+
+def test_names_lists_what_was_uploaded(storage, local_file):
+    storage.upload(local_file, "listam.sqlite")
+    storage.upload(local_file, "listam-20260921-1200.sqlite")
+
+    names = storage.names()
+
+    assert "listam.sqlite" in names
+    assert "listam-20260921-1200.sqlite" in names
+
+
+def test_names_can_be_narrowed_by_prefix(storage, local_file):
+    storage.upload(local_file, "listam.sqlite")
+    storage.upload(local_file, "listam-20260921-1200.sqlite")
+
+    assert storage.names(prefix="listam-") == ["listam-20260921-1200.sqlite"]
+
+
+def test_deleted_file_is_gone(storage, local_file):
+    storage.upload(local_file, "listam.sqlite")
+
+    storage.delete("listam.sqlite")
+
+    assert storage.exists("listam.sqlite") is False
+
+
+def test_deleting_what_is_not_there_is_not_an_error(storage):
+    storage.delete("нет-такого.sqlite")
+
+
+def test_a_name_that_climbs_out_of_the_directory_is_refused(tmp_path):
+    from listam.adapters.storage_local import LocalStorage
+    from listam.ports.storage import StorageError
+
+    storage = LocalStorage(directory=tmp_path / "remote")
+
+    with pytest.raises(StorageError):
+        storage.exists("..")
+
+
+def test_download_clears_the_wal_companions_of_the_replaced_file(storage, local_file, tmp_path):
+    """Скачанная база — другой файл: `-wal` и `-shm` от прежнего ей не родня."""
+    storage.upload(local_file, "listam.sqlite")
+    target = tmp_path / "work" / "listam.sqlite"
+    target.parent.mkdir(parents=True, exist_ok=True)
+    target.write_bytes(b"old-database")
+    for suffix in ("-wal", "-shm"):
+        target.with_name(target.name + suffix).write_bytes(b"tail-of-the-old-database")
+
+    assert storage.download("listam.sqlite", target) is True
+
+    assert not target.with_name(target.name + "-wal").exists()
+    assert not target.with_name(target.name + "-shm").exists()

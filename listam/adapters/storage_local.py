@@ -4,6 +4,7 @@ from __future__ import annotations
 import shutil
 from pathlib import Path
 
+from listam.adapters.filenames import drop_wal_sidecars, safe_filename
 from listam.ports.storage import CheckReport, Storage, StorageError
 
 
@@ -13,7 +14,7 @@ class LocalStorage(Storage):
 
     def _path(self, name: str) -> Path:
         # имя файла — только имя, никаких путей наружу
-        safe = Path(name).name
+        safe = safe_filename(name)
         if not safe:
             raise StorageError(f"Недопустимое имя файла: {name!r}")
         return self.directory / safe
@@ -28,6 +29,7 @@ class LocalStorage(Storage):
         target = Path(target)
         target.parent.mkdir(parents=True, exist_ok=True)
         shutil.copyfile(source, target)
+        drop_wal_sidecars(target)   # спутники относились к прежнему файлу
         return True
 
     def upload(self, source: str | Path, name: str) -> None:
@@ -36,6 +38,18 @@ class LocalStorage(Storage):
             raise StorageError(f"Нечего заливать: {source} не существует")
         self.directory.mkdir(parents=True, exist_ok=True)
         shutil.copyfile(source, self._path(name))
+
+    def names(self, prefix: str = "") -> list[str]:
+        if not self.directory.exists():
+            return []
+        return sorted(
+            item.name for item in self.directory.iterdir()
+            if item.is_file() and item.name.startswith(prefix)
+            and not item.name.startswith(".")
+        )
+
+    def delete(self, name: str) -> None:
+        self._path(name).unlink(missing_ok=True)
 
     def check(self) -> CheckReport:
         try:

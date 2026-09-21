@@ -95,9 +95,29 @@ def test_changed_price_is_reported(db):
 def test_price_history_gets_a_row_per_price(db):
     db.upsert_listing(make_listing(), seen_at=NOW)
     db.upsert_listing(make_listing(), seen_at=LATER)  # та же цена — не пишем
-    db.upsert_listing(make_listing(price_usd=125000.0), seen_at=LATER)
+    db.upsert_listing(
+        make_listing(price_raw="$125,000", price_usd=125000.0), seen_at=LATER
+    )
     history = db.price_history("24254997")
     assert [row.price_usd for row in history] == [132000.0, 125000.0]
+
+
+def test_recomputed_price_alone_adds_no_history_point(db):
+    """Курс сдвинулся — на сайте не изменилось ничего, истории цен тоже."""
+    db.upsert_listing(make_listing(), seen_at=NOW, rate_amd_per_usd=385.0)
+
+    outcome = db.upsert_listing(
+        make_listing(price_amd=52_800_000.0), seen_at=LATER, rate_amd_per_usd=400.0
+    )
+
+    assert outcome == "unchanged"
+    assert len(db.price_history("24254997")) == 1
+
+
+def test_history_point_keeps_the_rate_it_was_written_with(db):
+    db.upsert_listing(make_listing(), seen_at=NOW, rate_amd_per_usd=385.0)
+
+    assert db.price_history("24254997")[0].rate_amd_per_usd == 385.0
 
 
 def test_known_ids_returns_stored_ids(db):
@@ -130,3 +150,62 @@ def test_run_is_journaled(db):
 def test_timestamps_round_trip_as_utc(db):
     db.upsert_listing(make_listing(), seen_at=NOW)
     assert db.get_listing("24254997").last_seen.tzinfo is not None
+
+
+def test_update_keeps_computed_prices_when_the_new_ones_are_missing(db):
+    """Пустой пересчёт — это «не смог посчитать», а не «цены больше нет»."""
+    db.upsert_listing(make_listing(), seen_at=NOW)
+
+    blind = make_listing(price_usd=None, price_amd=None, price_per_sqm=None)
+    db.upsert_listing(blind, seen_at=LATER)
+
+    stored = db.get_listing("24254997")
+    assert stored.price_usd == 132000.0
+    assert stored.price_amd == 50820000.0
+    assert stored.price_per_sqm == 1552.94
+
+
+def test_update_overwrites_computed_prices_with_a_new_value(db):
+    db.upsert_listing(make_listing(), seen_at=NOW)
+
+    db.upsert_listing(make_listing(price_usd=125000.0), seen_at=LATER)
+
+    assert db.get_listing("24254997").price_usd == 125000.0
+
+
+def test_run_remembers_how_far_the_crawl_got(db):
+    """Номер последней пройденной страницы — с неё продолжает `scrape --resume`."""
+    run_id = db.start_run(NOW, 400.0)
+
+    db.mark_page(run_id, 7)
+
+    assert db.last_run().last_page == 7
+
+
+def test_last_successful_run_skips_the_ones_with_errors(db):
+    good = db.start_run(NOW, 400.0)
+    db.finish_run(good, LATER, pages_fetched=9, errors=0)
+    bad = db.start_run(LATER, 400.0)
+    db.finish_run(bad, LATER, pages_fetched=2, errors=1)
+    db.start_run(LATER, 400.0)              # ещё не закончился
+
+    assert db.last_successful_run().id == good
+    assert db.last_run().id != good
+
+
+def test_snapshot_shows_what_has_not_reached_the_main_file_yet(db, tmp_path):
+    """Снимок целен: в него попадает и то, что лежит ещё в соседнем `-wal`."""
+    db.upsert_listing(make_listing(), seen_at=NOW)
+    target = tmp_path / "snapshot.sqlite"
+
+    db.snapshot(target)
+
+    import sqlite3
+
+    connection = sqlite3.connect(f"file:{target.as_posix()}?mode=ro", uri=True)
+    try:
+        count = connection.execute("SELECT COUNT(*) FROM listings").fetchone()[0]
+    finally:
+        connection.close()
+    assert count == 1
+    assert not target.with_name(target.name + "-wal").exists()
