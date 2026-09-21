@@ -891,3 +891,22 @@ def test_rotation_counts_only_backups_when_it_decides_what_to_drop(tmp_path):
     # четыре прежних копии плюс сделанная сейчас — ровно keep, ничего не удалено
     assert len(backups) == 6        # пять копий и сама база
     assert len([n for n in backups if n != "listam.sqlite"]) == 5
+
+
+def test_unopenable_database_is_a_run_error_not_a_traceback(project):
+    """Файл базы не открылся — прогон говорит об этом и отпускает замок.
+
+    Ловился только OSError, а SQLite на папке вместо файла отвечает своим
+    OperationalError: он летел наружу трейсбеком мимо журнала.
+    """
+    from listam.wiring import run_lock_path
+
+    path = database_path(project)
+    path.parent.mkdir(parents=True, exist_ok=True)
+    path.mkdir()                      # на месте файла базы — папка
+
+    run = run_scrape(project)
+
+    assert run.errors == 1
+    assert "файл базы недоступен" in run.notes
+    assert not run_lock_path(project).exists()

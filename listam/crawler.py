@@ -10,6 +10,7 @@
 from __future__ import annotations
 
 import re
+import sqlite3
 from dataclasses import dataclass
 from datetime import datetime, timezone
 from pathlib import Path
@@ -76,8 +77,6 @@ def apply_rate(listing: Listing, rate_amd_per_usd: float | None) -> Listing:
 
 def _latest_run_at(path) -> datetime | None:
     """Когда по этой копии базы последний раз ходил прогон. Нечитаемая копия — None."""
-    import sqlite3
-
     if not Path(path).exists():
         return None
     try:
@@ -92,8 +91,6 @@ def _latest_run_at(path) -> datetime | None:
 
 
 def _listings_in(path) -> int | None:
-    import sqlite3
-
     if not Path(path).exists():
         return None
     try:
@@ -380,7 +377,9 @@ def run_scrape(
                 database = build_database(config)
                 database.connect()
                 database.migrate()
-            except OSError as exc:
+            except (OSError, sqlite3.Error) as exc:
+                # Папка вместо файла, нет прав, битый файл: SQLite отвечает на это
+                # своей ошибкой, а не OSError, и без неё трейсбек летел мимо журнала.
                 if database is not None:
                     database.close()
                 fetcher.close()
