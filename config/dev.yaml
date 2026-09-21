@@ -28,7 +28,7 @@ scrape:
   base_url: https://www.list.am/ru
   category: 60                  # продажа квартир
   delay_seconds: 1.5            # пауза между запросами, никаких параллельных пачек
-  max_pages: 20                 # в prod — null, то есть до конца
+  max_pages: null               # полный обход категории, до конца ленты
   timeout_seconds: 45           # браузер медленнее голого запроса
   retries: 3
   # --- только для kind: playwright ---
