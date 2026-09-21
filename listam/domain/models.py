@@ -68,3 +68,66 @@ class Run:
     returned: int = 0                       # снятых объявлений, вернувшихся на ленту
     stop_reason: str | None = None          # чем кончился обход
     last_page: int = 0                      # с неё продолжает `scrape --resume`
+
+
+@dataclass
+class Request:
+    """Заявка покупателя — ядро системы. Фильтр производен от неё, а не наоборот."""
+
+    id: int | None = None
+    external_id: str | None = None          # идентификатор строки во внешней таблице
+    client_name: str | None = None
+    client_phone: str | None = None
+    created_at: datetime | None = None
+    updated_at: datetime | None = None      # двигается только содержательной правкой
+    status: str = "active"                  # active | paused | closed
+    budget_max: float | None = None
+    budget_stretch: float | None = None     # пусто — потолок плюс процент из конфига
+    districts: list[str] = field(default_factory=list)
+    districts_priority: list[str] = field(default_factory=list)
+    rooms: list[int] = field(default_factory=list)
+    area_min: float | None = None
+    area_max: float | None = None
+    floor_min: int | None = None
+    floor_max: int | None = None
+    no_first_floor: bool = False
+    no_last_floor: bool = False
+    must_have: str | None = None
+    nice_to_have: str | None = None
+    floor_rules: str | None = None          # человеческая заметка, скорингом не читается
+    notes: str | None = None
+    source_row: str | None = None           # сырая строка источника целиком (JSON)
+
+    def stretch(self, percent: float) -> float | None:
+        """Растянутый потолок бюджета.
+
+        Вариант на 5 000 дороже бюджета всё равно стоит звонка: жёсткий
+        критерий отсекает по нему, а не по `budget_max`.
+        """
+        if self.budget_stretch is not None:
+            return self.budget_stretch
+        if self.budget_max is None:
+            return None
+        # Не `budget_max * (1 + percent/100)`: на 100 000 и 10% это даёт
+        # 110000.00000000001, и растянутый бюджет перестаёт быть круглым
+        # числом в отчёте. Прибавка считается отдельно и складывается.
+        return self.budget_max + self.budget_max * float(percent) / 100
+
+
+@dataclass
+class Match:
+    """Объявление, подошедшее заявке: балл, его разбор и снимок кластера."""
+
+    id: int | None = None
+    request_id: int | None = None
+    listing_id: str | None = None
+    score: float | None = None
+    matched_at: datetime | None = None
+    first_matched_at: datetime | None = None   # когда нашли впервые; пересчёт не двигает
+    status: str = "new"                        # new | sent | called | rejected
+    reject_reason: str | None = None
+    run_id: int | None = None
+    breakdown: dict | None = None              # балл по факторам: «почему 68, а не 71»
+    cluster_id: str | None = None
+    cluster_size: int = 1
+    cluster_spread_usd: float | None = None
