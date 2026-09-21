@@ -5,6 +5,7 @@
     python -m listam recheck         пересчитать пометки по всей базе
     python -m listam export          выгрузить текущую базу в .xlsx
     python -m listam requests        прочитать заявки покупателей из источника
+    python -m listam cluster         пересчитать кластеры-дубли по базе
     python -m listam changes         что принёс последний прогон
 
 Окружение выбирается переменной APP_ENV или флагом --env.
@@ -55,6 +56,9 @@ def build_parser() -> argparse.ArgumentParser:
 
     commands.add_parser("requests",
                         help="прочитать заявки из источника и записать в базу")
+
+    commands.add_parser("cluster",
+                        help="пересчитать кластеры-дубли по всей базе")
 
     changes = commands.add_parser("changes", help="что принёс последний прогон")
     changes.add_argument("--hours", type=float,
@@ -131,6 +135,9 @@ def main(argv: list[str] | None = None) -> int:
     if args.command == "requests":
         return _requests(config)
 
+    if args.command == "cluster":
+        return _cluster(config)
+
     if args.command == "changes":
         # Разбор аргументов — дело командной строки: `run_changes` про коды
         # возврата ничего не знает. Бессмысленный ввод отклоняется на входе,
@@ -198,6 +205,14 @@ def _requests(config) -> int:
     from listam.requests_sync import run_requests_sync
 
     report = run_requests_sync(config)
+    print(report.render())
+    return 1 if report.errors else 0
+
+
+def _cluster(config) -> int:
+    from listam.clustering_run import run_clustering
+
+    report = run_clustering(config)
     print(report.render())
     return 1 if report.errors else 0
 

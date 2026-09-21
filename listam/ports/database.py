@@ -124,6 +124,24 @@ class Database(ABC):
     def price_history(self, listing_id: str) -> list[PricePoint]: ...
 
     @abstractmethod
+    def set_cluster_ids(self, mapping: dict[str, str]) -> int:
+        """Проставляет кластеры и отдаёт, сколько строк на самом деле изменилось.
+
+        Считаются изменённые, а не переданные: пересчёт по неизменившейся базе
+        обязан отвечать «изменено 0», иначе идемпотентность нечем проверить.
+        """
+
+    @abstractmethod
+    def listings_for_matching(self, since: datetime | None = None) -> list[Listing]:
+        """Объявления, которые вообще могут стать матчем.
+
+        Снятые и помеченные аномалией выпадают: по снятому звонить некуда,
+        а аномалия — это цена, которой мы сами не верим, и предлагать её
+        клиенту нельзя. `since` сужает выборку до появившихся после отметки
+        (мерка — `first_seen`), это и есть `match --new`.
+        """
+
+    @abstractmethod
     def upsert_request(self, request: Request, now: datetime) -> str:
         """Возвращает 'new' | 'updated' | 'unchanged'.
 

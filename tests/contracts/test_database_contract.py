@@ -647,3 +647,33 @@ def test_only_active_requests_are_iterated_by_default(db):
 
 def test_an_unknown_request_is_none_and_not_an_error(db):
     assert db.get_request("R-404") is None
+
+
+# --- кластеры и выборка для матчинга -----------------------------------
+def test_cluster_ids_are_stored_and_only_changed_rows_count(db):
+    db.upsert_listing(make_listing("1"), NOW)
+    db.upsert_listing(make_listing("2"), NOW)
+    assert db.set_cluster_ids({"1": "abc", "2": "abc"}) == 2
+    assert db.set_cluster_ids({"1": "abc", "2": "abc"}) == 0
+    assert db.get_listing("1").cluster_id == "abc"
+
+
+def test_a_listing_that_moved_to_another_cluster_counts_as_changed(db):
+    db.upsert_listing(make_listing("1"), NOW)
+    db.set_cluster_ids({"1": "abc"})
+    assert db.set_cluster_ids({"1": "xyz"}) == 1
+    assert db.get_listing("1").cluster_id == "xyz"
+
+
+def test_matching_takes_only_active_and_clean_listings(db):
+    db.upsert_listing(make_listing("1"), NOW)
+    db.upsert_listing(make_listing("2", anomaly="цена за метр вне порога"), NOW)
+    db.upsert_listing(make_listing("3"), NOW)
+    db.mark_gone(["3"], LATER)
+    assert [item.id for item in db.listings_for_matching()] == ["1"]
+
+
+def test_matching_since_a_mark_takes_only_what_appeared_after_it(db):
+    db.upsert_listing(make_listing("1"), NOW)
+    db.upsert_listing(make_listing("2"), EVEN_LATER)
+    assert [item.id for item in db.listings_for_matching(since=LATER)] == ["2"]

@@ -414,3 +414,25 @@ def test_requests_fails_when_the_source_is_unreachable(project, capsys):
     )
 
     assert run(project, "requests") == 1
+
+
+# --- listam cluster (фаза 3 M2) ---------------------------------------
+
+def test_cluster_recounts_the_database_and_shows_the_summary(project, capsys):
+    run(project, "scrape")
+    capsys.readouterr()
+
+    assert run(project, "cluster") == 0
+
+    out = capsys.readouterr().out
+    assert "кластеров" in out
+    assert "Без улицы" in out
+
+
+def test_cluster_run_twice_changes_nothing(project, capsys):
+    run(project, "scrape")
+    run(project, "cluster")
+    capsys.readouterr()
+
+    assert run(project, "cluster") == 0
+    assert "Изменено строк: 0" in capsys.readouterr().out

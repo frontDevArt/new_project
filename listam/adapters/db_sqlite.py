@@ -434,6 +434,34 @@ class SqliteDatabase(Database):
         ]
 
     # --- заявки -----------------------------------------------------------
+    def set_cluster_ids(self, mapping: dict[str, str]) -> int:
+        """Кластеры одной транзакцией; считаются строки, которые правда сменились.
+
+        Условие `cluster_id IS NULL OR cluster_id <> ?` — не экономия записи,
+        а мерка: по ней видно, что повторный пересчёт ничего не двигает.
+        """
+        changed = 0
+        with self.transaction():
+            for listing_id, cluster_id in mapping.items():
+                cursor = self.conn.execute(
+                    "UPDATE listings SET cluster_id = ? WHERE id = ? "
+                    "AND (cluster_id IS NULL OR cluster_id <> ?)",
+                    (cluster_id, listing_id, cluster_id),
+                )
+                changed += cursor.rowcount
+        return changed
+
+    def listings_for_matching(self, since: datetime | None = None) -> list[Listing]:
+        """Активные и без аномалии; `since` мерится по `first_seen`."""
+        query = ("SELECT * FROM listings WHERE status = 'active' "
+                 "AND (anomaly IS NULL OR anomaly = '')")
+        params: tuple = ()
+        if since is not None:
+            query += " AND first_seen >= ?"
+            params = (to_iso(since),)
+        query += " ORDER BY first_seen DESC, id DESC"
+        return [_row_to_listing(row) for row in self.conn.execute(query, params)]
+
     def upsert_request(self, request: Request, now: datetime) -> str:
         values = {name: _request_value(request, name) for name in REQUEST_FIELDS}
         existing = self.get_request(request.external_id)
