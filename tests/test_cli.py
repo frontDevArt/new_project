@@ -176,6 +176,28 @@ def test_resume_flag_reaches_the_run(project, monkeypatch):
     assert seen["resume"] is True
 
 
+def test_fresh_flag_reaches_the_run(project, monkeypatch):
+    import listam.crawler
+    from listam.domain.models import Run
+
+    seen = {}
+    monkeypatch.setattr(
+        listam.crawler, "run_scrape",
+        lambda config, **kwargs: (seen.update(kwargs), Run())[1],
+    )
+
+    assert run(project, "scrape", "--fresh") == 0
+    assert seen["fresh"] is True
+
+
+def test_fresh_and_resume_together_are_refused(project, capsys):
+    """Одно идёт с головы ленты, другое продолжает прерванный полный обход."""
+    code = run(project, "scrape", "--fresh", "--resume")
+
+    assert code == 2
+    assert "вместе не работают" in capsys.readouterr().err
+
+
 def database_at_schema(project, version: int) -> None:
     """Кладёт на место рабочей копии базу, на которую накатили только первые миграции."""
     from listam.adapters.db_sqlite import MIGRATIONS_DIR, SqliteDatabase

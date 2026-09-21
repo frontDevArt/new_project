@@ -346,6 +346,7 @@ def run_scrape(
     allow_shrink: bool = False,
     resume: bool = False,
     allow_upload_with_errors: bool = False,
+    fresh: bool = False,
 ) -> Run:
     """Один проход по ленте категории. Возвращает журнал прогона.
 
@@ -355,6 +356,10 @@ def run_scrape(
     `resume` продолжает прерванный обход с последней пройденной страницы:
     215 страниц с паузой между запросами — это часы, начинать их заново из-за
     оборванной связи незачем.
+
+    `fresh` проходит только свежую часть ленты — до страниц, на которых нет
+    ничего нового. Полный обход — сотни страниц и десяток минут; раз в час так
+    ходить незачем.
     """
     limit = max_pages if max_pages is not None else config.get("scrape.max_pages")
     limit = int(limit) if limit else None
@@ -371,8 +376,13 @@ def run_scrape(
     started_at = datetime.now(timezone.utc)
     # Режим считается до похода за курсом: прогон, который не начался, тоже
     # должен быть отличим в журнале, а не лежать там безрежимным.
-    mode = run_mode(fresh=False, resume=resume, limit=limit)   # fresh появится в фазе 2
+    mode = run_mode(fresh=fresh, resume=resume, limit=limit)
     stop_reason = None
+    fresh_threshold = int(config.get("scrape.fresh_stop_after_known_pages",
+                                     DEFAULT_FRESH_STOP_PAGES) or 0)
+    fresh_ceiling = int(config.get("scrape.fresh_max_pages", DEFAULT_FRESH_MAX_PAGES) or 0)
+    if fresh and limit is not None:
+        fresh_ceiling = min(fresh_ceiling or limit, limit)   # --max-pages опускает потолок
 
     # Курс — предусловие прогона, а не его счётчик: без него все пересчитанные
     # цены вышли бы пустыми и затёрли бы посчитанное прошлым прогоном.
@@ -452,9 +462,17 @@ def run_scrape(
         # Прошлый удачный прогон — мерка полноты обхода: столько страниц в ленте и есть.
         previous_success = database.last_successful_run() if database is not None else None
 
+        # Известное к началу прогона: инкрементальный обход идёт, пока на странице
+        # попадается хоть что-то новое. Пробный прогон базы не касается и знать
+        # её содержимое не имеет права — такой обход дойдёт до потолка и скажет об этом.
+        known = database.known_ids() if (fresh and database is not None) else set()
+        pages_without_new = 0
+
         start_page = 1
         if resume and database is not None:
-            start_page, resume_note = resume_start_page(database.last_run())
+            # --resume продолжает прерванный ПОЛНЫЙ обход: инкрементальный прогон,
+            # прошедший между ними, продолжать нечего.
+            start_page, resume_note = resume_start_page(database.last_run(mode="full"))
             if resume_note:
                 note = f"{note}; {resume_note}"
 
@@ -502,6 +520,7 @@ def run_scrape(
                         )
                         break
                     counters.pages_fetched += 1   # страница засчитана: она разобралась
+                    fresh_on_page = sum(1 for card in cards if card.id not in known)
 
                     for listing in cards:
                         counters.listings_seen += 1
@@ -531,6 +550,22 @@ def run_scrape(
                     if lock is not None:
                         lock.touch()        # прогон жив: срок замка отсчитывается заново
 
+                    if fresh:
+                        known.update(card.id for card in cards)
+                        pages_without_new = 0 if fresh_on_page else pages_without_new + 1
+                        reason, is_error = incremental_stop(
+                            pages_without_new=pages_without_new,
+                            threshold=fresh_threshold,
+                            pages_fetched=counters.pages_fetched,
+                            ceiling=fresh_ceiling,
+                        )
+                        if reason:
+                            stop_reason = reason
+                            if is_error:
+                                counters.errors += 1
+                                note = f"{note}; {reason}"
+                            break
+
                     if limit is not None and counters.pages_fetched >= limit:
                         stop_reason = f"лимит страниц: scrape.max_pages = {limit}"
                         break
@@ -550,7 +585,8 @@ def run_scrape(
 
                 # Укороченный обход сверяем с полнотой только тогда, когда его никто
                 # не укорачивал нарочно: с --max-pages и --resume это норма, а не сбой.
-                if limit is None and not resume:
+                # Инкрементальный обход укорочен нарочно — недобор ему не предъявляется.
+                if limit is None and not resume and not fresh:
                     shortfall = pages_shortfall(
                         counters.pages_fetched,
                         config.get("scrape.expected_pages_min"),
@@ -573,7 +609,11 @@ def run_scrape(
 
                 # Продолженный обход законно кончается на первой же своей странице —
                 # это конец ленты, а не сломанный пагинатор.
-                alone = counters.pages_fetched == 1 and not (resume and start_page > 1)
+                alone = (
+                    counters.pages_fetched == 1
+                    and not fresh
+                    and not (resume and start_page > 1)
+                )
                 if counters.errors == 0 and alone and limit != 1:
                     counters.errors += 1
                     note = (

@@ -37,6 +37,9 @@ def build_parser() -> argparse.ArgumentParser:
                         help="разрешить заливку, если база заметно усохла")
     scrape.add_argument("--resume", action="store_true",
                         help="продолжить прерванный обход с последней пройденной страницы")
+    scrape.add_argument("--fresh", action="store_true",
+                        help="инкрементальный обход: только свежая часть ленты "
+                             "до уже известных объявлений")
     scrape.add_argument("--allow-upload-with-errors", action="store_true",
                         help="залить базу в хранилище, даже если в прогоне были ошибки")
 
@@ -83,9 +86,17 @@ def main(argv: list[str] | None = None) -> int:
         return 0 if report.ok else 1
 
     if args.command == "scrape":
+        if args.fresh and args.resume:
+            print(
+                "--fresh и --resume вместе не работают: первый идёт с головы ленты, "
+                "второй продолжает прерванный полный обход. Выбери одно.",
+                file=sys.stderr,
+            )
+            return 2
         return _scrape(config, max_pages=args.max_pages, dry_run=args.dry_run,
                        allow_shrink=args.allow_shrink, resume=args.resume,
-                       allow_upload_with_errors=args.allow_upload_with_errors)
+                       allow_upload_with_errors=args.allow_upload_with_errors,
+                       fresh=args.fresh)
 
     if args.command == "recheck":
         return _recheck(config)
@@ -97,12 +108,14 @@ def main(argv: list[str] | None = None) -> int:
 
 
 def _scrape(config, max_pages: int | None, dry_run: bool, allow_shrink: bool = False,
-            resume: bool = False, allow_upload_with_errors: bool = False) -> int:
+            resume: bool = False, allow_upload_with_errors: bool = False,
+            fresh: bool = False) -> int:
     import listam.crawler
 
     run = listam.crawler.run_scrape(
         config, max_pages=max_pages, dry_run=dry_run, allow_shrink=allow_shrink,
         resume=resume, allow_upload_with_errors=allow_upload_with_errors,
+        fresh=fresh,
     )
     print(
         f"Прогон ({run.mode}): страниц: {run.pages_fetched}, карточек: {run.listings_seen}, "
