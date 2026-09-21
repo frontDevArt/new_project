@@ -1228,7 +1228,7 @@ def gone_refusal(missing: int, active_total: int, max_percent: float) -> str | N
   max_gone_percent: 10          # больше этой доли пропало с ленты — не помечаем, это сбой
 ```
 
-- [ ] **Шаг 1. Падающие тесты на порог.**
+- [x] **Шаг 1. Падающие тесты на порог.**
 
 ```python
 # tests/test_gone.py
@@ -1249,13 +1249,13 @@ def test_an_empty_base_marks_nothing_and_says_nothing():
     assert gone_refusal(missing=0, active_total=0, max_percent=10) is None
 ```
 
-- [ ] **Шаг 2. Прогнать — падает на импорте.**
+- [x] **Шаг 2. Прогнать — падает на импорте.**
 
 ```bash
 .venv/Scripts/python.exe -m pytest tests/test_gone.py -q
 ```
 
-- [ ] **Шаг 3. Реализовать порог.**
+- [x] **Шаг 3. Реализовать порог.**
 
 ```python
 # listam/crawler.py
@@ -1283,7 +1283,7 @@ def gone_refusal(missing: int, active_total: int, max_percent: float) -> str | N
     )
 ```
 
-- [ ] **Шаг 4. Падающие тесты на прогоне.**
+- [x] **Шаг 4. Падающие тесты на прогоне.**
 
 Фикстура `project` — копия из `tests/test_crawler.py` с добавкой `"max_gone_percent": 50`
 в секцию `scrape`: в фикстуре всего 8 объявлений, и одно — это 12.5%, при пороге 10
@@ -1387,13 +1387,13 @@ def test_too_many_missing_listings_stop_the_marking(project, tmp_path):
     database.close()
 ```
 
-- [ ] **Шаг 5. Прогнать — падает.**
+- [x] **Шаг 5. Прогнать — падает.**
 
 ```bash
 .venv/Scripts/python.exe -m pytest tests/test_gone.py -q
 ```
 
-- [ ] **Шаг 6. Вставить пометку в прогон.**
+- [x] **Шаг 6. Вставить пометку в прогон.**
 
 Место — внутри `try`, после всех проверок обхода (недобор страниц, вёрстка, «одна страница»)
 и **до** `finally` с журналом и снимком: копия, уезжающая в хранилище, обязана содержать
@@ -1420,9 +1420,9 @@ def test_too_many_missing_listings_stop_the_marking(project, tmp_path):
                         note = f"{note}; снято с публикации: {counters.gone_marked}"
 ```
 
-- [ ] **Шаг 7. Дописать `max_gone_percent` в оба конфига.**
+- [x] **Шаг 7. Дописать `max_gone_percent` в оба конфига.**
 
-- [ ] **Шаг 8. Прогнать всю батарею.**
+- [x] **Шаг 8. Прогнать всю батарею.**
 
 ```bash
 .venv/Scripts/python.exe -m pytest -q
@@ -1430,7 +1430,7 @@ def test_too_many_missing_listings_stop_the_marking(project, tmp_path):
 
 Ожидается 348 passed, 12 skipped.
 
-- [ ] **Шаг 9. Коммит.**
+- [x] **Шаг 9. Коммит.**
 
 ```bash
 git add listam/crawler.py config/dev.yaml config/prod.yaml tests/test_gone.py
@@ -1443,7 +1443,7 @@ git commit -m "feat(crawler): объявление, ушедшее с ленты
 - Изменить: `listam/adapters/exporter_xlsx.py` (`COLUMNS`)
 - Изменить: `tests/contracts/test_exporter_contract.py` (строки 160–161)
 
-- [ ] **Шаг 1. Падающий тест.**
+- [x] **Шаг 1. Падающий тест.**
 
 ```python
 # tests/contracts/test_exporter_contract.py
@@ -1463,13 +1463,13 @@ def test_a_gone_listing_shows_its_status_and_the_day_it_left(exporter):
 и правка существующей проверки на месте: `assert len(headers) == 22`,
 `assert sheet.auto_filter.ref.startswith("A1:V")`.
 
-- [ ] **Шаг 2. Прогнать — падает.**
+- [x] **Шаг 2. Прогнать — падает.**
 
 ```bash
 .venv/Scripts/python.exe -m pytest tests/contracts/test_exporter_contract.py -q
 ```
 
-- [ ] **Шаг 3. Дописать колонку.**
+- [x] **Шаг 3. Дописать колонку.**
 
 ```python
 # listam/adapters/exporter_xlsx.py, в конец COLUMNS
@@ -1478,9 +1478,9 @@ def test_a_gone_listing_shows_its_status_and_the_day_it_left(exporter):
 
 `_present` уже умеет `datetime`: у активных колонка пустая, у снятых — дата.
 
-- [ ] **Шаг 4. Прогнать батарею.** Ожидается 349 passed, 12 skipped.
+- [x] **Шаг 4. Прогнать батарею.** Ожидается 349 passed, 12 skipped.
 
-- [ ] **Шаг 5. Коммит.**
+- [x] **Шаг 5. Коммит.**
 
 ```bash
 git add listam/adapters/exporter_xlsx.py tests/contracts/test_exporter_contract.py
@@ -1489,7 +1489,105 @@ git commit -m "feat(export): колонка «Снято» — 22 колонки
 
 **Результат фазы 3**
 
-_(заполняет сессия фазы 3)_
+Сделано: `gone_refusal` решает, помечать ли снятых вообще; полный удачный обход сверяет
+активных с тем, что встретил на ленте, и помечает пропавшее `status='gone'` с датой
+в `listings.gone_at`. Инкрементальный, укороченный `--max-pages`, продолженный `--resume`
+и любой обход с ошибками не помечают ничего (решение 5). Порог `scrape.max_gone_percent`
+(решение 6) прописан в `config/dev.yaml` и `config/prod.yaml`: пропало больше доли —
+пометки нет, прогон получает ошибку и строку в `notes`. Вернувшееся на ленту объявление
+снова `active` с пустым `gone_at` (решение 7) — это уже умел апсерт из фазы 1, теперь
+на это есть тест прогона. В `.xlsx` добавилась колонка «Снято»: колонок 22, автофильтр `A1:V`.
+
+Батарея: было 339 passed, 12 skipped → стало **350 passed, 12 skipped**
+(349 после задачи 3.1, 350 после 3.2).
+
+Коммиты: `adf7ded`, `820b2e1`.
+
+Новые интерфейсы:
+- `crawler.gone_refusal(missing, active_total, max_percent) -> str | None`.
+- `crawler.DEFAULT_MAX_GONE = 10`.
+- Ключ конфига `scrape.max_gone_percent`.
+- Колонка выгрузки `("Снято", "gone_at", 18, None)` — последняя в `COLUMNS`.
+
+Новых методов порта фаза 3 не добавила: `active_ids()` и `mark_gone()` пришли с фазой 1,
+контрактные тесты на них лежат в `tests/contracts/test_database_contract.py`. Поэтому новых
+файлов в `tests/contracts/` нет.
+
+Отклонения от плана (и почему):
+1. **Тесты про ушедшее объявление правят вторую страницу фикстуры, а не первую.** `24100001`
+   лежит в `category-60-page2.html`; замена его в `category-60.html` не меняла ничего, и
+   объявление с ленты не пропадало. В тестах заведена константа
+   `FEED_PAGE = "category-60-2.html"`. Та же причина, по которой фаза 2 правила `23987063`
+   вместо `24100001`, — только с обратным знаком: там нужна была первая страница, здесь вторая.
+2. **350 вместо обещанных планом 349.** Арифметика в плане потеряла один тест: задача 3.1
+   добавляет 10 тестов (3 на порог + 7 на прогон), а не 9. Ничего лишнего не добавлено.
+3. `README.md` по-прежнему говорит «колонок 21, автофильтр `A1:U`» — правка README стоит
+   в фазе 5 (шаг 9), и трогать его раньше времени фаза 3 не стала.
+
+Чего в фазе 3 нет (и не должно быть): команды `changes`, строк про снятые в README.
+Боевая база не тронута: она на схеме 3 до фазы 5.
+
+## Стартовый промпт для новой сессии (фаза 4)
+
+Открыть новую сессию **в этой же папке** (`C:\Users\Admin\Downloads\list`) и скопировать целиком:
+
+```markdown
+Проект: listam — мониторинг list.am под заявки покупателей. Папка C:\Users\Admin\Downloads\list,
+ветка master.
+
+Прочитай перед началом, в этом порядке:
+1. docs/superpowers/plans/2026-09-21-m1-delta-and-history.md — план этапа M1, он же твоё задание;
+   разделы «Результат фазы 1», «Результат фазы 2» и «Результат фазы 3» — отчёты предыдущих сессий.
+2. README.md — как устроен проект и чем он запускается.
+3. «list.am → заявки покупателей MVP-спека и роадмап.md» — раздел «Роадмап» (строка M1).
+
+Делаешь ТОЛЬКО фазу 4 (команда `changes` — витрина дельты). Фаза 5 — другая сессия.
+Раздел «Принятые решения» в плане не пересматривается.
+
+Исходное состояние: батарея 350 passed, 12 skipped; HEAD — коммит фазы 3 `820b2e1`;
+git status чистый; боевая база по-прежнему на схеме 3 — её не трогать.
+
+Что нужно знать про фазы 1–3 (сессия их не видела):
+- Схема 4: listings.gone_at; runs.mode | price_changed | gone_marked | stop_reason.
+- `last_successful_run()` отдаёт только полный обход без ошибок; `last_run(mode=None)`
+  сужает выборку по режиму через IFNULL(mode,'full') — прогоны M0 читаются как полные.
+- `Database.active_ids()`, `Database.mark_gone(ids, gone_at)`, `known_ids()`, `iter_listings()`,
+  `get_listing(id)` — уже есть; выборки дельты фазы 4 добавляются рядом с ними,
+  и на каждый новый метод порта — новый контрактный тест в tests/contracts/.
+- `run_scrape(config, *, max_pages, dry_run, allow_shrink, resume, allow_upload_with_errors,
+  fresh)`; счётчики `new_listings`, `updated_listings`, `price_changed`, `gone_marked`
+  уходят и в журнал, и в возвращённый Run.
+- `crawler.run_mode`, `crawler.incremental_stop`, `crawler.gone_refusal` — пороги к ним
+  лежат в обоих конфигах: fresh_stop_after_known_pages, fresh_max_pages, max_gone_percent.
+- Пометка снятых ставится только при mode == "full" и errors == 0; порог
+  `scrape.max_gone_percent` — доля активных, которая может пропасть за один обход.
+- `changes` ничего не мигрирует и на сайт не ходит (решение 10): схема младше ожидаемой —
+  внятная ошибка и код возврата 1, как у `export`.
+- Вставка объявления фильтрует колонки по PRAGMA table_info — модель может опережать базу.
+- Проверки версии схемы в тестах идут через `latest_schema_version()`, не числом.
+- Выгрузка: 22 колонки, последняя — «Снято» (`gone_at`), автофильтр `A1:V`.
+- Фикстура ленты: страница 1 — 6 карточек (23973917 с ценой `$ 162,000`, 24228087, 23598471,
+  23311644, 23987063, 99999999 без цены), страница 2 — 24100001, 24100002 и повтор 23973917.
+  Цена `290,000` в фикстуре лежит в блоке «Топ объявления» и в разбор НЕ попадает.
+- Свои копии фикстуры `project` есть в tests/test_crawler.py, tests/test_crawler_fresh.py
+  и tests/test_gone.py — у последней поднят `max_gone_percent: 50` под размер фикстуры
+  (8 объявлений, одно пропавшее — это 12.5%).
+
+Правила, которые нельзя нарушать:
+- На каждое новое поведение — падающий тест ДО правки.
+- Новый метод порта — новый контрактный тест в tests/contracts/.
+- Ни один путь, ключ и порог не зашит в код: всё новое — в оба конфига
+  (config/dev.yaml и config/prod.yaml).
+- Все отметки времени в UTC, пути относительные от корня проекта.
+- Боевую базу data/listam.sqlite не трогать. На сайт не ходить: только tests/fixtures/.
+
+Запуск тестов — интерпретатором окружения проекта:
+.venv/Scripts/python.exe -m pytest -q
+Системный python не годится: в нём нет openpyxl.
+
+Когда закончишь: покажи полный вывод pytest, git status и git log --oneline; заполни
+«Результат фазы 4» в файле плана и допиши туда стартовый промпт для фазы 5.
+```
 
 ---
 
