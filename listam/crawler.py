@@ -9,6 +9,7 @@
 """
 from __future__ import annotations
 
+import re
 from dataclasses import dataclass
 from datetime import datetime, timezone
 from pathlib import Path
@@ -238,12 +239,29 @@ def upload_refusal(
     return None
 
 
+BACKUP_STAMP = "%Y%m%d-%H%M%S-%f"      # отметка времени в имени копии базы
+
+
+def backup_names(names, stem: str, suffix: str) -> list[str]:
+    """Из имён хранилища — только копии базы, сделанные ротацией.
+
+    Хранилище общее: рядом с базой лежат выгрузки (`listam-20260921-0937.xlsx`)
+    и что угодно ещё, что туда положил человек. Префикса мало — чужое имя
+    начинается так же, и чистка сносила его вместе со своими. Своё узнаётся
+    по расширению базы и по отметке времени, которую ставит сама ротация.
+    """
+    shape = re.compile(
+        rf"^{re.escape(stem)}-\d{{8}}-\d{{6}}-\d{{6}}{re.escape(suffix)}$"
+    )
+    return [name for name in names if shape.match(name)]
+
+
 def rotate_backups(storage, remote_name: str, keep: int, work_dir: Path) -> None:
     """Кладёт прежнюю копию рядом под именем с отметкой времени и подчищает старые."""
     if keep <= 0 or not storage.exists(remote_name):
         return
     stem, suffix = Path(remote_name).stem, Path(remote_name).suffix
-    stamp = datetime.now(timezone.utc).strftime("%Y%m%d-%H%M%S-%f")
+    stamp = datetime.now(timezone.utc).strftime(BACKUP_STAMP)
     work_dir.mkdir(parents=True, exist_ok=True)
     spare = work_dir / f".{stem}-backup{suffix}"
     try:
@@ -251,7 +269,7 @@ def rotate_backups(storage, remote_name: str, keep: int, work_dir: Path) -> None
             storage.upload(spare, f"{stem}-{stamp}{suffix}")
     finally:
         spare.unlink(missing_ok=True)
-    kept = storage.names(prefix=f"{stem}-")
+    kept = backup_names(storage.names(prefix=f"{stem}-"), stem, suffix)
     for name in kept[:-keep]:
         storage.delete(name)
 

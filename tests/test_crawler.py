@@ -843,3 +843,51 @@ def test_a_page_within_the_upper_limit_is_parsed(project):
     assert "max_cards_per_page" not in run.notes
     assert run.listings_seen >= 96
 
+
+def test_rotation_keeps_its_hands_off_other_files(tmp_path):
+    """Находка 18: ротация чистила по префиксу и сносила чужое.
+
+    `storage.names(prefix="listam-")` ловит и выгрузку `listam-20260921-0937.xlsx`,
+    и любой файл, начинающийся так же. Удалять можно только свои копии базы —
+    их видно по расширению и по отметке времени, которую ставит сама ротация.
+    """
+    from listam.adapters.storage_local import LocalStorage
+    from listam.crawler import rotate_backups
+
+    remote = tmp_path / "remote"
+    remote.mkdir()
+    (remote / "listam.sqlite").write_text("общая база", encoding="utf-8")
+    (remote / "listam-20260921-0937.xlsx").write_text("выгрузка", encoding="utf-8")
+    (remote / "listam-заметки.txt").write_text("чужое", encoding="utf-8")
+    stamps = [f"2026092{n}-093700-000001" for n in range(1, 7)]
+    for stamp in stamps:
+        (remote / f"listam-{stamp}.sqlite").write_text(stamp, encoding="utf-8")
+
+    rotate_backups(LocalStorage(remote), "listam.sqlite", keep=5, work_dir=tmp_path / "work")
+
+    left = {item.name for item in remote.iterdir()}
+    assert "listam-20260921-0937.xlsx" in left
+    assert "listam-заметки.txt" in left
+    assert f"listam-{stamps[0]}.sqlite" not in left      # самая старая копия ушла
+    assert all(f"listam-{stamp}.sqlite" in left for stamp in stamps[1:])
+
+
+def test_rotation_counts_only_backups_when_it_decides_what_to_drop(tmp_path):
+    """Чужие файлы не должны занимать места в счёте `keep`."""
+    from listam.adapters.storage_local import LocalStorage
+    from listam.crawler import rotate_backups
+
+    remote = tmp_path / "remote"
+    remote.mkdir()
+    (remote / "listam.sqlite").write_text("общая база", encoding="utf-8")
+    for n in range(1, 5):
+        (remote / f"listam-2026092{n}-093700-000001.sqlite").write_text("копия", encoding="utf-8")
+    for n in range(20):
+        (remote / f"listam-отчёт-{n}.xlsx").write_text("выгрузка", encoding="utf-8")
+
+    rotate_backups(LocalStorage(remote), "listam.sqlite", keep=5, work_dir=tmp_path / "work")
+
+    backups = sorted(item.name for item in remote.iterdir() if item.suffix == ".sqlite")
+    # четыре прежних копии плюс сделанная сейчас — ровно keep, ничего не удалено
+    assert len(backups) == 6        # пять копий и сама база
+    assert len([n for n in backups if n != "listam.sqlite"]) == 5
