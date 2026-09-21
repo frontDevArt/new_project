@@ -231,6 +231,7 @@ class SqliteDatabase(Database):
         updates["anomaly"] = listing.anomaly
         updates["last_seen"] = seen_iso
         updates["status"] = "active"
+        updates["gone_at"] = None          # встретили на ленте — значит, вернулось
         updates["id"] = listing.id
         # Сменились валюта или сырая цена — пересчитанное относится к прошлой цене
         # и должно уйти целиком, включая NULL. COALESCE бережёт пересчёт только
@@ -292,6 +293,29 @@ class SqliteDatabase(Database):
     def known_ids(self) -> set[str]:
         return {row["id"] for row in self.conn.execute("SELECT id FROM listings")}
 
+    def active_ids(self) -> set[str]:
+        rows = self.conn.execute("SELECT id FROM listings WHERE status = 'active'")
+        return {row["id"] for row in rows}
+
+    def mark_gone(self, listing_ids, gone_at: datetime) -> int:
+        """Переводит объявления в 'gone' и ставит дату снятия — один раз.
+
+        `last_seen` не двигается: снятие — это не встреча, объявление никто
+        не видел. COALESCE бережёт дату первого снятия: объявление, которое
+        уже неделю как ушло, не должно молодеть с каждым обходом.
+        """
+        marked = 0
+        stamp = to_iso(gone_at)
+        with self.transaction():
+            for listing_id in listing_ids:
+                cursor = self.conn.execute(
+                    "UPDATE listings SET status = 'gone', gone_at = COALESCE(gone_at, ?) "
+                    "WHERE id = ? AND status <> 'gone'",
+                    (stamp, listing_id),
+                )
+                marked += cursor.rowcount
+        return marked
+
     def count_listings(self) -> int:
         return int(self.conn.execute("SELECT COUNT(*) AS n FROM listings").fetchone()["n"])
 
@@ -310,10 +334,11 @@ class SqliteDatabase(Database):
         ]
 
     # --- журнал прогонов -------------------------------------------------
-    def start_run(self, started_at: datetime, rate_amd_per_usd: float | None) -> int:
+    def start_run(self, started_at: datetime, rate_amd_per_usd: float | None,
+                  mode: str = "full") -> int:
         cursor = self.conn.execute(
-            "INSERT INTO runs (started_at, rate_amd_per_usd) VALUES (?, ?)",
-            (to_iso(started_at), rate_amd_per_usd),
+            "INSERT INTO runs (started_at, rate_amd_per_usd, mode) VALUES (?, ?, ?)",
+            (to_iso(started_at), rate_amd_per_usd, mode),
         )
         self.conn.commit()
         return int(cursor.lastrowid)
@@ -332,7 +357,7 @@ class SqliteDatabase(Database):
     def finish_run(self, run_id: int, finished_at: datetime, **counters) -> None:
         allowed = {
             "pages_fetched", "listings_seen", "new_listings", "updated_listings",
-            "errors", "notes", "last_page",
+            "price_changed", "gone_marked", "errors", "notes", "last_page", "stop_reason",
         }
         unknown = set(counters) - allowed
         if unknown:
@@ -344,15 +369,26 @@ class SqliteDatabase(Database):
         )
         self.conn.commit()
 
-    def last_run(self) -> Run | None:
-        row = self.conn.execute("SELECT * FROM runs ORDER BY id DESC LIMIT 1").fetchone()
+    def last_run(self, mode: str | None = None) -> Run | None:
+        if mode is None:
+            row = self.conn.execute("SELECT * FROM runs ORDER BY id DESC LIMIT 1").fetchone()
+        else:
+            row = self.conn.execute(
+                "SELECT * FROM runs WHERE IFNULL(mode, 'full') = ? ORDER BY id DESC LIMIT 1",
+                (mode,),
+            ).fetchone()
         return _row_to_run(row) if row else None
 
     def last_successful_run(self) -> Run | None:
-        """Последний прогон, который дошёл до конца и не насчитал ошибок."""
+        """Последний полный обход, который дошёл до конца и не насчитал ошибок.
+
+        Именно полный: укороченный `--max-pages`, продолженный `--resume` и
+        инкрементальный `--fresh` видели не всю ленту, и мерить их числом
+        страниц полноту следующего обхода — значит выключить проверку.
+        """
         row = self.conn.execute(
             "SELECT * FROM runs WHERE finished_at IS NOT NULL AND IFNULL(errors, 0) = 0 "
-            "ORDER BY id DESC LIMIT 1"
+            "AND IFNULL(mode, 'full') = 'full' ORDER BY id DESC LIMIT 1"
         ).fetchone()
         return _row_to_run(row) if row else None
 
@@ -369,6 +405,10 @@ def _row_to_run(row: sqlite3.Row) -> Run:
         updated_listings=row["updated_listings"],
         errors=row["errors"],
         notes=row["notes"],
+        mode=row["mode"],
+        price_changed=row["price_changed"] or 0,
+        gone_marked=row["gone_marked"] or 0,
+        stop_reason=row["stop_reason"],
         last_page=row["last_page"] or 0,
     )
 
@@ -460,4 +500,5 @@ def _row_to_listing(row: sqlite3.Row) -> Listing:
     data["new_build"] = _to_bool(data.get("new_build"))
     data["first_seen"] = from_iso(data.get("first_seen"))
     data["last_seen"] = from_iso(data.get("last_seen"))
+    data["gone_at"] = from_iso(data.get("gone_at"))
     return Listing(**{k: v for k, v in data.items() if k in Listing.field_names()})

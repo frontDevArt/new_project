@@ -61,10 +61,33 @@ class Database(ABC):
     def known_ids(self) -> set[str]: ...
 
     @abstractmethod
+    def active_ids(self) -> set[str]:
+        """Идентификаторы объявлений, которые сейчас на ленте (`status='active'`).
+
+        Снятые из выборки выпадают: пометка снятых сравнивает ленту с активными,
+        а не со всем, что база когда-либо видела.
+        """
+
+    @abstractmethod
+    def mark_gone(self, listing_ids, gone_at: datetime) -> int:
+        """Помечает объявления снятыми и отдаёт, сколько их оказалось.
+
+        Дата снятия ставится один раз: уже снятое объявление второй обход
+        не трогает. Дата встречи (`last_seen`) остаётся на месте — снятие
+        это не встреча.
+        """
+
+    @abstractmethod
     def price_history(self, listing_id: str) -> list[PricePoint]: ...
 
     @abstractmethod
-    def start_run(self, started_at: datetime, rate_amd_per_usd: float | None) -> int: ...
+    def start_run(self, started_at: datetime, rate_amd_per_usd: float | None,
+                  mode: str = "full") -> int:
+        """Открывает строку журнала. `mode` — full | partial | resume | fresh.
+
+        Режим пишется сразу, на старте: прогон, оборвавшийся посередине, всё
+        равно должен быть отличим от полного.
+        """
 
     @abstractmethod
     def finish_run(self, run_id: int, finished_at: datetime, **counters) -> None: ...
@@ -74,8 +97,18 @@ class Database(ABC):
         """Запоминает номер пройденной страницы: с неё продолжит `scrape --resume`."""
 
     @abstractmethod
-    def last_run(self) -> Run | None: ...
+    def last_run(self, mode: str | None = None) -> Run | None:
+        """Последний прогон журнала; `mode` сужает выборку до одного режима.
+
+        `--resume` продолжает прерванный полный обход, а не инкрементальный,
+        который прошёл между ними, — поэтому спрашивать умеет про режим.
+        """
 
     @abstractmethod
     def last_successful_run(self) -> Run | None:
-        """Последний завершённый прогон без ошибок. Мерка полноты для следующего."""
+        """Последний **полный** прогон, дошедший до конца без ошибок.
+
+        Мерка полноты для следующего обхода. Укороченный, продолженный и
+        инкрементальный прогоны видели не всю ленту: мерить их числом страниц
+        полноту следующего — значит выключить проверку недобора.
+        """

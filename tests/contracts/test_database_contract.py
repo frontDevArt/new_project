@@ -11,6 +11,7 @@ from listam.ports.database import Database
 
 NOW = datetime(2026, 9, 21, 10, 0, tzinfo=timezone.utc)
 LATER = datetime(2026, 9, 21, 12, 0, tzinfo=timezone.utc)
+EVEN_LATER = datetime(2026, 9, 21, 14, 0, tzinfo=timezone.utc)
 
 
 @pytest.fixture(params=["sqlite"])
@@ -269,3 +270,100 @@ def test_set_computed_can_clear_a_mark(db):
     db.set_computed("24254997", anomaly=None, price_amount=None)
 
     assert db.get_listing("24254997").anomaly is None
+
+
+def test_mark_gone_marks_only_what_was_active(db):
+    db.upsert_listing(make_listing("1"), seen_at=NOW)
+    db.upsert_listing(make_listing("2"), seen_at=NOW)
+
+    marked = db.mark_gone({"1"}, gone_at=LATER)
+
+    assert marked == 1
+    assert db.get_listing("1").status == "gone"
+    assert db.get_listing("1").gone_at == LATER
+    assert db.get_listing("2").status == "active"
+    assert db.get_listing("2").gone_at is None
+
+
+def test_mark_gone_does_not_move_the_date_of_an_already_gone_listing(db):
+    """Объявление снято один раз. Второй обход не имеет права молодить дату."""
+    db.upsert_listing(make_listing("1"), seen_at=NOW)
+    db.mark_gone({"1"}, gone_at=LATER)
+
+    assert db.mark_gone({"1"}, gone_at=EVEN_LATER) == 0
+    assert db.get_listing("1").gone_at == LATER
+
+
+def test_mark_gone_leaves_last_seen_alone(db):
+    """Снятие — не встреча: объявление никто не видел, и дата встречи стоит на месте."""
+    db.upsert_listing(make_listing("1"), seen_at=NOW)
+    db.mark_gone({"1"}, gone_at=LATER)
+
+    assert db.get_listing("1").last_seen == NOW
+
+
+def test_a_listing_back_on_the_feed_forgets_that_it_was_gone(db):
+    db.upsert_listing(make_listing("1"), seen_at=NOW)
+    db.mark_gone({"1"}, gone_at=LATER)
+
+    db.upsert_listing(make_listing("1"), seen_at=EVEN_LATER)
+
+    back = db.get_listing("1")
+    assert back.status == "active"
+    assert back.gone_at is None
+    assert back.first_seen == NOW          # то же объявление, а не новое
+
+
+def test_active_ids_skips_the_gone_ones(db):
+    db.upsert_listing(make_listing("1"), seen_at=NOW)
+    db.upsert_listing(make_listing("2"), seen_at=NOW)
+    db.mark_gone({"2"}, gone_at=LATER)
+
+    assert db.active_ids() == {"1"}
+    assert db.known_ids() == {"1", "2"}   # известны по-прежнему обе
+
+
+def test_run_remembers_its_mode_and_delta_counters(db):
+    run_id = db.start_run(NOW, rate_amd_per_usd=400.0, mode="fresh")
+    db.finish_run(run_id, LATER, price_changed=3, gone_marked=7,
+                  stop_reason="2 страниц подряд без новых объявлений")
+
+    stored = db.last_run()
+    assert stored.mode == "fresh"
+    assert stored.price_changed == 3
+    assert stored.gone_marked == 7
+    assert stored.stop_reason == "2 страниц подряд без новых объявлений"
+
+
+def test_the_yardstick_is_the_last_full_run_not_the_last_short_one(db):
+    """Мерка полноты — только полный обход: инкрементальный прогон на двух
+    страницах не имеет права стать нормой для следующего полного."""
+    full = db.start_run(NOW, 400.0, mode="full")
+    db.finish_run(full, NOW, pages_fetched=215, errors=0)
+    fresh = db.start_run(LATER, 400.0, mode="fresh")
+    db.finish_run(fresh, LATER, pages_fetched=2, errors=0)
+    short = db.start_run(LATER, 400.0, mode="partial")
+    db.finish_run(short, LATER, pages_fetched=5, errors=0)
+
+    assert db.last_successful_run().pages_fetched == 215
+
+
+def test_last_run_can_be_asked_about_one_mode(db):
+    """`--resume` продолжает прерванный полный обход, а не инкрементальный,
+    который прошёл между ними."""
+    full = db.start_run(NOW, 400.0, mode="full")
+    db.mark_page(full, 12)
+    fresh = db.start_run(LATER, 400.0, mode="fresh")
+    db.finish_run(fresh, LATER, pages_fetched=2, errors=0)
+
+    assert db.last_run().mode == "fresh"
+    assert db.last_run(mode="full").last_page == 12
+
+
+def test_legacy_runs_without_a_mode_count_as_full(db):
+    """Прогоны M0 писались без режима. Они были полными — так их и читаем."""
+    run_id = db.start_run(NOW, 400.0)
+    db.conn.execute("UPDATE runs SET mode = NULL WHERE id = ?", (run_id,))
+    db.finish_run(run_id, LATER, pages_fetched=215, errors=0)
+
+    assert db.last_successful_run().pages_fetched == 215
