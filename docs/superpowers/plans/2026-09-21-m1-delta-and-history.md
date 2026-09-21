@@ -775,7 +775,7 @@ def incremental_stop(*, pages_without_new: int, threshold: int,
     """(причина остановки, это ли ошибка). (None, False) — идём дальше."""
 ```
 
-- [ ] **Шаг 1. Падающие тесты на чистую функцию.**
+- [x] **Шаг 1. Падающие тесты на чистую функцию.**
 
 ```python
 # tests/test_crawler_fresh.py
@@ -803,7 +803,7 @@ def test_hitting_the_ceiling_is_a_failure_not_a_finish():
     assert is_error is True
 ```
 
-- [ ] **Шаг 2. Прогнать — падает на импорте.**
+- [x] **Шаг 2. Прогнать — падает на импорте.**
 
 ```bash
 .venv/Scripts/python.exe -m pytest tests/test_crawler_fresh.py -q
@@ -811,7 +811,7 @@ def test_hitting_the_ceiling_is_a_failure_not_a_finish():
 
 Ожидается `ImportError: cannot import name 'incremental_stop'`.
 
-- [ ] **Шаг 3. Реализовать функцию.**
+- [x] **Шаг 3. Реализовать функцию.**
 
 ```python
 # listam/crawler.py
@@ -847,13 +847,13 @@ def incremental_stop(
     return None, False
 ```
 
-- [ ] **Шаг 4. Прогнать — зелено.**
+- [x] **Шаг 4. Прогнать — зелено.**
 
 ```bash
 .venv/Scripts/python.exe -m pytest tests/test_crawler_fresh.py -q
 ```
 
-- [ ] **Шаг 5. Коммит.**
+- [x] **Шаг 5. Коммит.**
 
 ```bash
 git add listam/crawler.py tests/test_crawler_fresh.py
@@ -881,7 +881,7 @@ def run_scrape(config, *, max_pages=None, dry_run=False, allow_shrink=False,
   fresh_max_pages: 20               # потолок инкрементального обхода
 ```
 
-- [ ] **Шаг 1. Падающие тесты на прогоне.**
+- [x] **Шаг 1. Падающие тесты на прогоне.**
 
 Фикстура `project` копируется в `tests/test_crawler_fresh.py` из `tests/test_crawler.py`
 (импортировать её оттуда нельзя — это сцепит файлы; копия в 25 строк честнее), с добавкой
@@ -992,7 +992,7 @@ def test_fresh_and_resume_together_are_refused(tmp_path, capsys):
 
 `config_dir` — тот же помощник, которым пользуются соседние тесты этого файла.
 
-- [ ] **Шаг 2. Прогнать — падает.**
+- [x] **Шаг 2. Прогнать — падает.**
 
 ```bash
 .venv/Scripts/python.exe -m pytest tests/test_crawler_fresh.py tests/test_cli.py -q
@@ -1000,7 +1000,7 @@ def test_fresh_and_resume_together_are_refused(tmp_path, capsys):
 
 Ожидается `TypeError: run_scrape() got an unexpected keyword argument 'fresh'`.
 
-- [ ] **Шаг 3. Реализовать в `run_scrape`.**
+- [x] **Шаг 3. Реализовать в `run_scrape`.**
 
 ```python
 # сигнатура
@@ -1076,10 +1076,10 @@ def run_scrape(config, *, max_pages=None, dry_run=False, allow_shrink=False,
 
 и передача `fresh=args.fresh` в `_scrape`, а оттуда в `run_scrape`.
 
-- [ ] **Шаг 4. Дописать оба ключа в `config/dev.yaml` и `config/prod.yaml`** — с теми же
+- [x] **Шаг 4. Дописать оба ключа в `config/dev.yaml` и `config/prod.yaml`** — с теми же
   комментариями, что в блоке «Интерфейсы» выше.
 
-- [ ] **Шаг 5. Прогнать всю батарею.**
+- [x] **Шаг 5. Прогнать всю батарею.**
 
 ```bash
 .venv/Scripts/python.exe -m pytest -q
@@ -1087,7 +1087,7 @@ def run_scrape(config, *, max_pages=None, dry_run=False, allow_shrink=False,
 
 Ожидается 338 passed, 12 skipped.
 
-- [ ] **Шаг 6. Коммит.**
+- [x] **Шаг 6. Коммит.**
 
 ```bash
 git add listam/crawler.py listam/cli.py config/dev.yaml config/prod.yaml tests/test_crawler_fresh.py tests/test_cli.py
@@ -1096,7 +1096,111 @@ git commit -m "feat(scrape): инкрементальный обход --fresh �
 
 **Результат фазы 2**
 
-_(заполняет сессия фазы 2)_
+Сделано: `incremental_stop` решает, когда инкрементальный обход кончился и честный ли это
+конец; `run_scrape(..., fresh=True)` идёт по ленте, пока на странице попадается хоть одно
+новое объявление, и встаёт после `scrape.fresh_stop_after_known_pages` страниц подряд без
+новых; потолок `scrape.fresh_max_pages` — ошибка прогона, а не успех. `--resume` теперь
+продолжает последний **полный** обход (`last_run(mode="full")`), а не затесавшийся между
+ними инкрементальный. Проверки «недобор страниц» и «обход кончился на первой» к `fresh`
+не применяются: он укорочен нарочно. В командной строке появился флаг `--fresh`;
+`--fresh` вместе с `--resume` — отказ и код возврата 2. Оба порога прописаны
+в `config/dev.yaml` и `config/prod.yaml`.
+
+Батарея: было 327 passed, 12 skipped → стало **339 passed, 12 skipped**
+(330 после задачи 2.1, 339 после 2.2).
+
+Коммиты: `0a6ab6f`, `1c235db`.
+
+Новые интерфейсы:
+- `crawler.incremental_stop(*, pages_without_new, threshold, pages_fetched, ceiling)
+  -> tuple[str | None, bool]` — (причина остановки, это ли ошибка).
+- `crawler.DEFAULT_FRESH_STOP_PAGES = 2`, `crawler.DEFAULT_FRESH_MAX_PAGES = 20`.
+- `run_scrape(config, *, ..., fresh=False)`; `cli._scrape(..., fresh=False)`;
+  флаг `python -m listam scrape --fresh`.
+- Ключи конфига `scrape.fresh_stop_after_known_pages`, `scrape.fresh_max_pages`.
+
+Новых методов порта фаза 2 не добавила: известное берётся уже существующим
+`Database.known_ids()`, и контрактный тест на него есть с M0. Поэтому новых файлов
+в `tests/contracts/` нет.
+
+Отклонения от плана (и почему):
+1. **Тесты «новое объявление» и «смена цены» правят другие данные, чем написано в плане.**
+   `24100001` лежит на *второй* странице фикстуры, и замена его на `99100001` не давала
+   нового на первой — обход вставал, не дойдя до подмены. Меняется `23987063` (карточка
+   первой страницы). Цена `290,000` в фикстуре стоит в блоке «Топ объявления», который
+   парсер в разбор не берёт (это уже выяснила фаза 1) — вместо неё правится `162,000`,
+   карточка 23973917 из самой ленты.
+2. **Тест отказа `--fresh --resume` пользуется помощником `run(project, ...)`**, а не
+   `config_dir(tmp_path)`: помощника с таким именем в `tests/test_cli.py` нет, соседние
+   тесты ходят через фикстуру `project` и `run`.
+3. **Добавлен тест `test_fresh_flag_reaches_the_run`** — тот же приём, что у соседнего
+   `test_resume_flag_reaches_the_run`: без него никто не проверял, что флаг командной
+   строки доезжает до `run_scrape`. Отсюда 339 вместо обещанных планом 338.
+4. **`known` считается после подготовки базы, рядом с `resume_start_page`**, а не «до цикла»
+   вместе с порогами: до этого места `database` ещё `None`. Пороги остались там, где сказано.
+
+Чего в фазе 2 нет (и не должно быть): пометки снятых, колонки «Снято» в выгрузке, команды
+`changes`, строки про `--fresh` в README (README — фаза 5). Боевая база не тронута: она
+на схеме 3 до фазы 5.
+
+## Стартовый промпт для новой сессии (фаза 3)
+
+Открыть новую сессию **в этой же папке** (`C:\Users\Admin\Downloads\list`) и скопировать целиком:
+
+```markdown
+Проект: listam — мониторинг list.am под заявки покупателей. Папка C:\Users\Admin\Downloads\list,
+ветка master.
+
+Прочитай перед началом, в этом порядке:
+1. docs/superpowers/plans/2026-09-21-m1-delta-and-history.md — план этапа M1, он же твоё задание;
+   разделы «Результат фазы 1» и «Результат фазы 2» — отчёты предыдущих сессий.
+2. README.md — как устроен проект и чем он запускается.
+3. «list.am → заявки покупателей MVP-спека и роадмап.md» — раздел «Роадмап» (строка M1).
+
+Делаешь ТОЛЬКО фазу 3 (`status=gone` и колонка «Снято» в выгрузке). Фазы 4–5 — другие сессии.
+Раздел «Принятые решения» в плане не пересматривается.
+
+Исходное состояние: батарея 339 passed, 12 skipped; HEAD — коммит фазы 2 `1c235db`;
+git status чистый; боевая база по-прежнему на схеме 3 — её не трогать.
+
+Что нужно знать про фазы 1–2 (сессия их не видела):
+- Схема 4: listings.gone_at; runs.mode | price_changed | gone_marked | stop_reason.
+- `Database.active_ids() -> set[str]` (только status='active') и
+  `Database.mark_gone(listing_ids, gone_at) -> int` уже есть — фаза 3 ими и пользуется.
+  Дата снятия ставится один раз (COALESCE), last_seen не двигается.
+- `last_successful_run()` отдаёт только полный обход без ошибок; `last_run(mode=None)`
+  сужает выборку по режиму через IFNULL(mode,'full').
+- `run_mode(*, fresh, resume, limit)` даёт full | partial | resume | fresh; в `run_scrape`
+  режим считается до похода за курсом, переменная `stop_reason` уже есть и ставится
+  во всех ветках выхода из цикла.
+- `run_scrape(config, *, max_pages, dry_run, allow_shrink, resume,
+  allow_upload_with_errors, fresh)`; `counters.gone_marked` уже уходит в журнал и в Run.
+- Пометка снятых ставится ТОЛЬКО при mode == "full" и errors == 0 (решение 5) и имеет
+  порог `scrape.max_gone_percent` (решение 6) — ключ нужен в оба конфига.
+- Вернувшееся объявление обязано забыть gone_at и снова стать active (решение 7).
+- Вставка объявления фильтрует колонки по PRAGMA table_info — модель может опережать базу.
+- Проверки версии схемы в тестах идут через `latest_schema_version()`, не числом.
+- Фикстура ленты: страница 1 — 6 карточек (23973917 с ценой `$ 162,000`, 24228087, 23598471,
+  23311644, 23987063, 99999999 без цены), страница 2 — 24100001, 24100002 и повтор 23973917.
+  Цена `290,000` в фикстуре лежит в блоке «Топ объявления» и в разбор НЕ попадает.
+- Инкрементальный обход `--fresh` уже есть: тесты на него — в tests/test_crawler_fresh.py,
+  там же своя копия фикстуры `project`.
+
+Правила, которые нельзя нарушать:
+- На каждое новое поведение — падающий тест ДО правки.
+- Новый метод порта — новый контрактный тест в tests/contracts/.
+- Ни один путь, ключ и порог не зашит в код: порог `scrape.max_gone_percent` — в оба
+  конфига (config/dev.yaml и config/prod.yaml).
+- Все отметки времени в UTC, пути относительные от корня проекта.
+- Боевую базу data/listam.sqlite не трогать. На сайт не ходить: только tests/fixtures/.
+
+Запуск тестов — интерпретатором окружения проекта:
+.venv/Scripts/python.exe -m pytest -q
+Системный python не годится: в нём нет openpyxl.
+
+Когда закончишь: покажи полный вывод pytest, git status и git log --oneline; заполни
+«Результат фазы 3» в файле плана и допиши туда стартовый промпт для фазы 4.
+```
 
 ---
 
