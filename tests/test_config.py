@@ -119,6 +119,22 @@ SAFETY_THRESHOLDS = (
 ROOT = Path(__file__).resolve().parent.parent
 
 
+def shipped_config(env, tmp_path, monkeypatch):
+    """Поставляемый конфиг со всеми секретами, на которые он ссылается.
+
+    С фазы 5 M3 `prod.yaml` ссылается ещё и на ключи Telegram. Без них тест
+    проходил только в общей батарее — после того как чужой тест загрузил
+    настоящий `.env` в окружение, — а отдельно и на машине без ключей падал.
+    """
+    for name, value in (("GDRIVE_FOLDER", "folder-abc123"),
+                        ("GDRIVE_CREDENTIALS_FILE", "credentials.json"),
+                        ("TELEGRAM_BOT_TOKEN", "123:token"),
+                        ("TELEGRAM_CHAT_ID", "1720")):
+        monkeypatch.setenv(name, value)
+    return load_config(env=env, config_dir=ROOT / "config",
+                       dotenv_path=tmp_path / ".env")
+
+
 @pytest.mark.parametrize("env", ["dev", "prod"])
 def test_shipped_configs_keep_every_safety_threshold_off_zero(env, tmp_path, monkeypatch):
     """Ноль в любом из восьми порогов — это снятый предохранитель.
@@ -127,10 +143,7 @@ def test_shipped_configs_keep_every_safety_threshold_off_zero(env, tmp_path, mon
     осознанно. Ноль же означает самый строгий режим и в боевом конфиге стоять
     не должен ни по недосмотру, ни «чтобы не мешал».
     """
-    monkeypatch.setenv("GDRIVE_FOLDER", "folder-abc123")
-    monkeypatch.setenv("GDRIVE_CREDENTIALS_FILE", "credentials.json")
-    config = load_config(env=env, config_dir=ROOT / "config",
-                         dotenv_path=tmp_path / ".env")
+    config = shipped_config(env, tmp_path, monkeypatch)
 
     for key in SAFETY_THRESHOLDS:
         value = threshold(config, key, "ключа нет")
@@ -153,10 +166,7 @@ MATCH_KEYS = (
 
 @pytest.mark.parametrize("env", ["dev", "prod"])
 def test_shipped_configs_carry_the_whole_match_section(env, tmp_path, monkeypatch):
-    monkeypatch.setenv("GDRIVE_FOLDER", "folder-abc123")
-    monkeypatch.setenv("GDRIVE_CREDENTIALS_FILE", "credentials.json")
-    config = load_config(env=env, config_dir=ROOT / "config",
-                         dotenv_path=tmp_path / ".env")
+    config = shipped_config(env, tmp_path, monkeypatch)
 
     for key in MATCH_KEYS:
         assert threshold(config, key, "ключа нет") != "ключа нет", \
@@ -166,10 +176,7 @@ def test_shipped_configs_carry_the_whole_match_section(env, tmp_path, monkeypatc
 @pytest.mark.parametrize("env", ["dev", "prod"])
 def test_shipped_configs_name_every_scoring_factor(env, tmp_path, monkeypatch):
     """Вес, которого нет в конфиге, не читается ничем: фактор молча пропадает."""
-    monkeypatch.setenv("GDRIVE_FOLDER", "folder-abc123")
-    monkeypatch.setenv("GDRIVE_CREDENTIALS_FILE", "credentials.json")
-    config = load_config(env=env, config_dir=ROOT / "config",
-                         dotenv_path=tmp_path / ".env")
+    config = shipped_config(env, tmp_path, monkeypatch)
 
     assert set(config.section("match.weights")) == set(DEFAULT_WEIGHTS)
 
@@ -209,6 +216,7 @@ def test_a_missing_key_gets_the_default(tmp_path):
     config = load_config(env="dev", config_dir=d, dotenv_path=tmp_path / ".env")
 
     assert positive(config, "match.limit", 50) == 50
+
 
 
 def test_both_configs_declare_the_notification_knobs():
