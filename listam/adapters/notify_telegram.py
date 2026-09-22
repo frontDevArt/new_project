@@ -30,21 +30,44 @@ MAX_RETRIES = 3          # сколько раз повторить часть, 
 MAX_WAIT = 60.0          # дольше минуты не ждём: повторит следующий запуск
 
 
+CONTINUED = " (продолжение)"
+
+
 def split_message(text: str, limit: int = LIMIT) -> list[str]:
     """Сообщение, разрезанное по разделам так, чтобы ни одна строка не разорвалась.
 
-    Шапка (первый блок, не начинающийся с «Заявка») едет вместе с первым
-    разделом: одна строка «Что нового со вчера» отдельным сообщением — шум.
+    Шапка (первый блок, не начинающийся с «Заявка») едет с первой частью
+    первого раздела: одна строка «Что нового со вчера» отдельным сообщением —
+    шум. Место под неё первый раздел оставляет сам, поэтому шапка отдельно
+    уходит, только если она длиннее четверти лимита. Раздел длиннее лимита
+    режется по строкам, и каждое продолжение начинается с заголовка заявки:
+    брокер пересылает часть клиенту, и кусок без имени заявки — это чужой
+    разговор.
     """
     blocks = [block for block in text.split("\n\n") if block.strip()] or [text]
-    if len(blocks) > 1 and not blocks[0].startswith("Заявка") \
-            and len(blocks[0]) + 2 + len(blocks[1]) <= limit:
-        blocks[:2] = [f"{blocks[0]}\n\n{blocks[1]}"]
+    head = blocks.pop(0) if len(blocks) > 1 and not blocks[0].startswith("Заявка") else None
+    attached = head is not None and len(head) + 2 <= limit // 4
 
     parts: list[str] = []
-    for block in blocks:
-        parts.extend(_split_lines(block, limit))
+    for index, block in enumerate(blocks):
+        if index == 0 and attached:
+            pieces = _split_section(block, limit - len(head) - 2)
+            pieces[0] = f"{head}\n\n{pieces[0]}"
+        else:
+            pieces = _split_section(block, limit)
+        parts.extend(pieces)
+    if head is not None and not attached:
+        parts.insert(0, head)
     return parts
+
+
+def _split_section(block: str, limit: int) -> list[str]:
+    """Раздел заявки: целиком — или по строкам, с заголовком на каждой части."""
+    if len(block) <= limit:
+        return [block]
+    title = block.splitlines()[0][: limit // 4] + CONTINUED
+    pieces = _split_lines(block, limit - len(title) - 1)
+    return [pieces[0]] + [f"{title}\n{piece}" for piece in pieces[1:]]
 
 
 def _split_lines(block: str, limit: int) -> list[str]:

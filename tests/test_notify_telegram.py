@@ -120,7 +120,9 @@ def test_a_section_longer_than_the_limit_is_cut_between_lines():
 
     assert len(parts) > 1
     assert all(len(part) <= LIMIT for part in parts)
-    assert "\n".join(parts) == text
+    title = "Заявка R-1 — новый: 300 (продолжение)\n"
+    assert all(part.startswith(title) for part in parts[1:])
+    assert "\n".join([parts[0]] + [part[len(title):] for part in parts[1:]]) == text
 
 
 def test_every_part_is_sent_in_order(monkeypatch):
@@ -259,3 +261,18 @@ def test_a_connection_that_never_opened_is_tried_again(monkeypatch):
     TelegramNotifier(token="t", chat_id="1").send("Заявка R-1 — новый: 1")
 
     assert sent == ["Заявка R-1 — новый: 1"]
+
+
+def test_a_section_cut_in_parts_keeps_its_title_on_every_part():
+    """L-1 аудита: вторая часть длинного раздела уходила без имени заявки, а
+    шапка «Что нового» — отдельным сообщением. Брокер пересылает часть
+    клиенту — и клиент получает кусок без контекста."""
+    section = "Заявка R-7 (Давид) — новый: 40\n" + "\n".join(
+        f"  • {index:03d} " + "x" * 150 for index in range(40))
+
+    parts = split_message("Что нового\n\n" + section)
+
+    assert parts[0].startswith("Что нового\n\nЗаявка R-7")
+    assert all(part.startswith(("Что нового", "Заявка R-7")) for part in parts)
+    assert all(len(part) <= LIMIT for part in parts)
+    assert "\n".join(parts).count("• 039") == 1
