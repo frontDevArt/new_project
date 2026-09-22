@@ -39,8 +39,17 @@ def test_env_example_has_no_knob_that_nothing_reads():
         path.read_text(encoding="utf-8") for path in (ROOT / "config").glob("*.yaml")
     )
     referenced = set(re.findall(r"\$\{([A-Za-z_][A-Za-z0-9_]*)\}", configs))
+    # Живую проверку канала (tests/live) настраивают переменные, которые читает
+    # не конфиг, а сам код: `os.environ.get("TELEGRAM_LIVE")`. Читает — значит
+    # ручка настоящая.
+    sources = "\n".join(
+        path.read_text(encoding="utf-8")
+        for folder in ("listam", "tests")
+        for path in (ROOT / folder).rglob("*.py")
+    )
+    read = set(re.findall(r"environ(?:\.get\(|\[)\s*[\"']([A-Z_][A-Z0-9_]*)[\"']", sources))
 
-    assert declared - referenced - PLANNED == set()
+    assert declared - referenced - read - PLANNED == set()
 
 
 def test_readme_names_every_command_the_cli_has():
