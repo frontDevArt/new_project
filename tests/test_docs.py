@@ -41,3 +41,35 @@ def test_env_example_has_no_knob_that_nothing_reads():
     referenced = set(re.findall(r"\$\{([A-Za-z_][A-Za-z0-9_]*)\}", configs))
 
     assert declared - referenced - PLANNED == set()
+
+
+def test_readme_names_every_command_the_cli_has():
+    """Команда, которой нет в README, не существует для человека."""
+    from listam.cli import build_parser
+
+    commands = set()
+    for action in build_parser()._subparsers._group_actions:
+        commands.update(action.choices)
+
+    missing = [name for name in sorted(commands)
+               if f"python -m listam {name}" not in README]
+    assert missing == [], f"README не упоминает команды: {missing}"
+
+
+def test_readme_describes_every_column_of_the_requests_table():
+    """Колонка, которой нет в README, брокеру не известна — и он её не заполнит."""
+    from listam.domain.requests import COLUMNS
+
+    missing = [column for column in COLUMNS if f"`{column}`" not in README]
+    assert missing == [], f"README не описывает колонки заявки: {missing}"
+
+
+def test_readme_names_the_scoring_thresholds_that_the_config_ships_with():
+    """Пороги 70 и 40 — то, по чему человек читает витрину."""
+    import yaml
+
+    shipped = yaml.safe_load((ROOT / "config" / "prod.yaml").read_text(encoding="utf-8"))
+    thresholds = shipped["match"]["thresholds"]
+
+    for value in (thresholds["hot"], thresholds["digest"]):
+        assert str(value) in README
