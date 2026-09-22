@@ -342,6 +342,9 @@ def _write_matches(database: Database, report: MatchReport, requests, candidates
     now = datetime.now(timezone.utc)
     for request in requests:
         confirmed: set[str] = set()
+        # Матчи заявки копятся и пишутся одной транзакцией: по одной на строку
+        # боевые 67 000 матчей стоили минуту фиксаций на диск.
+        batch: list[Match] = []
         for listing in candidates:
             result = score(request, listing, median_by_district=medians,
                            weights=tuning.weights,
@@ -350,7 +353,7 @@ def _write_matches(database: Database, report: MatchReport, requests, candidates
                 # Отказ в базу не пишется: их миллионы, и звонить по ним некуда.
                 continue
             cluster = representatives[listing.id]
-            outcome = database.upsert_match(Match(
+            batch.append(Match(
                 request_id=request.id,
                 listing_id=listing.id,
                 score=float(result.value),
@@ -359,13 +362,14 @@ def _write_matches(database: Database, report: MatchReport, requests, candidates
                 cluster_id=cluster.cluster_id,
                 cluster_size=cluster.size,
                 cluster_spread_usd=cluster.spread_usd,
-            ), now)
+            ))
             confirmed.add(listing.id)
-            setattr(report, outcome, getattr(report, outcome) + 1)
             if tuning.hot is not None and result.value >= tuning.hot:
                 report.hot += 1
             elif tuning.digest is not None and result.value >= tuning.digest:
                 report.digest += 1
+        for outcome, count in database.upsert_matches(batch, now).items():
+            setattr(report, outcome, getattr(report, outcome) + count)
         if full_sweep:
             report.retired += database.retire_matches(
                 request.id, keep=confirmed | off_the_feed, now=now,

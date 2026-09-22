@@ -211,6 +211,16 @@ class Database(ABC):
         """
 
     @abstractmethod
+    def upsert_matches(self, matches: list[Match], now: datetime) -> dict[str, int]:
+        """Пачка матчей одной транзакцией. Отдаёт счётчики new/updated/unchanged.
+
+        Правила те же, что у `upsert_match`: след звонка не трогается,
+        `matched_at` не двигается у неизменившихся, закрытие гасится
+        подтверждением. Отличие одно — граница транзакции: на боевых числах
+        одна транзакция на строку стоит минуту на прогон.
+        """
+
+    @abstractmethod
     def retire_matches(self, request_id: int, keep: set[str],
                        now: datetime, reason: str) -> int:
         """Закрывает матчи заявки, которых нет в `keep`. Отдаёт, сколько закрыл.

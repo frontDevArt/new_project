@@ -1,14 +1,34 @@
 """Масштаб подбора. Тест не про скорость, а про число обращений к базе:
-секунды на разных машинах разные, а четыре чтения одной таблицы — везде четыре."""
+секунды на разных машинах разные, а три чтения одной таблицы — везде три."""
 from __future__ import annotations
+
+import pytest
 
 from listam.adapters.db_sqlite import SqliteDatabase
 from listam.matching import run_match
 
-from tests.test_matching import matching_config  # noqa: F401  (фикстура)
+from tests.contracts.test_database_contract import make_request
+from tests.test_matching import cfg, fill, suitable
 
 
-def test_one_matching_reads_the_listings_table_once(matching_config, monkeypatch):  # noqa: F811
+@pytest.fixture
+def matching_config(tmp_path):
+    """Дюжина подходящих объявлений, каждое на своей улице — дюжина матчей.
+
+    Три штуки, как у `tests/test_matching.py`, для этого файла мало: прогон
+    тратит три транзакции на служебное (кластеры, отметка подбора, сама
+    запись), и «транзакций меньше, чем матчей» на трёх матчах неразличимо
+    даже при записи по одной строке за раз.
+    """
+    config = cfg(tmp_path)
+    fill(config,
+         listings=[suitable(str(number), price_usd=100_000.0 + number * 1_000)
+                   for number in range(12)],
+         requests=[make_request("R-1")])
+    return config
+
+
+def test_one_matching_reads_the_listings_table_once(matching_config, monkeypatch):
     calls: list[str] = []
     original = SqliteDatabase.listings_for_matching
 
@@ -22,4 +42,30 @@ def test_one_matching_reads_the_listings_table_once(matching_config, monkeypatch
     assert len(calls) <= 1, (
         f"вся таблица объявлений прочитана {len(calls)} раза: {calls}. "
         f"На боевых 20 826 строках каждое чтение — больше секунды"
+    )
+
+
+def test_matches_are_written_in_batches_and_not_one_transaction_each(
+        matching_config, monkeypatch):
+    """Граница транзакции, а не скорость: на боевых числах одна транзакция
+    на строку — это 67 000 фиксаций и минута прогона.
+
+    Считается `transaction()`, а не строки SQL: `sqlite3.Connection` —
+    неизменяемый тип, подменить у него `execute` нельзя, а BEGIN выполняется
+    только здесь.
+    """
+    begins: list[str] = []
+    original = SqliteDatabase.transaction
+
+    def counted(self):
+        begins.append("BEGIN")
+        return original(self)
+
+    monkeypatch.setattr(SqliteDatabase, "transaction", counted)
+    report = run_match(matching_config)
+
+    assert report.new > 1, "тест бессмыслен, если матч один"
+    assert len(begins) < report.new, (
+        f"{len(begins)} транзакций на {report.new} матчей: на боевых 67 000 "
+        f"строках это минута записи вместо секунд"
     )

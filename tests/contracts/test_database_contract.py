@@ -988,3 +988,68 @@ def test_a_match_status_outside_the_list_is_refused(db):
     with pytest.raises(ValueError) as exc:
         db.set_match_status(stored.id, "ПОЖАЛУЙ НЕТ")
     assert "new" in str(exc.value), "отказ обязан перечислить, какие статусы бывают"
+
+
+def test_a_batch_of_matches_gives_the_same_counts_as_one_by_one(db):
+    """Пачка считает то же самое, что счёт по одному: new / updated / unchanged."""
+    request = stored_request(db)
+    for number in range(3):
+        db.upsert_listing(make_listing(f"L-{number}"), NOW)
+    batch = [Match(request_id=request.id, listing_id=f"L-{number}",
+                   score=float(70 + number)) for number in range(3)]
+
+    assert db.upsert_matches(batch, NOW) == {"new": 3, "updated": 0, "unchanged": 0}
+    assert db.upsert_matches(batch, LATER) == {"new": 0, "updated": 0, "unchanged": 3}
+
+    batch[0].score = 99.0
+    assert db.upsert_matches(batch, LATER) == {"new": 0, "updated": 1, "unchanged": 2}
+
+
+def test_a_batch_does_not_touch_the_call_trace(db):
+    """Решение 7: `status` и `reject_reason` пишет только человек."""
+    request = stored_request(db)
+    db.upsert_listing(make_listing("L-1"), NOW)
+    db.upsert_matches([Match(request_id=request.id, listing_id="L-1", score=70.0)], NOW)
+    stored = db.matches_for_request(request.id)[0]
+    db.set_match_status(stored.id, "called", "дорого")
+
+    db.upsert_matches([Match(request_id=request.id, listing_id="L-1", score=90.0)], LATER)
+
+    again = db.matches_for_request(request.id)[0]
+    assert again.score == 90.0
+    assert again.status == "called"
+    assert again.reject_reason == "дорого"
+
+
+def test_a_batch_brings_a_retired_match_back(db):
+    """Подтверждение гасит закрытие — так же, как у `upsert_match`."""
+    request = stored_request(db)
+    db.upsert_listing(make_listing("L-1"), NOW)
+    db.upsert_matches([Match(request_id=request.id, listing_id="L-1", score=80.0)], NOW)
+    db.retire_matches(request.id, keep=set(), now=LATER, reason="бюджет")
+
+    assert db.upsert_matches(
+        [Match(request_id=request.id, listing_id="L-1", score=80.0)], EVEN_LATER
+    ) == {"new": 0, "updated": 1, "unchanged": 0}
+    alive = db.matches_for_request(request.id)
+    assert [item.listing_id for item in alive] == ["L-1"]
+    assert alive[0].retired_reason is None
+
+
+def test_a_batch_keeps_the_first_time_a_match_was_found(db):
+    """`first_matched_at` — про находку, `matched_at` — про пересчёт."""
+    request = stored_request(db)
+    db.upsert_listing(make_listing("L-1"), NOW)
+    db.upsert_matches([Match(request_id=request.id, listing_id="L-1", score=80.0)], NOW)
+    db.upsert_matches([Match(request_id=request.id, listing_id="L-1", score=90.0)], LATER)
+
+    stored = db.matches_for_request(request.id)[0]
+    assert stored.first_matched_at == NOW
+    assert stored.matched_at == LATER
+
+
+def test_an_empty_batch_writes_nothing(db):
+    request = stored_request(db)
+
+    assert db.upsert_matches([], NOW) == {"new": 0, "updated": 0, "unchanged": 0}
+    assert db.matches_for_request(request.id) == []

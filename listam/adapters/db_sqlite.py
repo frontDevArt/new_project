@@ -637,6 +637,72 @@ class SqliteDatabase(Database):
             )
         return "updated"
 
+    def upsert_matches(self, matches: list[Match], now: datetime) -> dict[str, int]:
+        """См. порт. Читает существующие одним запросом, пишет одной транзакцией.
+
+        `upsert_match` остаётся рядом и не переписывается через пачку: он
+        читается в тестах и в контракте, и объяснять правило одной строки
+        через цикл по списку значило бы объяснять простое через сложное.
+        """
+        counts = {"new": 0, "updated": 0, "unchanged": 0}
+        if not matches:
+            return counts
+
+        request_ids = {match.request_id for match in matches}
+        existing: dict[tuple, sqlite3.Row] = {}
+        for request_id in request_ids:
+            for row in self.conn.execute(
+                "SELECT * FROM matches WHERE request_id = ?", (request_id,)
+            ):
+                existing[(row["request_id"], row["listing_id"])] = row
+
+        stamp = to_iso(now)
+        inserts: list[dict] = []
+        updates: list[dict] = []
+        for match in matches:
+            values = {name: _match_value(match, name) for name in MATCH_FIELDS}
+            was = existing.get((match.request_id, match.listing_id))
+            if was is None:
+                values.update(
+                    request_id=match.request_id, listing_id=match.listing_id,
+                    status=match.status or "new", reject_reason=match.reject_reason,
+                    first_matched_at=stamp, matched_at=stamp,
+                )
+                inserts.append(values)
+                counts["new"] += 1
+                continue
+            same = all(_normalize(values[name]) == _normalize(was[name])
+                       for name in MATCH_COMPARED)
+            if same and was["retired_at"] is None:
+                # Балл и кластер те же — отметку пересчёта не двигаем, как и
+                # в `upsert_match`: иначе ночной пересчёт выглядел бы как
+                # обновление всех матчей разом.
+                counts["unchanged"] += 1
+                continue
+            # След звонка (`status`, `reject_reason`) в присвоениях отсутствует
+            # физически: колонку, которой нет в UPDATE, нельзя затереть
+            # случайной правкой этого метода (решение 7).
+            values.update(matched_at=stamp, retired_at=None, retired_reason=None,
+                          id=was["id"])
+            updates.append(values)
+            counts["updated"] += 1
+
+        with self.transaction():
+            if inserts:
+                columns = ", ".join(inserts[0])
+                placeholders = ", ".join(f":{name}" for name in inserts[0])
+                self.conn.executemany(
+                    f"INSERT INTO matches ({columns}) VALUES ({placeholders})", inserts
+                )
+            if updates:
+                assignments = ", ".join(
+                    f"{name} = :{name}" for name in updates[0] if name != "id"
+                )
+                self.conn.executemany(
+                    f"UPDATE matches SET {assignments} WHERE id = :id", updates
+                )
+        return counts
+
     def retire_matches(self, request_id: int, keep: set[str],
                        now: datetime, reason: str) -> int:
         """Закрывает всё, что этот проход не подтвердил. См. порт."""
