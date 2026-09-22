@@ -679,6 +679,45 @@ def test_matching_since_a_mark_takes_only_what_appeared_after_it(db):
     assert [item.id for item in db.listings_for_matching(since=LATER)] == ["2"]
 
 
+def test_touched_since_finds_the_newcomer(db):
+    db.upsert_listing(make_listing("L-1"), NOW)
+    db.upsert_listing(make_listing("L-2"), LATER)
+    found = {item.id for item in db.listings_touched_since(LATER)}
+    assert found == {"L-2"}
+
+
+def test_touched_since_finds_the_one_that_changed_its_price(db):
+    db.upsert_listing(make_listing("L-1", price_usd=130_000.0,
+                                   price_raw="130000 $", currency="USD"), NOW)
+    db.upsert_listing(make_listing("L-1", price_usd=118_000.0,
+                                   price_raw="118000 $", currency="USD"), LATER)
+    found = {item.id for item in db.listings_touched_since(LATER)}
+    assert found == {"L-1"}, (
+        "квартира, которая наконец влезла в бюджет, — главное событие рынка "
+        "и не имеет права ждать ночного полного пересчёта"
+    )
+
+
+def test_touched_since_finds_the_one_that_came_back(db):
+    db.upsert_listing(make_listing("L-1"), NOW)
+    db.mark_gone(["L-1"], NOW)
+    db.upsert_listing(make_listing("L-1"), LATER)
+    assert {item.id for item in db.listings_touched_since(LATER)} == {"L-1"}
+
+
+def test_touched_since_skips_the_untouched(db):
+    db.upsert_listing(make_listing("L-1"), NOW)
+    db.upsert_listing(make_listing("L-1"), LATER)     # та же карточка, ничего не менялось
+    assert db.listings_touched_since(LATER) == []
+
+
+def test_touched_since_keeps_the_rules_of_the_matching_selection(db):
+    db.upsert_listing(make_listing("L-1"), LATER)
+    db.upsert_listing(make_listing("L-2"), LATER)
+    db.set_computed("L-2", anomaly="цена", price_amount=1.0)
+    assert {item.id for item in db.listings_touched_since(LATER)} == {"L-1"}
+
+
 # --- матчи --------------------------------------------------------------
 def stored_request(db, external_id="R-1"):
     db.upsert_request(make_request(external_id), NOW)

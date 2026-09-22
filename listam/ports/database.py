@@ -142,6 +142,15 @@ class Database(ABC):
         """
 
     @abstractmethod
+    def listings_touched_since(self, since: datetime) -> list[Listing]:
+        """Активные без аномалии, которых с отметки что-то коснулось.
+
+        Коснулось — это появилось, сменило цену или вернулось на ленту.
+        Мерить одним `first_seen`, как `listings_for_matching(since=...)`,
+        мало: подешевевшая квартира новой не становится, а подбор её ждёт.
+        """
+
+    @abstractmethod
     def upsert_request(self, request: Request, now: datetime) -> str:
         """Возвращает 'new' | 'updated' | 'unchanged'.
 

@@ -479,6 +479,21 @@ class SqliteDatabase(Database):
         query += " ORDER BY first_seen DESC, id DESC"
         return [_row_to_listing(row) for row in self.conn.execute(query, params)]
 
+    def listings_touched_since(self, since: datetime) -> list[Listing]:
+        """См. порт. Правила выборки те же, что у `listings_for_matching`."""
+        stamp = to_iso(since)
+        rows = self.conn.execute(
+            "SELECT * FROM listings "
+            " WHERE status = 'active' AND (anomaly IS NULL OR anomaly = '') "
+            "   AND (first_seen >= :since "
+            "        OR returned_at >= :since "
+            "        OR id IN (SELECT listing_id FROM price_history "
+            "                   WHERE seen_at >= :since)) "
+            " ORDER BY first_seen DESC, id DESC",
+            {"since": stamp},
+        )
+        return [_row_to_listing(row) for row in rows]
+
     def upsert_request(self, request: Request, now: datetime) -> str:
         values = {name: _request_value(request, name) for name in REQUEST_FIELDS}
         existing = self.get_request(request.external_id)
