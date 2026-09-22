@@ -618,3 +618,21 @@ def test_hours_without_new_is_refused(project, capsys):
     """Бессмысленный ввод отклоняется на входе: у витрины по баллу окна нет."""
     assert run(project, "matches", "--hours", "5") == 2
     assert "--hours работает только со срезом --new" in capsys.readouterr().err
+
+
+def test_notify_without_a_kind_is_refused(project, capsys):
+    """Ни одного флага — это не «пошли всё»: три вида шлют разное разным людям."""
+    assert run(project, "notify") == 2
+    assert "укажи --hot" in capsys.readouterr().err
+
+
+def test_notify_with_two_kinds_is_refused(project, capsys):
+    assert run(project, "notify", "--hot", "--digest") == 2
+    assert "вместе не работают" in capsys.readouterr().err
+
+
+def test_notify_dry_run_prints_the_message(project, capsys):
+    run(project, "scrape")          # база появляется от прогона, а не от уведомления
+    assert run(project, "notify", "--digest", "--dry-run") == 0
+    printed = capsys.readouterr().out
+    assert "Уведомление (digest)" in printed

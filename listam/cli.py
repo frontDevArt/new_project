@@ -9,6 +9,7 @@
     python -m listam match           подобрать объявления под заявки
     python -m listam matches         показать подобранное по заявкам
     python -m listam changes         что принёс последний прогон
+    python -m listam notify          послать уведомление брокеру
 
 Окружение выбирается переменной APP_ENV или флагом --env.
 """
@@ -92,6 +93,17 @@ def build_parser() -> argparse.ArgumentParser:
     matches.add_argument("--hours", type=float,
                          help="окно среза --new в часах назад от «сейчас» "
                               "(по умолчанию — с прошлой отправки дайджеста)")
+
+    notify = commands.add_parser(
+        "notify", help="послать уведомление: горячее, дайджест или сводку по ленте")
+    notify.add_argument("--hot", action="store_true",
+                        help="немедленное: что появилось выше порога match.thresholds.hot")
+    notify.add_argument("--digest", action="store_true",
+                        help="дневная сводка: всё, что тронулось с прошлой отправки")
+    notify.add_argument("--feed", action="store_true",
+                        help="что пришло на ленту вне заявок")
+    notify.add_argument("--dry-run", action="store_true",
+                        help="показать, что было бы послано, и не посылать")
 
     changes = commands.add_parser("changes", help="что принёс последний прогон")
     changes.add_argument("--hours", type=float,
@@ -246,6 +258,28 @@ def _dispatch(args, config) -> int:
         return _matches(config, external_id=args.request, limit=args.limit,
                         min_score=args.min_score)
 
+    if args.command == "notify":
+        # Три вида — три разных разговора, и «оба сразу» не значит ничего.
+        # Бессмысленный ввод отклоняется на входе: угадав за человека, мы
+        # послали бы не то, что он просил, — а отправленное не отзывается.
+        chosen = [name for name, on in (("--hot", args.hot), ("--digest", args.digest),
+                                        ("--feed", args.feed)) if on]
+        if len(chosen) > 1:
+            print(
+                f"{' и '.join(chosen)} вместе не работают: это три разных "
+                "уведомления. Выбери одно.",
+                file=sys.stderr,
+            )
+            return 2
+        if not chosen:
+            print(
+                "Нечего посылать: укажи --hot для немедленного, --digest "
+                "для дневной сводки или --feed для сводки по ленте.",
+                file=sys.stderr,
+            )
+            return 2
+        return _notify(config, kind=chosen[0].lstrip("-"), dry_run=args.dry_run)
+
     if args.command == "changes":
         # Разбор аргументов — дело командной строки: `run_changes` про коды
         # возврата ничего не знает. Бессмысленный ввод отклоняется на входе,
@@ -366,7 +400,16 @@ def _matches_new(config, external_id: str | None, limit: int | None,
         min_score = settings(config).digest
     if limit is None:
         limit = display_limit(config)
-    since, until, note = window_for(config, kind="digest", hours=hours)
+    # Окно то же, что у `notify --digest`: срез витрины и текст сообщения
+    # обязаны показывать одно и то же, иначе сличить их глазами нельзя.
+    # Базу открываем на чтение и без замка: витрина её не чинит.
+    database = build_database(config)
+    database.connect()
+    try:
+        since, until, note = window_for(config, kind="digest", hours=hours,
+                                        database=database)
+    finally:
+        database.close()
     try:
         page = collect_events(config, since=since, until=until,
                               external_id=external_id, min_score=min_score, note=note)
@@ -375,6 +418,14 @@ def _matches_new(config, external_id: str | None, limit: int | None,
         return 1
     print(render_events(page, per_request=limit))
     return 0
+
+
+def _notify(config, kind: str, dry_run: bool) -> int:
+    from listam.notifications import run_notify
+
+    report = run_notify(config, kind=kind, dry_run=dry_run)
+    print(report.render())
+    return 1 if report.errors else 0
 
 
 def _changes(config, hours: float | None, limit: int | None) -> int:

@@ -173,3 +173,25 @@ def test_an_empty_window_still_moves_it(prepared):
     database.connect()
     assert database.last_notification("digest").events == 0
     database.close()
+
+
+def test_the_view_and_the_message_measure_the_same_window(prepared, capsys):
+    """Витрина `matches --new` и `notify --digest` берут окно из одного
+    журнала: иначе сличить отправляемое глазами невозможно."""
+    from listam.cli import main
+
+    run_notify(prepared, kind="digest")          # окно сдвинулось
+    capsys.readouterr()
+
+    assert main(["--env", "test", "--config-dir", str(prepared.path.parent),
+                 "matches", "--new"]) == 0
+    assert "с прошлой отправки" in capsys.readouterr().out
+
+
+def test_without_a_send_the_view_says_so_out_loud(prepared, capsys):
+    """Пустой список без объяснения читался бы как «на рынке тишина»."""
+    from listam.cli import main
+
+    assert main(["--env", "test", "--config-dir", str(prepared.path.parent),
+                 "matches", "--new"]) == 0
+    assert "отправок ещё не было" in capsys.readouterr().out
