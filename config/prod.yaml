@@ -73,9 +73,9 @@ rate:
   kind: rate_am
 
 notify:
-  kind: stdout                  # none | stdout | telegram
-  # token: ${TELEGRAM_BOT_TOKEN}      # для kind: telegram
-  # chat_id: ${TELEGRAM_CHAT_ID}      # чат брокера: клиентам он пересылает сам
+  kind: telegram                # none | stdout | telegram; секреты — в .env
+  token: ${TELEGRAM_BOT_TOKEN}        # для kind: telegram
+  chat_id: ${TELEGRAM_CHAT_ID}        # чат брокера: клиентам он пересылает сам
   hot:                          # «звони сейчас»: раз в час, после match --new
     enabled: true
     per_request: 5              # строк на заявку; порог балла — match.thresholds.hot
