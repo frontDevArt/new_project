@@ -386,3 +386,23 @@ def test_the_slice_follows_the_digest_about_closures(prepared, capsys):
 
     assert _matches_new(prepared, None, None, None, None) == 0
     assert "отпало" not in capsys.readouterr().out
+
+
+def test_a_journal_that_did_not_write_is_an_error_and_not_a_crash(prepared, monkeypatch):
+    """Сообщение ушло, а строка журнала — нет: следующий запуск пошлёт то же
+    самое. Об этом брокер должен узнать из отчёта, а не из трейсбека."""
+    import sqlite3
+
+    from listam.adapters.db_sqlite import SqliteDatabase
+
+    def full(self, notification):
+        raise sqlite3.OperationalError("database or disk is full")
+
+    monkeypatch.setattr(SqliteDatabase, "record_notification", full)
+
+    report = run_notify(prepared, kind="hot")
+
+    assert report.sent is True
+    assert report.errors == 1
+    assert "журнал не записан" in report.notes
+    assert "ещё раз" in report.notes

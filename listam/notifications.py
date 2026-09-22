@@ -171,11 +171,19 @@ def run_notify(config: Config, *, kind: str, dry_run: bool = False) -> NotifyRep
                 return report
             report.sent = True
 
-            database.record_notification(Notification(
-                kind=kind, sent_at=datetime.now(timezone.utc),
-                window_from=since, window_to=until,
-                events=report.events, requests=report.requests, text=report.text,
-            ))
+            try:
+                database.record_notification(Notification(
+                    kind=kind, sent_at=datetime.now(timezone.utc),
+                    window_from=since, window_to=until,
+                    events=report.events, requests=report.requests, text=report.text,
+                ))
+            except Exception as exc:       # sqlite3.Error, OSError — база не приняла строку
+                report.errors = 1
+                notes.append(
+                    f"сообщение ушло, но журнал не записан: {exc}. Окно осталось, "
+                    f"где было, — следующий запуск пошлёт то же самое ещё раз"
+                )
+                return report
             publish(session, config, "база с журналом уведомлений")
             report.errors += session.failures
     except SessionRefused as exc:
