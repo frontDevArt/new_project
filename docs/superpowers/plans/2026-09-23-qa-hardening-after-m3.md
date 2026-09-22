@@ -1884,7 +1884,7 @@ switch(config: Config, key: str, default: bool) -> bool
 hours(config: Config, key: str, default: float) -> float
 ```
 
-- [ ] **Шаг 1: падающие тесты**
+- [x] **Шаг 1: падающие тесты**
 
 ```python
 # tests/test_config.py — импорт дополнить hours, switch; в конец файла
@@ -1907,12 +1907,12 @@ def test_a_negative_window_is_refused(tmp_path):
         hours(config, "notify.digest.fallback_hours", 24.0)
 ```
 
-- [ ] **Шаг 2: убедиться, что тесты падают**
+- [x] **Шаг 2: убедиться, что тесты падают**
 
 Запуск: `.venv/Scripts/python.exe -m pytest -q tests/test_config.py -k "quoted_false or negative_window"`
 Ожидается: FAIL — `ImportError: cannot import name 'hours'`.
 
-- [ ] **Шаг 3: три функции**
+- [x] **Шаг 3: три функции**
 
 ```python
 # listam/config.py — после threshold
@@ -1962,7 +1962,7 @@ def hours(config: Config, key: str, default: float) -> float:
 В `positive` и `score_threshold` строку `number = float(value)` заменить на
 `number = _number(key, value)`.
 
-- [ ] **Шаг 4: тесты проходят, батарея целиком**
+- [x] **Шаг 4: тесты проходят, батарея целиком**
 
 Запуск: `.venv/Scripts/python.exe -m pytest -q`
 Ожидается: **797 passed, 25 skipped**. Если упал тест,
@@ -1971,7 +1971,7 @@ def hours(config: Config, key: str, default: float) -> float:
 отчётом: поправить тест (если строка — его выдумка) или конфиг (если строка
 стоит в поставляемом yaml).
 
-- [ ] **Шаг 5: коммит**
+- [x] **Шаг 5: коммит**
 
 ```bash
 git add listam/config.py tests/test_config.py
@@ -2001,7 +2001,7 @@ tuning_for(config: Config, kind: str) -> NotifyTuning
 `enabled`, `per_request` и `shows_closures` (фаза 1) **удаляются**; их
 читатели переходят на `tuning_for`.
 
-- [ ] **Шаг 1: падающие тесты**
+- [x] **Шаг 1: падающие тесты**
 
 ```python
 # tests/test_notifications.py — импорт: from listam.config import ConfigError
@@ -2042,13 +2042,13 @@ def test_doctor_calls_a_senseless_notify_setting_a_failure(tmp_path):
     assert "notify.digest.enabled" in check.details
 ```
 
-- [ ] **Шаг 2: убедиться, что тесты падают**
+- [x] **Шаг 2: убедиться, что тесты падают**
 
 Запуск: `.venv/Scripts/python.exe -m pytest -q tests/test_notifications.py tests/test_doctor.py -k "senseless"`
 Ожидается: FAIL — `AssertionError: работа не должна начинаться` (значение
 принято и работа пошла) и `ValueError` у «сутки»/«десять».
 
-- [ ] **Шаг 3: `NotifyTuning` и `tuning_for`**
+- [x] **Шаг 3: `NotifyTuning` и `tuning_for`**
 
 ```python
 # listam/notifications.py — импорт
@@ -2150,7 +2150,7 @@ def tuning_for(config: Config, kind: str) -> NotifyTuning:
 `_feed_text(database, config, since, until)` → `_feed_text(database, knobs, since, until)`:
 `per_request(config, "feed") or 0` → `knobs.per_request or 0`.
 
-- [ ] **Шаг 4: CLI и `doctor` читают то же**
+- [x] **Шаг 4: CLI и `doctor` читают то же**
 
 ```python
 # listam/cli.py — в _matches_new
@@ -2190,12 +2190,12 @@ def tuning_for(config: Config, kind: str) -> NotifyTuning:
 `matches_view`, а `doctor` импортируется раньше них. Если циклического
 импорта нет — перенеси наверх и запиши это в отчёт.)
 
-- [ ] **Шаг 5: тесты проходят, батарея целиком**
+- [x] **Шаг 5: тесты проходят, батарея целиком**
 
 Запуск: `.venv/Scripts/python.exe -m pytest -q`
 Ожидается: 804 passed, 25 skipped.
 
-- [ ] **Шаг 6: коммит**
+- [x] **Шаг 6: коммит**
 
 ```bash
 git add listam/notifications.py listam/cli.py listam/doctor.py tests/test_notifications.py tests/test_doctor.py
@@ -2208,7 +2208,7 @@ git commit -m "fix(notify): секция notify читается разом и �
 - Изменить: `listam/notifications.py` (`run_notify`)
 - Тест: `tests/test_notifications.py`
 
-- [ ] **Шаг 1: падающий тест**
+- [x] **Шаг 1: падающий тест**
 
 ```python
 def test_hot_switched_off_by_its_threshold_sends_nothing(prepared):
@@ -2228,12 +2228,12 @@ def test_hot_switched_off_by_its_threshold_sends_nothing(prepared):
     database.close()
 ```
 
-- [ ] **Шаг 2: убедиться, что тест падает**
+- [x] **Шаг 2: убедиться, что тест падает**
 
 Запуск: `.venv/Scripts/python.exe -m pytest -q tests/test_notifications.py -k switched_off_by_its_threshold`
 Ожидается: FAIL — `assert True is False` (отправлено).
 
-- [ ] **Шаг 3: выход до работы**
+- [x] **Шаг 3: выход до работы**
 
 ```python
 # listam/notifications.py — в run_notify, сразу после min_score = …
@@ -2247,7 +2247,7 @@ def test_hot_switched_off_by_its_threshold_sends_nothing(prepared):
         return report
 ```
 
-- [ ] **Шаг 4: батарея и коммит**
+- [x] **Шаг 4: батарея и коммит**
 
 Запуск: `.venv/Scripts/python.exe -m pytest -q` → 805 passed, 25 skipped.
 
@@ -2262,7 +2262,7 @@ git commit -m "fix(notify): порог null выключает вид, а не �
 - Изменить: `listam/config.py` (`PLACEHOLDER`, `_substitute`), `config/prod.yaml`
 - Тест: `tests/test_config.py`
 
-- [ ] **Шаг 1: падающие тесты**
+- [x] **Шаг 1: падающие тесты**
 
 ```python
 # tests/test_config.py — в конец
@@ -2295,13 +2295,13 @@ def test_the_shipped_prod_config_loads_without_telegram_keys(tmp_path, monkeypat
         build_notifier(config)
 ```
 
-- [ ] **Шаг 2: убедиться, что тесты падают**
+- [x] **Шаг 2: убедиться, что тесты падают**
 
 Запуск: `.venv/Scripts/python.exe -m pytest -q tests/test_config.py -k "optional_placeholder or without_telegram_keys"`
 Ожидается: FAIL — `ConfigError: Переменная окружения TELEGRAM_BOT_TOKEN не задана`
 при загрузке.
 
-- [ ] **Шаг 3: `${VAR:-}` в подстановке**
+- [x] **Шаг 3: `${VAR:-}` в подстановке**
 
 ```python
 # listam/config.py
@@ -2333,7 +2333,7 @@ PLACEHOLDER = re.compile(r"\$\{([A-Za-z_][A-Za-z0-9_]*)(:-)?\}")
   chat_id: ${TELEGRAM_CHAT_ID:-}      # чат брокера: клиентам он пересылает сам
 ```
 
-- [ ] **Шаг 4: батарея и коммит**
+- [x] **Шаг 4: батарея и коммит**
 
 Запуск: `.venv/Scripts/python.exe -m pytest -q` → **807 passed, 25 skipped**.
 `test_docs.py` сравнивает секцию
@@ -2358,7 +2358,7 @@ git commit -m "fix(config): пустой токен бота останавли�
 open_for_reading(config: Config, what: str) -> Database   # MatchesError при отказе
 ```
 
-- [ ] **Шаг 1: падающие тесты**
+- [x] **Шаг 1: падающие тесты**
 
 ```python
 def cli_args(config) -> list[str]:
@@ -2398,12 +2398,12 @@ def test_the_slice_does_not_leave_an_empty_base_behind(prepared, capsys):
     assert "базы нет" in capsys.readouterr().err
 ```
 
-- [ ] **Шаг 2: убедиться, что тесты падают**
+- [x] **Шаг 2: убедиться, что тесты падают**
 
 Запуск: `.venv/Scripts/python.exe -m pytest -q tests/test_notifications.py -k "old_schema_is_refused or empty_base_behind"`
 Ожидается: FAIL — `sqlite3.OperationalError: no such table: notifications`.
 
-- [ ] **Шаг 3: одна дверь для чтения**
+- [x] **Шаг 3: одна дверь для чтения**
 
 ```python
 # listam/matches_view.py — после display_limit
@@ -2457,7 +2457,7 @@ def open_for_reading(config: Config, what: str) -> Database:
         if external_id is None:
 ```
 
-- [ ] **Шаг 4: срез открывает базу той же дверью**
+- [x] **Шаг 4: срез открывает базу той же дверью**
 
 ```python
 # listam/cli.py — в _matches_new, вместо database = build_database(config) … finally
@@ -2478,7 +2478,7 @@ def open_for_reading(config: Config, what: str) -> Database:
         database.close()
 ```
 
-- [ ] **Шаг 5: батарея и коммит**
+- [x] **Шаг 5: батарея и коммит**
 
 Запуск: `.venv/Scripts/python.exe -m pytest -q`
 Ожидается: **809 passed, 25 skipped**. Если упал тест витрины, ждавший
@@ -2492,13 +2492,167 @@ git commit -m "fix(matches): срез --new не падает на старой 
 
 ### Конец фазы 5
 
-- [ ] Живьём на копии конфига: `notify.digest.enabled: "false"` →
+- [x] Живьём на копии конфига: `notify.digest.enabled: "false"` →
       `notify --digest --dry-run`, код и первая строка ошибки;
       `match.thresholds.hot: null` → `notify --hot --dry-run`;
       `TELEGRAM_BOT_TOKEN= … --env prod changes` (с `GDRIVE_*` из примера
       теста) и `… --env prod notify --hot` — коды обоих. Запиши вывод.
-- [ ] `doctor --no-network` на `config/` — строка «Уведомления».
-- [ ] «Результат фазы 5», стартовый промпт фазы 6, чисто, коммит.
+- [x] `doctor --no-network` на `config/` — строка «Уведомления».
+- [x] «Результат фазы 5», стартовый промпт фазы 6, чисто, коммит.
+
+## Результат фазы 5
+
+**Сделано.** Пять коммитов, по задаче на коммит:
+
+- `bc102f0` — задача 5.1. `_number`, `switch`, `hours` в `listam/config.py`
+  слово в слово из плана; `positive` и `score_threshold` читают число через
+  `_number`. Тестов три, а не два: к двум из плана добавлен
+  `test_a_word_where_a_number_belongs_is_refused_by_name` — `per_request:
+  десять` у `positive`. До правки он падал `ValueError` из `float()`, два
+  плановых — `ImportError: cannot import name 'hours'`. Ни один тест,
+  клавший порог строкой, не упал: строковых порогов в тестах и в поставляемых
+  yaml нет.
+- `6e92761` — задача 5.2. `NotifyTuning` и `tuning_for`; `enabled`,
+  `per_request` и `shows_closures` удалены, их читатели (`window_for`,
+  `run_notify`, `_match_text`, `_feed_text`, `_matches_new`, `notify_check`)
+  читают `tuning_for`. В `run_notify` секция проверяется первой строкой после
+  проверки вида — до тумблера, канала, замка и базы. Все семь тестов до
+  правки падали: шесть параметров — `AssertionError: работа не должна
+  начинаться`, `doctor` — `ok=True`.
+- `acdd8c7` — задача 5.3. Выход при пороге `null` до работы. Тест до правки:
+  `assert True is False` (отправлено, `events=2`).
+- `02ac401` — задача 5.4. `${VAR:-}` в `PLACEHOLDER` и `_substitute`;
+  `config/prod.yaml` — `token` и `chat_id` необязательные. `test_docs.py`
+  не упал.
+- `d664838` — задача 5.5. `open_for_reading` в `listam/matches_view.py`;
+  `collect_matches`, `collect_events` и `_matches_new` открывают базу им.
+  Тестов три: к двум из плана добавлен
+  `test_the_view_does_not_leave_an_empty_base_behind` — то же для `matches`
+  без `--new`, чья проверка тоже переехала в `open_for_reading`. До правки:
+  оба `--new` — `sqlite3.OperationalError: no such table: notifications`,
+  `matches` — файл на диске остался (`assert not True`).
+- Схема не менялась, новых методов порта нет (`Storage.download` уже отвечал
+  `bool`), `matches.status`/`reject_reason` не тронуты, `MATCH_COMPARED` не
+  расширен, пороги те же, `listam/crawler.py` не тронут, в Telegram не ушло
+  ничего.
+
+**Батарея.** `.venv/Scripts/python.exe -m pytest -q`:
+после `bc102f0` — **799 passed, 25 skipped** (99,03 с) = 796 + 3;
+после `6e92761` — **806 passed, 25 skipped** (94,26 с) = 799 + 7;
+после `acdd8c7` — **807 passed, 25 skipped** (94,62 с) = 806 + 1;
+после `02ac401` — **809 passed, 25 skipped** (96,31 с) = 807 + 2;
+после `d664838` — **812 passed, 25 skipped** (97,65 с) = 809 + 3.
+Схема базы — 10.
+
+**Живая проверка.** Папка `p5` в scratchpad: конфиги `base`, `quoted`
+(`notify.digest.enabled: 'false'`), `hotnull` (`match.thresholds.hot: null`) —
+копии `config/dev.yaml` с `storage.work_dir`/`directory` в scratchpad,
+`db_filename: qa5.sqlite`, `requests.kind: none`, `rate.kind: fixed` (390),
+`notify.kind: stdout`. Перед каждым прогоном копия `data/listam-m3.sqlite`
+(оригинал не тронут) кладётся и в `work_dir`, и в хранилище. Всё —
+`PYTHONIOENCODING=utf-8 python -m listam --env dev --config-dir <конфиг> …`;
+«до» — `git worktree` на `51cdbab` в scratchpad (проверено: `listam`
+грузится оттуда), потом удалён. Prod — из корня проекта (`config/`),
+`TELEGRAM_BOT_TOKEN=` пустой, `GDRIVE_FOLDER=folder-abc123`,
+`GDRIVE_CREDENTIALS_FILE=credentials.json` (файла нет — в Drive не ходит).
+
+| Проверка | До (`51cdbab`) | После (`d664838`) |
+| --- | --- | --- |
+| `quoted`: `notify --digest --dry-run` | код 0; «Событий: 0, заявок: 0, не отправлено (пробный прогон)» — выключенный человеком дайджест **работает** | код 2; «Конфигурация не годится: notify.digest.enabled = 'false' не годится: тумблер — это true или false без кавычек. Строка 'false' — не ответ «да» или «нет».» |
+| `hotnull`: `notify --hot --dry-run` | код 0; «Событий: 22, заявок: 14»; младшие баллы — 61, 63, 71 | код 0; «порог match.thresholds.hot выключен (null): подбор таких вариантов не считает, слать нечего»; «Событий: 0, заявок: 0» |
+| для сравнения `base` (`hot: 70`): `notify --hot --dry-run` | «Событий: 20, заявок: 14»; младший балл 71 | «Событий: 20, заявок: 14» |
+| prod: `changes` | код 2; «Конфигурация не загрузилась: Переменная окружения TELEGRAM_BOT_TOKEN не задана…» | код 0; «Изменения с начала прогона 10 (2026-09-22 05:43 UTC, режим fresh) / Новых: 1   Сменили цену: 0   Снято: 46   Вернулось: 1» |
+| prod: `notify --hot` | код 2; то же «не загрузилась» | код 2; «Конфигурация не годится: notify.kind = telegram, но notify.token или notify.chat_id пуст…» |
+| `base`, базы нет ни в `work_dir`, ни в хранилище: `matches --new` дважды | код 1 оба раза, `sqlite3.OperationalError: no such table: notifications`; после первого на диске `qa5.sqlite` 4 096 байт | код 1 оба раза, «События не показаны: базы нет ни здесь, ни в хранилище — сначала python -m listam scrape»; файла нет |
+| `base`: `matches --new` на копии | — | код 0; «Что нового: событий нет (с прошлой отправки (22.09 21:05 UTC))» |
+
+`changes` на prod читал настоящий `data/listam.sqlite` (файл есть, поэтому
+не скачивался; `run_changes` только читает): mtime файла 01:06:12 — до сессии.
+
+`doctor --no-network`, строка «Уведомления»:
+
+- `--env dev` (`config/`), код 0: `OK    Уведомления      уведомления печатаются в консоль (notify.kind: stdout); hot: вкл, digest: вкл, feed: выкл`;
+- `--env prod` без токена, код 1: `СБОЙ  Уведомления      канал не собирается (notify.kind: telegram); hot: вкл, digest: вкл, feed: выкл; notify.kind = telegram, но notify.token или notify.chat_id пуст…`;
+- `--config-dir p5/quoted`, код 1: `СБОЙ  Уведомления      уведомления печатаются в консоль (notify.kind: stdout); hot: вкл, feed: выкл; notify.digest.enabled = 'false' не годится…`.
+
+**Что разошлось с планом.**
+
+- **Два теста сверх плана** (5.1 и 5.5, см. выше) — на поведение, которое
+  правка меняла, а план не проверял. Вместе со сдвигом от фазы 3 (+1)
+  батарея 812 против ожидавшихся 809. Ожидания фазы 6 сдвигаются на +3:
+  814 → **817** после задачи 6.3, итог ~**820**.
+- **5.2, шаг 2:** план ждал `ValueError` у «сутки»/«десять». Упали все шесть
+  одинаково — `работа не должна начинаться`: значение читалось под замком,
+  и подменённый `working_session` срабатывал раньше `float()`.
+- **5.2, шаг 4:** импорт `tuning_for` в `listam/doctor.py` — **наверху**, а не
+  в функции. Цикла нет: `listam.doctor` импортирует только `listam/cli.py`,
+  а `listam.notifications` и всё, что он тянет, `doctor` не импортируют.
+  Проверено: `import listam.doctor`, `listam.notifications`, `listam.cli`,
+  `listam` — без ошибок.
+- **5.3:** проверка порога `null` стоит **до** сборки канала, а не сразу после
+  `min_score = …` на старом месте (там она шла бы после `build_notifier`).
+  Иначе `hot: null` при пустом токене давал бы отказ канала кодом 2 там, где
+  слать нечего. Условие — из плана, `kind != "feed"`, поэтому
+  `match.thresholds.digest: null` так же выключает дайджест. Шаг 4 задачи 6.3
+  («после проверки порога `null`») встаёт в то же место — перед каналом.
+- **5.4, шаг 2:** первый тест упал не отказом загрузки, а
+  `assert '${TELEGRAM_BOT_TOKEN:-}' == ''` — старый шаблон `${VAR:-}` не
+  узнавал и оставлял как есть. Второй — как в плане.
+- **README не тронут:** строки 564–566 по-прежнему называют ссылки
+  `${TELEGRAM_BOT_TOKEN}` и `${TELEGRAM_CHAT_ID}` без `:-`; фраза «пустой
+  секрет — отказ кодом 2 до работы» верна для `notify`. `test_docs.py`
+  этого не ловит. Дописывает фаза 8.
+- Не в этом плане: `_export` в `listam/cli.py` открывает базу тем же
+  `connect()` без проверки файла — по коду он так же заводит пустой файл
+  и отвечает «схема базы 0» (`tests/test_cli.py::test_export_without_a_database_says_so_instead_of_crashing`
+  ждёт именно этого). `export` — не витрина, фаза 5 его не трогала; живьём
+  не проверялось.
+
+## Стартовый промпт для фазы 6
+
+```
+Ты продолжаешь работу над инструментом мониторинга list.am
+в C:\Users\Admin\Downloads\list.
+
+Прочитай docs/superpowers/plans/2026-09-23-qa-hardening-after-m3.md:
+разделы «Что нашёл аудит», «Global Constraints», «Карта файлов»,
+«Результат фазы 5» и свою «Фазу 6». Чужие фазы не трогай. Рядом
+лежат спеки M2 и M3 — их решения в силе:
+docs/superpowers/specs/2026-09-22-m3-notifications-design.md (решения 1–12),
+docs/superpowers/specs/2026-09-22-m2-requests-and-matching-design.md
+(решения 1–11). Фаза 6 уточняет решение 2 спеки M3 — это написано в её
+заголовке.
+
+Исходное состояние: HEAD — коммит «docs: результат фазы 5 QA после M3»
+(следующий за d664838), дерево чистое, батарея 812 passed, 25 skipped,
+схема базы 10. База для замеров — копия data/listam-m3.sqlite в scratchpad,
+не оригинал; клади её и в work_dir, и в storage.directory.
+
+Твоя задача — фаза 6: журнал помнит, куда ушло, а Telegram — когда
+подождать (H-3, H-4). Миграция 011 даёт строке журнала канал; окно
+следующего запуска — последняя отправка этого вида этого канала, а строка
+без канала считается за любой. notify.kind: none не пишет «отправлено» и не
+двигает окно; stdout не двигает окно Telegram. На 429 адаптер ждёт
+retry_after и шлёт с той части, на которой отказали, а не всё заново.
+Проверка порога null (фаза 5) стоит до сборки канала — проверку канала
+none ставь сразу после неё.
+
+Работай по шагам задач: на каждое поведение — падающий тест ДО правки.
+Тесты гоняй только .venv/Scripts/python.exe -m pytest -q, любой прогон CLI
+из скрипта — только с PYTHONIOENCODING=utf-8. Пороги в конфиге не поднимай.
+Новый метод порта или новый аргумент метода порта — это новый контрактный
+тест в tests/contracts/. Схему меняет только миграция 011; других не
+заводи. listam/crawler.py больше не правится. След звонка (matches.status,
+matches.reject_reason) не трогает ничто, MATCH_COMPARED не расширяется.
+Живого Telegram в этой фазе нет: 429 закрывается модульным тестом.
+Ожидания батареи в плане фазы 6 сдвинуты на +3 (см. «Результат фазы 5»).
+Ни одного числа в отчёте без команды, которая его напечатала.
+
+В конце сессии допиши в план раздел «Результат фазы 6»: что сделано, числа
+батареи, что разошлось с планом и почему, и стартовый промпт для фазы 7.
+Сделай коммит.
+```
+
 
 ---
 
