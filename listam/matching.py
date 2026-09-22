@@ -306,6 +306,8 @@ def _write_matches(database: Database, report: MatchReport, requests, candidates
     `full_sweep` — прошли ли по всей базе. Только полный проход имеет право
     закрывать матчи: по выборке `--new` «не подтвердился» значит «его не было
     в выборке», и закрытие выкинуло бы из витрины всё, кроме свежего.
+    Исключение одно — «не представитель кластера»: его знает кластеризация
+    всей базы, и частичный проход закрывает такие матчи тоже.
 
     `off_the_feed` — объявления, которых проход не видел вовсе: снятые с
     ленты и отложенные аномалией. Их матчи не закрываются даже полным
@@ -364,4 +366,13 @@ def _write_matches(database: Database, report: MatchReport, requests, candidates
                 request.id, keep=confirmed | off_the_feed, now=now,
                 reasons=reasons,
                 default="проход больше не подтверждает этот вариант",
+            )
+        else:
+            # Представителя кластера выбирает вся база, а не выборка: карточка,
+            # уступившая место двойнику дешевле, известна и частичному проходу.
+            # Не закрыть её здесь — значит отдать «Звони сейчас» двойника
+            # «новым», а закрытие — ночному `match --all`, в чужое окно.
+            report.retired += database.retire_matches(
+                request.id, keep=representatives.keys() | off_the_feed, now=now,
+                reasons=reasons, default=NOT_REPRESENTATIVE,
             )
