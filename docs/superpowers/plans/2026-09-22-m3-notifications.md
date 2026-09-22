@@ -4298,7 +4298,7 @@ docs/superpowers/specs/2026-09-22-m3-notifications-design.md — решения 
 (docs/superpowers/specs/2026-09-22-m2-requests-and-matching-design.md)
 тоже в силе.
 
-Исходное состояние: HEAD `<хэш коммита отчёта фазы 2>`, дерево чистое,
+Исходное состояние: HEAD `46ae46b`, дерево чистое,
 батарея 711 passed, 18 skipped, схема базы 10. База для замеров —
 data/listam-m3.sqlite (20 842 объявления, 51 548 матчей, схема уже 10);
 база потока по шагам ленты — data/listam-flow.sqlite (тоже схема 10);
