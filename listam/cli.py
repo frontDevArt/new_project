@@ -86,6 +86,12 @@ def build_parser() -> argparse.ArgumentParser:
     matches.add_argument("--min-score", type=float,
                          help="показывать от этого балла и выше "
                               "(по умолчанию — порог дайджеста из конфига)")
+    matches.add_argument("--new", action="store_true",
+                         help="только то, что появилось, подешевело или вернулось "
+                              "с прошлой отправки дайджеста")
+    matches.add_argument("--hours", type=float,
+                         help="окно среза --new в часах назад от «сейчас» "
+                              "(по умолчанию — с прошлой отправки дайджеста)")
 
     changes = commands.add_parser("changes", help="что принёс последний прогон")
     changes.add_argument("--hours", type=float,
@@ -219,6 +225,24 @@ def _dispatch(args, config) -> int:
                 file=sys.stderr,
             )
             return 2
+        if args.hours is not None and not args.new:
+            print(
+                "--hours работает только со срезом --new: у витрины по баллу "
+                "окна нет, она показывает всё живое.",
+                file=sys.stderr,
+            )
+            return 2
+        if args.hours is not None and args.hours <= 0:
+            print(
+                f"--hours {args.hours:g} не годится: окно считается назад от «сейчас», "
+                "и отрицательное или нулевое окно всегда пусто. Нужно число больше нуля.",
+                file=sys.stderr,
+            )
+            return 2
+        if args.new:
+            return _matches_new(config, external_id=args.request,
+                                limit=args.limit, min_score=args.min_score,
+                                hours=args.hours)
         return _matches(config, external_id=args.request, limit=args.limit,
                         min_score=args.min_score)
 
@@ -328,6 +352,28 @@ def _matches(config, external_id: str | None, limit: int | None,
         print(exc, file=sys.stderr)
         return 1
     print(render_matches(page, limit=limit, min_score=min_score))
+    return 0
+
+
+def _matches_new(config, external_id: str | None, limit: int | None,
+                 min_score: float | None, hours: float | None) -> int:
+    from listam.matches_view import (MatchesError, collect_events, display_limit,
+                                     render_events)
+    from listam.matching import settings
+    from listam.notifications import window_for
+
+    if min_score is None:
+        min_score = settings(config).digest
+    if limit is None:
+        limit = display_limit(config)
+    since, until, note = window_for(config, kind="digest", hours=hours)
+    try:
+        page = collect_events(config, since=since, until=until,
+                              external_id=external_id, min_score=min_score, note=note)
+    except MatchesError as exc:
+        print(exc, file=sys.stderr)
+        return 1
+    print(render_events(page, per_request=limit))
     return 0
 
 

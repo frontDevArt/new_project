@@ -612,3 +612,9 @@ def test_a_zero_ceiling_for_the_matches_sheet_is_refused_with_code_two(project, 
 
     assert run(project, "export") == 2
     assert "export.matches_limit" in capsys.readouterr().err
+
+
+def test_hours_without_new_is_refused(project, capsys):
+    """Бессмысленный ввод отклоняется на входе: у витрины по баллу окна нет."""
+    assert run(project, "matches", "--hours", "5") == 2
+    assert "--hours работает только со срезом --new" in capsys.readouterr().err

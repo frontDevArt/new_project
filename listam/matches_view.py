@@ -16,6 +16,8 @@ from dataclasses import dataclass, field
 from listam.adapters.db_sqlite import latest_schema_version
 from listam.changes import DASH, MINUS, money, per_sqm
 from listam.config import Config, positive
+from listam.domain.events import (CHEAPER, EVENT_LABELS, NEW, RETIRED, REVIVED,
+                                  events_for, limited)
 from listam.domain.labels import MATCH_STATUSES, SELLER_TYPES
 from listam.domain.models import Listing, Match, Request
 from listam.matching import settings
@@ -230,3 +232,156 @@ def render_matches(page: MatchesPage, limit: int,
         if left > 0:
             lines.append(f"  …и ещё {left}")
     return "\n".join(lines)
+
+
+@dataclass
+class EventsPage:
+    """События окна и как это окно объяснить человеку."""
+
+    events: list = field(default_factory=list)          # list[MatchEvent]
+    totals: dict[str, int] = field(default_factory=dict)  # ключ группы → всего событий
+    requests: dict[str, Request] = field(default_factory=dict)
+    note: str = ""                                       # «с 21.09 19:00 UTC»
+
+
+def collect_events(config: Config, *, since, until,
+                   external_id: str | None = None,
+                   min_score: float | None = None,
+                   note: str = "") -> EventsPage:
+    """События окна по активным заявкам. Та же выборка, что у уведомления.
+
+    Одна выборка и две подачи (решение 10 спеки): текст сообщения нельзя
+    проверить иначе, чем отправкой, а отправленное не отзывается. Значит,
+    человек обязан уметь посмотреть то же самое в терминале — до отправки.
+    """
+    if min_score is None:
+        min_score = settings(config).digest
+
+    database = build_database(config)
+    database.connect()
+    try:
+        required = latest_schema_version()
+        version = database.schema_version()
+        if version < required:
+            raise MatchesError(
+                f"События не показаны: схема базы {version}, а код ждёт {required}. "
+                f"Витрина ничего не мигрирует — накати миграции: "
+                f"python -m listam recheck"
+            )
+
+        if external_id is None:
+            requests = list(database.iter_requests())
+        else:
+            one = database.get_request(external_id)
+            if one is None:
+                raise MatchesError(
+                    f"заявки {external_id} в базе нет — сначала прочитай источник: "
+                    f"python -m listam requests"
+                )
+            requests = [one]
+
+        page = EventsPage(note=note)
+        for request in requests:
+            rows = database.match_events_since(since, until, request_id=request.id)
+            found = events_for(rows, since, until, min_score=min_score)
+            if not found:
+                continue
+            key = group_key(request)
+            page.events.extend(found)
+            page.totals[key] = len(found)
+            page.requests[key] = request
+        return page
+    finally:
+        database.close()
+
+
+def render_events(page: EventsPage, per_request: int | None,
+                  head: str = "Что нового") -> str:
+    """Срез событий: по разделу на заявку, лучшие сверху, честный хвост.
+
+    Закрытые собираются в одну строку внизу: «отпало 4 (бюджет 3, …)».
+    Закрытие не повод звонить — это объяснение, куда делась вчерашняя
+    карточка, и место ему в конце, а не среди вариантов.
+    """
+    if not page.events:
+        return f"{head}: событий нет" + (f" ({page.note})" if page.note else "")
+
+    by_request: dict[str, list] = {}
+    for event in page.events:
+        by_request.setdefault(_owner_key(page, event), []).append(event)
+
+    lines = [f"{head}{': ' + page.note if page.note else ''}"]
+    for key, events in by_request.items():
+        request = page.requests[key]
+        alive = [event for event in events if event.kind != RETIRED]
+        gone = [event for event in events if event.kind == RETIRED]
+        shown, total = limited(alive, per_request)
+
+        who = f" ({request.client_name})" if request.client_name else ""
+        counts = ", ".join(
+            f"{EVENT_LABELS[kind]}: {sum(1 for e in alive if e.kind == kind)}"
+            for kind in (NEW, CHEAPER, REVIVED)
+            if any(e.kind == kind for e in alive)
+        ) or ("только закрытия" if gone else "событий нет")
+        lines.append("")
+        lines.append(f"Заявка {request.external_id or key}{who} — {counts}")
+        for event in shown:
+            listing = event.listing
+            mark = MINUS if listing.status == "gone" else "•"
+            lines.append(
+                f"  {mark} {_score(event.match.score):>10}  "
+                f"{money(listing.price_usd):>10}  {per_sqm(listing):>12}  "
+                f"{_place(listing):<26}  {_what(listing):<40}  {listing.url}"
+            )
+            note = _event_note(event)
+            if note:
+                lines.append(f"      {note}")
+        left = total - len(shown)
+        if left > 0:
+            lines.append(
+                f"  …и ещё {left} из {total} — "
+                f"python -m listam matches --request {request.external_id} --new"
+            )
+        if gone:
+            reasons: dict[str, int] = {}
+            for event in gone:
+                reason = event.match.retired_reason or "причина не записана"
+                reasons[reason] = reasons.get(reason, 0) + 1
+            listed = ", ".join(f"{reason} {count}" for reason, count in reasons.items())
+            lines.append(f"  отпало {len(gone)} ({listed})")
+    return "\n".join(lines)
+
+
+def _owner_key(page: EventsPage, event) -> str:
+    """Ключ раздела, к которому относится событие.
+
+    Заявку событие знает только идентификатором, а раздел витрины называется
+    внешним идентификатором — сопоставление лежит в самой странице.
+    """
+    for key, request in page.requests.items():
+        if request.id == event.match.request_id:
+            return key
+    return f"#{event.match.request_id}"
+
+
+def _event_note(event) -> str:
+    """Вторая строка события: чем оно отличается от вчерашнего.
+
+    «Подешевело с 225 000 $» — ровно тот факт, ради которого этот срез
+    и появился: без него квартира стояла на 150-м месте из 627.
+    """
+    parts = [EVENT_LABELS[event.kind]]
+    if event.kind == CHEAPER and event.price_before is not None:
+        parts[0] = f"подешевело с {money(event.price_before)}"
+    if event.listing.status == "gone":
+        parts.append("снято с ленты")
+    if event.match.cluster_size and event.match.cluster_size > 1:
+        spread = (f", разброс {money(event.match.cluster_spread_usd)}"
+                  if event.match.cluster_spread_usd is not None else "")
+        parts.append(
+            f"{event.match.cluster_size} "
+            + _plural(event.match.cluster_size, "объявление", "объявления",
+                      "объявлений")
+            + spread
+        )
+    return " · ".join(parts)
