@@ -424,8 +424,9 @@ PYTHONIOENCODING=utf-8 .venv/Scripts/python.exe -m listam changes --hours 24
 тронулось с отметки» и журнал отправок. Домен учится отличать «новый» от
 «подешевел», «вернулся» и «закрылся». Наружу ещё ничего не шлётся.
 
-**Ожидается после фазы:** **712 passed, 18 skipped**, схема базы **10**
-(687 плюс 25 тестов фазы: 2 миграции, 11 контрактных, 12 доменных).
+**Ожидается после фазы:** **711 passed, 18 skipped**, схема базы **10**
+(687 плюс 24 теста фазы: 2 миграции, 11 контрактных, 11 доменных — число
+пересчитано по факту, см. «Результат фазы 2»).
 
 ### Задача 2.1. Миграция 010
 
@@ -434,7 +435,7 @@ PYTHONIOENCODING=utf-8 .venv/Scripts/python.exe -m listam changes --hours 24
 - Изменить: `listam/domain/models.py`
 - Тест: `tests/test_migrations.py`
 
-- [ ] **Шаг 1: падающий тест на миграцию**
+- [x] **Шаг 1: падающий тест на миграцию**
 
 ```python
 # tests/test_migrations.py — дописать в конец
@@ -480,7 +481,7 @@ def test_migration_010_keeps_what_was_in_the_base(tmp_path):
     database.close()
 ```
 
-- [ ] **Шаг 2: убедиться, что тесты падают**
+- [x] **Шаг 2: убедиться, что тесты падают**
 
 ```bash
 .venv/Scripts/python.exe -m pytest -q tests/test_migrations.py -k 010
@@ -488,7 +489,7 @@ def test_migration_010_keeps_what_was_in_the_base(tmp_path):
 
 Ожидается FAIL: `assert 9 == 10` — миграции 010 нет.
 
-- [ ] **Шаг 3: написать миграцию**
+- [x] **Шаг 3: написать миграцию**
 
 ```sql
 -- listam/migrations/010_notifications.sql
@@ -523,7 +524,7 @@ CREATE INDEX IF NOT EXISTS idx_notifications_kind ON notifications(kind, sent_at
 ALTER TABLE matches ADD COLUMN revived_at TEXT;
 ```
 
-- [ ] **Шаг 4: поле в модели**
+- [x] **Шаг 4: поле в модели**
 
 ```python
 # listam/domain/models.py — в dataclass Match, после retired_reason
@@ -548,7 +549,7 @@ class Notification:
     notes: str | None = None
 ```
 
-- [ ] **Шаг 5: тесты проходят**
+- [x] **Шаг 5: тесты проходят**
 
 ```bash
 .venv/Scripts/python.exe -m pytest -q tests/test_migrations.py
@@ -556,7 +557,7 @@ class Notification:
 
 Ожидается PASS.
 
-- [ ] **Шаг 6: коммит**
+- [x] **Шаг 6: коммит**
 
 ```bash
 git add listam/migrations/010_notifications.sql listam/domain/models.py tests/test_migrations.py
@@ -569,7 +570,7 @@ git commit -m "feat(db): миграция 010 — журнал уведомле�
 - Изменить: `listam/adapters/db_sqlite.py:592-707`
 - Тест: `tests/contracts/test_database_contract.py`
 
-- [ ] **Шаг 1: падающие тесты контракта**
+- [x] **Шаг 1: падающие тесты контракта**
 
 ```python
 # tests/contracts/test_database_contract.py — дописать
@@ -625,7 +626,7 @@ def test_a_batch_revival_is_marked_too(db):
     assert db.matches_for_request(request.id)[0].revived_at == EVEN_LATER
 ```
 
-- [ ] **Шаг 2: убедиться, что тесты падают**
+- [x] **Шаг 2: убедиться, что тесты падают**
 
 ```bash
 .venv/Scripts/python.exe -m pytest -q tests/contracts/test_database_contract.py -k reviv
@@ -634,7 +635,7 @@ def test_a_batch_revival_is_marked_too(db):
 Ожидается FAIL: `AttributeError: 'Match' object has no attribute 'revived_at'`
 либо `assert None == datetime(...)`.
 
-- [ ] **Шаг 3: отметка в одиночном апсерте**
+- [x] **Шаг 3: отметка в одиночном апсерте**
 
 ```python
 # listam/adapters/db_sqlite.py — в upsert_match, вместо трёх строк
@@ -655,7 +656,7 @@ def test_a_batch_revival_is_marked_too(db):
         updates["id"] = existing["id"]
 ```
 
-- [ ] **Шаг 4: отметка в пачке**
+- [x] **Шаг 4: отметка в пачке**
 
 ```python
 # listam/adapters/db_sqlite.py — в upsert_matches, вместо строки
@@ -672,7 +673,7 @@ def test_a_batch_revival_is_marked_too(db):
             )
 ```
 
-- [ ] **Шаг 5: `revived_at` читается из строки**
+- [x] **Шаг 5: `revived_at` читается из строки**
 
 ```python
 # listam/adapters/db_sqlite.py — в _row_to_match, рядом с retired_at
@@ -683,7 +684,7 @@ def test_a_batch_revival_is_marked_too(db):
 `Match(...)`; `MATCH_FIELDS` и `MATCH_COMPARED` **не трогаются** — `revived_at`
 не вычисляется пересчётом и в сравнение «то же самое?» не входит.
 
-- [ ] **Шаг 6: тесты проходят**
+- [x] **Шаг 6: тесты проходят**
 
 ```bash
 .venv/Scripts/python.exe -m pytest -q tests/contracts/test_database_contract.py tests/test_matching.py
@@ -692,7 +693,7 @@ def test_a_batch_revival_is_marked_too(db):
 Ожидается PASS целиком: правки не должны сдвинуть ни один тест фаз 1 и 3
 QA-плана (`unchanged` остаётся `unchanged`).
 
-- [ ] **Шаг 7: коммит**
+- [x] **Шаг 7: коммит**
 
 ```bash
 git add listam/adapters/db_sqlite.py tests/contracts/test_database_contract.py
@@ -705,7 +706,7 @@ git commit -m "feat(db): воскресший матч помнит дату в�
 - Изменить: `listam/ports/database.py`, `listam/adapters/db_sqlite.py`
 - Тест: `tests/contracts/test_database_contract.py`
 
-- [ ] **Шаг 1: падающие тесты контракта**
+- [x] **Шаг 1: падающие тесты контракта**
 
 ```python
 # tests/contracts/test_database_contract.py — дописать
@@ -781,7 +782,7 @@ def test_match_events_do_not_reach_past_the_window(db):
     assert db.match_events_since(NOW, LATER) == []
 ```
 
-- [ ] **Шаг 2: убедиться, что тесты падают**
+- [x] **Шаг 2: убедиться, что тесты падают**
 
 ```bash
 .venv/Scripts/python.exe -m pytest -q tests/contracts/test_database_contract.py -k match_events
@@ -789,7 +790,7 @@ def test_match_events_do_not_reach_past_the_window(db):
 
 Ожидается FAIL: `AttributeError: 'SqliteDatabase' object has no attribute 'match_events_since'`.
 
-- [ ] **Шаг 3: метод порта**
+- [x] **Шаг 3: метод порта**
 
 ```python
 # listam/ports/database.py — после matches_with_listings
@@ -815,7 +816,7 @@ def test_match_events_do_not_reach_past_the_window(db):
         """
 ```
 
-- [ ] **Шаг 4: реализация**
+- [x] **Шаг 4: реализация**
 
 ```python
 # listam/adapters/db_sqlite.py — после matches_with_listings
@@ -864,7 +865,7 @@ def test_match_events_do_not_reach_past_the_window(db):
         return events
 ```
 
-- [ ] **Шаг 5: тесты проходят**
+- [x] **Шаг 5: тесты проходят**
 
 ```bash
 .venv/Scripts/python.exe -m pytest -q tests/contracts/test_database_contract.py
@@ -872,7 +873,7 @@ def test_match_events_do_not_reach_past_the_window(db):
 
 Ожидается PASS.
 
-- [ ] **Шаг 6: коммит**
+- [x] **Шаг 6: коммит**
 
 ```bash
 git add listam/ports/database.py listam/adapters/db_sqlite.py tests/contracts/test_database_contract.py
@@ -885,7 +886,7 @@ git commit -m "feat(db): выборка матчей, которых косну�
 - Изменить: `listam/ports/database.py`, `listam/adapters/db_sqlite.py`
 - Тест: `tests/contracts/test_database_contract.py`
 
-- [ ] **Шаг 1: падающие тесты контракта**
+- [x] **Шаг 1: падающие тесты контракта**
 
 ```python
 # tests/contracts/test_database_contract.py — дописать
@@ -919,7 +920,7 @@ def test_the_journal_answers_none_before_the_first_send(db):
     assert db.last_notification("digest") is None
 ```
 
-- [ ] **Шаг 2: убедиться, что тесты падают**
+- [x] **Шаг 2: убедиться, что тесты падают**
 
 ```bash
 .venv/Scripts/python.exe -m pytest -q tests/contracts/test_database_contract.py -k notification
@@ -927,7 +928,7 @@ def test_the_journal_answers_none_before_the_first_send(db):
 
 Ожидается FAIL: `AttributeError: … 'record_notification'`.
 
-- [ ] **Шаг 3: методы порта**
+- [x] **Шаг 3: методы порта**
 
 ```python
 # listam/ports/database.py — после count_matches
@@ -955,7 +956,7 @@ def test_the_journal_answers_none_before_the_first_send(db):
 from listam.domain.models import Listing, Match, Notification, PricePoint, Request, Run
 ```
 
-- [ ] **Шаг 4: реализация**
+- [x] **Шаг 4: реализация**
 
 ```python
 # listam/adapters/db_sqlite.py — после count_matches
@@ -995,7 +996,7 @@ from listam.domain.models import Listing, Match, Notification, PricePoint, Reque
 from listam.domain.models import Listing, Match, Notification, PricePoint, Request, Run
 ```
 
-- [ ] **Шаг 5: тесты проходят**
+- [x] **Шаг 5: тесты проходят**
 
 ```bash
 .venv/Scripts/python.exe -m pytest -q tests/contracts/test_database_contract.py
@@ -1003,7 +1004,7 @@ from listam.domain.models import Listing, Match, Notification, PricePoint, Reque
 
 Ожидается PASS.
 
-- [ ] **Шаг 6: коммит**
+- [x] **Шаг 6: коммит**
 
 ```bash
 git add listam/ports/database.py listam/adapters/db_sqlite.py tests/contracts/test_database_contract.py
@@ -1016,7 +1017,7 @@ git commit -m "feat(db): журнал отправленных уведомле�
 - Создать: `listam/domain/events.py`
 - Тест: `tests/test_events.py`
 
-- [ ] **Шаг 1: падающие тесты домена**
+- [x] **Шаг 1: падающие тесты домена**
 
 ```python
 # tests/test_events.py
@@ -1127,7 +1128,7 @@ def test_limited_without_a_ceiling_shows_everything():
     assert len(shown) == total == 1
 ```
 
-- [ ] **Шаг 2: убедиться, что тесты падают**
+- [x] **Шаг 2: убедиться, что тесты падают**
 
 ```bash
 .venv/Scripts/python.exe -m pytest -q tests/test_events.py
@@ -1135,7 +1136,7 @@ def test_limited_without_a_ceiling_shows_everything():
 
 Ожидается FAIL: `ModuleNotFoundError: No module named 'listam.domain.events'`.
 
-- [ ] **Шаг 3: написать домен**
+- [x] **Шаг 3: написать домен**
 
 ```python
 # listam/domain/events.py
@@ -1255,7 +1256,7 @@ def limited(events: list[MatchEvent], per_request: int | None
     return events[:per_request], len(events)
 ```
 
-- [ ] **Шаг 4: тесты проходят**
+- [x] **Шаг 4: тесты проходят**
 
 ```bash
 .venv/Scripts/python.exe -m pytest -q tests/test_events.py
@@ -1263,7 +1264,7 @@ def limited(events: list[MatchEvent], per_request: int | None
 
 Ожидается PASS (12 тестов).
 
-- [ ] **Шаг 5: коммит**
+- [x] **Шаг 5: коммит**
 
 ```bash
 git add listam/domain/events.py tests/test_events.py
@@ -1272,16 +1273,16 @@ git commit -m "feat(domain): классификация событий матч�
 
 ### Конец фазы 2
 
-- [ ] Батарея: `.venv/Scripts/python.exe -m pytest -q` → ожидается
+- [x] Батарея: `.venv/Scripts/python.exe -m pytest -q` → ожидается
       **712 passed, 18 skipped**.
-- [ ] Проверить схему на базе замера фазы 1:
+- [x] Проверить схему на базе замера фазы 1:
       `PYTHONIOENCODING=utf-8 .venv/Scripts/python.exe -m listam doctor --no-network`
       → «Схема базы … версия 10». Записать время миграции на боевых числах
       (эталон: 008 и 009 шли 0,06 с — объём базы ничего не решает).
-- [ ] Дописать «Результат фазы 2»: что сделано, числа батареи, что разошлось
+- [x] Дописать «Результат фазы 2»: что сделано, числа батареи, что разошлось
       с планом и почему.
-- [ ] Дописать стартовый промпт для фазы 3.
-- [ ] Коммит.
+- [x] Дописать стартовый промпт для фазы 3.
+- [x] Коммит.
 
 ---
 
@@ -4158,6 +4159,193 @@ MATCH_COMPARED не расширяется.
 
 В конце сессии допиши в план раздел «Результат фазы 2»: что сделано, числа
 батареи, что разошлось с планом и почему, и стартовый промпт для фазы 3.
+Сделай коммит.
+```
+
+---
+
+## Результат фазы 2
+
+**Главное одной строкой: доменный фильтр превращает 13 216 «тронутых» строк
+в 38 событий.** На последнем шаге ленты базы потока (`data/listam-flow.sqlite`)
+`match_events_since` вернула 13 216 строк — ровно тот шум, о котором
+предупреждала фаза 1, — а `events_for(..., min_score=70)` оставила 38: 36 новых
+матчей и 2 закрытия. Находка фазы 1 закрыта тестом
+`test_a_match_that_only_got_recounted_is_not_an_event`: пересчёт событием
+не считается.
+
+Батарея `.venv/Scripts/python.exe -m pytest -q` → **711 passed, 18 skipped**
+(40,41 с). Схема базы — **10**. Пять коммитов, `git diff --stat c4b5ab6..HEAD`:
+593 строки в 8 файлах.
+
+### Что сделано
+
+| Задача | Что появилось |
+| --- | --- |
+| 2.1 | `listam/migrations/010_notifications.sql`: таблица `notifications`, индекс `idx_notifications_kind`, колонка `matches.revived_at`. В моделях — `Match.revived_at` и dataclass `Notification` |
+| 2.2 | `upsert_match` и `upsert_matches` ставят `revived_at`, когда гасят `retired_at`; `_row_to_match` её читает. `MATCH_FIELDS` и `MATCH_COMPARED` не тронуты |
+| 2.3 | `Database.match_events_since(since, until, request_id=None)` → `(Match, Listing, price_before)`, один запрос с подзапросом за ценой до окна |
+| 2.4 | `Database.record_notification` / `last_notification(kind)`: журнал отправок, виды не смешиваются |
+| 2.5 | `listam/domain/events.py`: `classify`, `events_for`, `limited`, `MatchEvent`, `EVENT_LABELS`. Чистые функции |
+
+Тестов добавлено 24: 2 на миграцию, 11 контрактных, 11 доменных.
+
+### Схема на боевой базе
+
+```
+.venv/Scripts/python.exe -c "... d.migrate() ..."   # data/listam-m3.sqlite
+миграция 009 -> 10: 0.05 с
+объявлений: 20842
+матчей: 51548
+строк в notifications: 0
+матчей с revived_at: 0
+
+PYTHONIOENCODING=utf-8 python -m listam --config-dir <SCRATCH>/config doctor --no-network
+OK    Схема базы       рабочий файл data\listam-m3.sqlite: версия 10, код ждёт 10;
+                       таблицы: contacts, listings, matches, notifications,
+                       price_history, requests, runs
+Всё на месте — можно запускать прогон.
+```
+
+0,05 с на 51 548 матчах — эталон 008/009 (0,06 с) подтверждён: `ALTER TABLE …
+ADD COLUMN` не зависит от объёма базы.
+
+### Выборка против шума: шесть шагов ленты
+
+База потока фазы 1 домигрирована до 10 и прогнана по тем же шести окнам
+(`match_events_since` + `classify`, порог `hot` = 70, в конфиге не поднимался):
+
+```
+шаг 1: строк     18  события {}                            hot 0
+шаг 2: строк   7741  события {'new': 571, 'retired': 136}  hot 554
+шаг 3: строк     17  события {'new': 6}                    hot 3
+шаг 4: строк    179  события {'new': 60, 'retired': 29}    hot 72
+шаг 5: строк   4174  события {'retired': 1, 'new': 13}     hot 9
+шаг 6: строк  13216  события {'new': 59, 'retired': 2}     hot 38
+```
+
+Столбец «строк» — сырьё порта, «события» — приговор домена. Сходится с таблицей
+фазы 1 построчно: шаг 6 — это 13 155 «обновлённых» + 59 новых + 2 закрытия.
+Шум 13 155 отсечён полностью, ни одно настоящее событие не потеряно.
+
+Сумма за шесть шагов: 709 новых и 168 закрытий против 710 и 168 у фазы 1.
+Один новый матч не попал в окно шага 2: его `first_matched_at` совпал с границей
+окна, а нижняя граница строгая (`since < when <= until`) — так и задумано,
+он ушёл в предыдущее окно.
+
+### Находка фазы: «подешевел» на базах фазы 1 не меряется
+
+Вид `cheaper` **ноль на всех шести шагах**, хотя лента принесла 101 смену цены.
+Причина не в коде:
+
+```
+price_history seen_at: ('2026-09-21T09:37:00+00:00', '2026-09-22T05:44:00+00:00', 20943)
+matches matched_at   : ('2026-09-22T14:39:03.062525+00:00', '2026-09-22T14:41:43.653485+00:00')
+объявлений с >1 точкой: 99
+```
+
+История цен живёт на оси выгрузок, матчи — на оси прогона замера. Любое окно
+по `matched_at` целиком позже всей истории, поэтому `price_before` — последняя
+цена и есть, и падения не видно никогда. То же у `data/listam-m3.sqlite`.
+
+Спека предупреждала, что база приёмки обязана иметь наполненный `price_history`.
+Этого мало: **отметки матчей и точки истории должны лежать на одной оси
+времени**, то есть база приёмки строится циклами `scrape && match`, а не заливкой
+выгрузок с последующим подбором. Для фазы 7 это условие, а не пожелание.
+Сейчас `cheaper` закрыт только модульным тестом
+(`test_a_match_whose_listing_got_cheaper_is_an_event`).
+
+`revived` на этих базах тоже ноль, но по другой причине и без последствий:
+колонки `revived_at` во время замера фазы 1 ещё не было, а закрытые матчи
+за шесть шагов не возвращались.
+
+### Что разошлось с планом
+
+| Что | Как в плане | Как вышло |
+| --- | --- | --- |
+| Батарея | 712 passed | **711 passed, 18 skipped**. В блоке `tests/test_events.py` самого плана 11 тестов, а не 12 (арифметика фазы: 687 + 2 + 11 + 11 = 711). Ни один тест не потерян — пересчитано число, как и велит общее ограничение |
+| `tests/test_migrations.py` | не упоминается | `test_migration_009_remembers_when_a_request_was_matched` держал `assert schema_version() == 9` и упал на `10 == 9`. Ослаблен до `>= 9` — ровно так, как соседний тест 008 уже ослаблен до `>= 8`. Это не подгонка: тест проверяет колонку `requests.matched_at`, а не номер последней миграции |
+| INSERT в тесте 010 | `INSERT INTO listings (id, url, status)` | падал на `NOT NULL constraint failed: listings.first_seen`. Добавлены `first_seen` и `last_seen` |
+| Конфиг замера | копия `config/dev.yaml` в `TMPDIR` | она же, но в scratchpad сессии: `TMPDIR` фазы 1 не пережил смену сессии. Репозиторный `config/dev.yaml` не тронут |
+| База потока | в плане не участвует | домигрирована до 10, чтобы прогнать выборку по настоящим окнам. Без неё числа отчёта были бы взяты из головы |
+
+### Открытые вопросы фазе 3
+
+1. **Порог не режет закрытия — и это видно в числах.** На шаге 4 событий
+   с порогом 72, а новых всего 60: 29 закрытий проходят мимо порога по правилу
+   `events_for`. Витрине `matches --new` надо решить, показывать ли закрытия
+   там же или отдельным разделом, как это делает дайджест.
+2. **`match_events_since` без `request_id` читает окно по всем заявкам.**
+   На шаге 6 это 13 216 строк с полным JOIN карточек. Потолок из задачи 3.1
+   обязан дойти до выборки, иначе повторится долг фазы 8.
+3. **`price_before` считается подзапросом на каждую строку.** Отдельно это
+   не замерялось: весь прогон шести шагов уложился в секунды. Фазе 3 стоит
+   замерить выборку на полном окне и записать время.
+
+---
+
+## Стартовый промпт фазы 3
+
+```
+Ты продолжаешь работу над инструментом мониторинга list.am
+в C:\Users\Artur.A.Gevorgyan\Downloads\new_project.
+
+Прочитай docs/superpowers/plans/2026-09-22-m3-notifications.md:
+разделы «Global Constraints», «Карта файлов», «Результат фазы 1»,
+«Результат фазы 2» и свою «Фазу 3». Чужие фазы не трогай. Рядом лежит спека:
+docs/superpowers/specs/2026-09-22-m3-notifications-design.md — решения 1–12
+в фазах не пересматриваются. Решения 1–11 спеки M2
+(docs/superpowers/specs/2026-09-22-m2-requests-and-matching-design.md)
+тоже в силе.
+
+Исходное состояние: HEAD `<хэш коммита отчёта фазы 2>`, дерево чистое,
+батарея 711 passed, 18 skipped, схема базы 10. База для замеров —
+data/listam-m3.sqlite (20 842 объявления, 51 548 матчей, схема уже 10);
+база потока по шагам ленты — data/listam-flow.sqlite (тоже схема 10);
+заявки — data/requests-m3.csv; конфиг замера — копия config/dev.yaml вне
+репозитория с подменёнными storage.db_filename, storage.directory и
+requests.path, запуск через --config-dir. Репозиторный config/dev.yaml
+фазы 1 и 2 не трогали.
+
+Твоя задача — фаза 3: витрина. Счётчик `count_matches_alive` отдельно от
+выборки, потолок доходит до SQL, `matches` отдаёт страницу вместо списка,
+флаг `matches --new` печатает срез «что нового со вчера» в терминал.
+Наружу по-прежнему ничего не шлётся: `listam/notifications.py` в этой фазе
+получает только `window_for`.
+
+Чем фаза 2 меняет твою работу:
+
+* Выборка событий уже есть — `Database.match_events_since(since, until,
+  request_id=None)` отдаёт `(Match, Listing, price_before)`. Классификация
+  тоже: `listam/domain/events.py` — `classify`, `events_for`, `limited`,
+  `EVENT_LABELS`. Своих правил «что такое новое» не заводи, `--new` питается
+  этими функциями (решение 10 спеки: одна выборка — две подачи).
+* Порог не режет закрытия. `events_for` пропускает `retired` мимо `min_score`,
+  поэтому событий на шаге ленты бывает больше, чем прошедших порог новых.
+  Реши явно, как витрина показывает закрытия, и закрой это тестом.
+* `match_events_since` без `request_id` читает окно по всем заявкам: на
+  замеренном шаге это 13 216 строк с полным JOIN карточек. Долг фазы 8
+  (50 633 строки за 4,0 с) повторится, если потолок снова не дойдёт
+  до выборки. Замерь время на полном окне и запиши число.
+* Вид события `cheaper` на обеих базах замера не воспроизводится: история цен
+  и отметки матчей лежат на разных осях времени. Если витрина должна его
+  показать — проверяй модульным тестом, а не боевым прогоном; боевая проверка
+  ждёт фазы 7.
+
+Работай по шагам задач: на каждое поведение — падающий тест ДО правки.
+Тесты гоняй только .venv/Scripts/python.exe -m pytest -q, любой прогон CLI
+из скрипта — только с PYTHONIOENCODING=utf-8. Пороги в конфиге не поднимай.
+Новый метод порта — это новый контрактный тест в tests/contracts/.
+Схему не трогай вовсе: миграция в этом плане одна, и она уже накачена.
+След звонка (matches.status, matches.reject_reason) не трогает ничто,
+MATCH_COMPARED не расширяется.
+Ни одного числа в отчёте без команды, которая его напечатала.
+
+Ожидается после фазы: число из раздела «Ожидается после фазы» твоей фазы;
+пересчитай его от 711 и поправь в плане, если разойдётся.
+
+В конце сессии допиши в план раздел «Результат фазы 3»: что сделано, числа
+батареи, что разошлось с планом и почему, и стартовый промпт для фазы 4.
 Сделай коммит.
 ```
 
