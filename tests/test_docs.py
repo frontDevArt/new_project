@@ -82,3 +82,15 @@ def test_readme_names_the_scoring_thresholds_that_the_config_ships_with():
 
     for value in (thresholds["hot"], thresholds["digest"]):
         assert str(value) in README
+
+
+def test_readme_says_which_commands_migrate_the_base():
+    """Приёмка фазы 8 QA: `match --all` на схеме 7 не отказал, а накатил
+    миграции и поехал. `doctor` при этом говорил «запускать рано».
+    Ни план, ни README этого не говорили."""
+    assert "мигрируют базу сами" in README
+    assert "python -m listam recheck" in README
+    for command in ("scrape", "cluster", "requests", "match", "notify"):
+        assert f"`{command}`" in README.split("мигрируют базу сами")[1][:600], (
+            f"абзац о самомиграции не называет `{command}`"
+        )
