@@ -528,3 +528,18 @@ def test_the_view_does_not_leave_an_empty_base_behind(prepared, capsys):
     assert main(cli_args(prepared) + ["matches"]) == 1
     assert not path.exists()
     assert "базы нет" in capsys.readouterr().err
+
+
+def test_the_notification_reads_through_its_own_session(prepared, monkeypatch):
+    """Под замком одна база — одно соединение. Второе, открытое мимо сессии,
+    видело бы файл, а не то, что сессия в нём держит."""
+    import listam.matches_view as view
+
+    opened = []
+    real = view.open_for_reading
+    monkeypatch.setattr(view, "open_for_reading",
+                        lambda *args, **kwargs: opened.append(args) or real(*args, **kwargs))
+
+    run_notify(prepared, kind="hot", dry_run=True)
+
+    assert opened == []

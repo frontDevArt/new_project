@@ -188,7 +188,8 @@ def run_notify(config: Config, *, kind: str, dry_run: bool = False) -> NotifyRep
             else:
                 page = collect_events(config, since=since, until=until,
                                       min_score=min_score, note=scope,
-                                      include_retired=knobs.include_retired)
+                                      include_retired=knobs.include_retired,
+                                      database=database)
                 calls = page.calls()
                 report.events = len(calls)
                 report.retired = len(page.events) - len(calls)

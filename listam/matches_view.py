@@ -273,7 +273,8 @@ def collect_events(config: Config, *, since, until,
                    external_id: str | None = None,
                    min_score: float | None = None,
                    note: str = "",
-                   include_retired: bool = True) -> EventsPage:
+                   include_retired: bool = True,
+                   database: Database | None = None) -> EventsPage:
     """События окна по активным заявкам. Та же выборка, что у уведомления.
 
     Одна выборка и две подачи (решение 10 спеки): текст сообщения нельзя
@@ -282,11 +283,17 @@ def collect_events(config: Config, *, since, until,
 
     `include_retired=False` — закрытия не отдаются: так их просит «горячее»
     (никогда) и дайджест с `notify.digest.include_retired: false`.
+
+    `database` — открытая база сессии: уведомление под замком читает ею,
+    а не вторым соединением мимо сессии. Без неё витрина открывает базу
+    сама и сама же закрывает.
     """
     if min_score is None:
         min_score = settings(config).digest
 
-    database = open_for_reading(config, "События")
+    own = database is None
+    if own:
+        database = open_for_reading(config, "События")
     try:
         if external_id is None:
             requests = list(database.iter_requests())
@@ -316,7 +323,8 @@ def collect_events(config: Config, *, since, until,
             page.requests[key] = request
         return page
     finally:
-        database.close()
+        if own:
+            database.close()
 
 
 def render_events(page: EventsPage, per_request: int | None,
