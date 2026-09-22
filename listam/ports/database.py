@@ -4,7 +4,7 @@ from __future__ import annotations
 from abc import ABC, abstractmethod
 from datetime import datetime
 
-from listam.domain.models import Listing, PricePoint, Request, Run
+from listam.domain.models import Listing, Match, PricePoint, Request, Run
 
 
 class Database(ABC):
@@ -165,6 +165,46 @@ class Database(ABC):
     @abstractmethod
     def get_request(self, external_id: str) -> Request | None:
         """Заявка по внешнему идентификатору; незнакомая — None, а не ошибка."""
+
+    @abstractmethod
+    def upsert_match(self, match: Match, now: datetime) -> str:
+        """Возвращает 'new' | 'updated' | 'unchanged'.
+
+        Пересчёт трогает только вычисленное: балл, его разбор и снимок
+        кластера. `status` и `reject_reason` — это след звонка, а не
+        вычисленное значение (решение 7), и затереть их пересчётом нельзя.
+
+        `unchanged` — балл и кластер те же. Отметка пересчёта при этом
+        **не двигается**: `matched_at` отвечает на вопрос «когда это в
+        последний раз стало другим», а не «когда мы последний раз считали».
+
+        Дата рождения матча ставится один раз, при вставке: подорожавшая
+        квартира не становится новой находкой.
+        """
+
+    @abstractmethod
+    def matches_for_request(self, request_id: int, min_score: float | None = None,
+                            limit: int | None = None) -> list[Match]:
+        """Матчи заявки от лучшего к худшему; `min_score` и `limit` сужают список.
+
+        Матч на снятое объявление отсюда не выпадает (решение 8): «мы звонили
+        по этой квартире» переживает уход объявления с ленты, а пометить
+        снятое — дело витрины.
+        """
+
+    @abstractmethod
+    def set_match_status(self, match_id: int, status: str,
+                         reject_reason: str | None = None) -> None:
+        """След звонка: `new` | `sent` | `called` | `rejected` и причина отказа.
+
+        Единственный способ тронуть эти две колонки. Пересчёт их не пишет
+        вовсе, поэтому проставленное человеком не зависит от того, когда
+        в следующий раз посчитают баллы.
+        """
+
+    @abstractmethod
+    def count_matches(self, request_id: int | None = None) -> int:
+        """Сколько матчей в базе; `request_id` сужает до одной заявки."""
 
     @abstractmethod
     def start_run(self, started_at: datetime, rate_amd_per_usd: float | None,

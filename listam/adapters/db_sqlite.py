@@ -1,6 +1,7 @@
 """Реализация Database поверх SQLite. Один файл — вся база, его удобно возить."""
 from __future__ import annotations
 
+import json
 import re
 import sqlite3
 from contextlib import contextmanager
@@ -9,7 +10,7 @@ from datetime import datetime, timezone
 from pathlib import Path
 from typing import Iterator
 
-from listam.domain.models import Listing, PricePoint, Request, Run
+from listam.domain.models import Listing, Match, PricePoint, Request, Run
 from listam.ports.database import Database
 
 MIGRATIONS_DIR = Path(__file__).resolve().parent.parent / "migrations"
@@ -37,6 +38,14 @@ REQUEST_FIELDS = (
     "floor_min", "floor_max", "no_first_floor", "no_last_floor",
     "must_have", "nice_to_have", "floor_rules", "notes",
 )
+
+# Поля матча, которые считает пересчёт. `status` и `reject_reason` сюда
+# не входят и входить не могут: это след звонка, а не вычисленное значение
+# (решение 7 спеки). Их пишет только `set_match_status`.
+MATCH_FIELDS = (
+    "score", "breakdown", "cluster_id", "cluster_size", "cluster_spread_usd", "run_id",
+)
+
 
 # Списки в TEXT-колонках: базе они нужны цельными, а не отдельной таблицей —
 # по ним не ищут, их читают вместе с заявкой.
@@ -518,6 +527,89 @@ class SqliteDatabase(Database):
         ).fetchone()
         return _row_to_request(row) if row else None
 
+    # --- матчи ------------------------------------------------------------
+    def upsert_match(self, match: Match, now: datetime) -> str:
+        """Пишет вычисленное и не трогает след звонка (решение 7).
+
+        `status` и `reject_reason` в списке присвоений отсутствуют физически,
+        а не «сохраняются по условию»: колонку, которой нет в UPDATE, нельзя
+        затереть случайной правкой этого метода.
+        """
+        values = {name: _match_value(match, name) for name in MATCH_FIELDS}
+        existing = self.conn.execute(
+            "SELECT * FROM matches WHERE request_id = ? AND listing_id = ?",
+            (match.request_id, match.listing_id),
+        ).fetchone()
+
+        if existing is None:
+            values["request_id"] = match.request_id
+            values["listing_id"] = match.listing_id
+            values["status"] = match.status or "new"
+            values["reject_reason"] = match.reject_reason
+            values["first_matched_at"] = to_iso(now)
+            values["matched_at"] = to_iso(now)
+            columns = ", ".join(values)
+            placeholders = ", ".join(f":{name}" for name in values)
+            with self.transaction():
+                self.conn.execute(
+                    f"INSERT INTO matches ({columns}) VALUES ({placeholders})", values
+                )
+            return "new"
+
+        same = all(
+            _normalize(values[name]) == _normalize(existing[name])
+            for name in MATCH_FIELDS
+        )
+        if same:
+            # Балл и кластер те же — отметку пересчёта не двигаем: иначе
+            # ночной пересчёт выглядел бы как обновление всех матчей разом.
+            return "unchanged"
+
+        updates = dict(values)
+        updates["matched_at"] = to_iso(now)
+        updates["id"] = existing["id"]
+        assignments = ", ".join(f"{name} = :{name}" for name in updates if name != "id")
+        with self.transaction():
+            self.conn.execute(
+                f"UPDATE matches SET {assignments} WHERE id = :id", updates
+            )
+        return "updated"
+
+    def matches_for_request(self, request_id: int, min_score: float | None = None,
+                            limit: int | None = None) -> list[Match]:
+        """От лучшего к худшему; при равных баллах — по объявлению.
+
+        Второй ключ сортировки не украшение: без него порядок выдачи зависит
+        от того, в каком порядке sqlite прочитал страницы, и «первые пять»
+        из двадцати одинаковых баллов каждый раз разные.
+        """
+        query = "SELECT * FROM matches WHERE request_id = ?"
+        params: list = [request_id]
+        if min_score is not None:
+            query += " AND score >= ?"
+            params.append(float(min_score))
+        query += " ORDER BY score DESC, listing_id"
+        if limit is not None:
+            query += " LIMIT ?"
+            params.append(int(limit))
+        return [_row_to_match(row) for row in self.conn.execute(query, tuple(params))]
+
+    def set_match_status(self, match_id: int, status: str,
+                         reject_reason: str | None = None) -> None:
+        with self.transaction():
+            self.conn.execute(
+                "UPDATE matches SET status = ?, reject_reason = ? WHERE id = ?",
+                (status, reject_reason, int(match_id)),
+            )
+
+    def count_matches(self, request_id: int | None = None) -> int:
+        query = "SELECT COUNT(*) AS n FROM matches"
+        params: tuple = ()
+        if request_id is not None:
+            query += " WHERE request_id = ?"
+            params = (request_id,)
+        return int(self.conn.execute(query, params).fetchone()["n"])
+
     # --- журнал прогонов -------------------------------------------------
     def start_run(self, started_at: datetime, rate_amd_per_usd: float | None,
                   mode: str = "full") -> int:
@@ -769,3 +861,38 @@ def _row_to_request(row: sqlite3.Row) -> Request:
     data["updated_at"] = from_iso(data.get("updated_at"))
     known = {f.name for f in dataclass_fields(Request)}
     return Request(**{k: v for k, v in data.items() if k in known})
+
+
+def _match_value(match: Match, name: str):
+    """Поле матча в том виде, в каком оно лежит в базе: разбор балла — JSON."""
+    value = getattr(match, name)
+    if name == "breakdown":
+        # `sort_keys` — чтобы одинаковый разбор давал одинаковую строку:
+        # иначе перестановка ключей в словаре выглядела бы как правка балла.
+        return json.dumps(value, ensure_ascii=False, sort_keys=True) if value else None
+    if name == "cluster_size":
+        return int(value or 1)
+    return value
+
+
+def _row_to_match(row: sqlite3.Row) -> Match:
+    """Строка базы в матч. Кортежи `(набрано, вес)` возвращаются списками.
+
+    Приводить их обратно к кортежам не надо: в базе разбор балла — данные
+    для человека, а не структура, по которой считают.
+    """
+    return Match(
+        id=row["id"],
+        request_id=row["request_id"],
+        listing_id=row["listing_id"],
+        score=row["score"],
+        matched_at=from_iso(row["matched_at"]),
+        first_matched_at=from_iso(row["first_matched_at"]),
+        status=row["status"] or "new",
+        reject_reason=row["reject_reason"],
+        run_id=row["run_id"],
+        breakdown=json.loads(row["breakdown"]) if row["breakdown"] else None,
+        cluster_id=row["cluster_id"],
+        cluster_size=row["cluster_size"] or 1,
+        cluster_spread_usd=row["cluster_spread_usd"],
+    )

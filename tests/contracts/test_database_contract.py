@@ -6,7 +6,7 @@ from datetime import datetime, timezone
 import pytest
 
 from listam.adapters.db_sqlite import SqliteDatabase
-from listam.domain.models import Listing, Request
+from listam.domain.models import Listing, Match, Request
 from listam.ports.database import Database
 
 NOW = datetime(2026, 9, 21, 10, 0, tzinfo=timezone.utc)
@@ -677,3 +677,115 @@ def test_matching_since_a_mark_takes_only_what_appeared_after_it(db):
     db.upsert_listing(make_listing("1"), NOW)
     db.upsert_listing(make_listing("2"), EVEN_LATER)
     assert [item.id for item in db.listings_for_matching(since=LATER)] == ["2"]
+
+
+# --- матчи --------------------------------------------------------------
+def stored_request(db, external_id="R-1"):
+    db.upsert_request(make_request(external_id), NOW)
+    return db.get_request(external_id)
+
+
+def test_a_new_match_is_stored_with_both_timestamps(db):
+    request = stored_request(db)
+    db.upsert_listing(make_listing("1"), NOW)
+    assert db.upsert_match(Match(request_id=request.id, listing_id="1", score=82.0,
+                                 breakdown={"budget": [30, 30]}), NOW) == "new"
+    match = db.matches_for_request(request.id)[0]
+    assert match.first_matched_at == NOW and match.matched_at == NOW
+    assert match.breakdown == {"budget": [30, 30]}
+
+
+def test_rematching_updates_the_score_and_keeps_the_birthday(db):
+    request = stored_request(db)
+    db.upsert_listing(make_listing("1"), NOW)
+    db.upsert_match(Match(request_id=request.id, listing_id="1", score=82.0), NOW)
+    assert db.upsert_match(Match(request_id=request.id, listing_id="1", score=91.0),
+                           LATER) == "updated"
+    match = db.matches_for_request(request.id)[0]
+    assert match.score == 91.0
+    assert match.first_matched_at == NOW
+    assert match.matched_at == LATER
+
+
+def test_a_status_set_by_a_human_survives_the_recount(db):
+    # Решение 7: статус — это след звонка, а не вычисленное значение.
+    request = stored_request(db)
+    db.upsert_listing(make_listing("1"), NOW)
+    db.upsert_match(Match(request_id=request.id, listing_id="1", score=82.0), NOW)
+    match = db.matches_for_request(request.id)[0]
+    db.set_match_status(match.id, "called", reject_reason="первый этаж не смотрим")
+    db.upsert_match(Match(request_id=request.id, listing_id="1", score=91.0), LATER)
+    after = db.matches_for_request(request.id)[0]
+    assert after.status == "called"
+    assert after.reject_reason == "первый этаж не смотрим"
+    assert after.score == 91.0
+
+
+def test_the_same_match_twice_is_not_a_change(db):
+    request = stored_request(db)
+    db.upsert_listing(make_listing("1"), NOW)
+    db.upsert_match(Match(request_id=request.id, listing_id="1", score=82.0), NOW)
+    assert db.upsert_match(Match(request_id=request.id, listing_id="1", score=82.0),
+                           LATER) == "unchanged"
+
+
+def test_an_unchanged_match_does_not_move_the_recount_stamp(db):
+    """«Когда мы это в последний раз видели годным» — не «когда считали»."""
+    request = stored_request(db)
+    db.upsert_listing(make_listing("1"), NOW)
+    db.upsert_match(Match(request_id=request.id, listing_id="1", score=82.0), NOW)
+    db.upsert_match(Match(request_id=request.id, listing_id="1", score=82.0), LATER)
+    assert db.matches_for_request(request.id)[0].matched_at == NOW
+
+
+def test_a_changed_cluster_snapshot_is_an_update_too(db):
+    """Тот же балл, но двойников стало больше — это другой разговор с клиентом."""
+    request = stored_request(db)
+    db.upsert_listing(make_listing("1"), NOW)
+    db.upsert_match(Match(request_id=request.id, listing_id="1", score=82.0,
+                          cluster_id="abc", cluster_size=1), NOW)
+    assert db.upsert_match(Match(request_id=request.id, listing_id="1", score=82.0,
+                                 cluster_id="abc", cluster_size=3,
+                                 cluster_spread_usd=11_000.0), LATER) == "updated"
+    after = db.matches_for_request(request.id)[0]
+    assert after.cluster_size == 3
+    assert after.cluster_spread_usd == 11_000.0
+
+
+def test_matches_come_back_ranked_and_can_be_cut_by_score_and_count(db):
+    request = stored_request(db)
+    for number, value in (("1", 55.0), ("2", 91.0), ("3", 73.0)):
+        db.upsert_listing(make_listing(number), NOW)
+        db.upsert_match(Match(request_id=request.id, listing_id=number, score=value), NOW)
+    assert [m.listing_id for m in db.matches_for_request(request.id)] == ["2", "3", "1"]
+    assert [m.listing_id for m in db.matches_for_request(request.id, min_score=70)] == ["2", "3"]
+    assert len(db.matches_for_request(request.id, limit=1)) == 1
+
+
+def test_matches_of_another_request_do_not_leak_in(db):
+    first = stored_request(db, "R-1")
+    second = stored_request(db, "R-2")
+    db.upsert_listing(make_listing("1"), NOW)
+    db.upsert_match(Match(request_id=first.id, listing_id="1", score=82.0), NOW)
+    assert db.matches_for_request(second.id) == []
+
+
+def test_a_match_on_a_listing_that_went_away_is_kept(db):
+    # Решение 8: «мы звонили по этой квартире» переживает снятие объявления.
+    request = stored_request(db)
+    db.upsert_listing(make_listing("1"), NOW)
+    db.upsert_match(Match(request_id=request.id, listing_id="1", score=82.0), NOW)
+    db.mark_gone(["1"], LATER)
+    assert len(db.matches_for_request(request.id)) == 1
+
+
+def test_matches_are_counted_for_the_whole_base_and_for_one_request(db):
+    first = stored_request(db, "R-1")
+    second = stored_request(db, "R-2")
+    for number in ("1", "2"):
+        db.upsert_listing(make_listing(number), NOW)
+    db.upsert_match(Match(request_id=first.id, listing_id="1", score=82.0), NOW)
+    db.upsert_match(Match(request_id=first.id, listing_id="2", score=55.0), NOW)
+    db.upsert_match(Match(request_id=second.id, listing_id="1", score=61.0), NOW)
+    assert db.count_matches() == 3
+    assert db.count_matches(request_id=first.id) == 2
