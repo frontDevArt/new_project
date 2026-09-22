@@ -29,7 +29,8 @@ def prepared(tmp_path):
     for index in range(3):
         database.upsert_listing(
             Listing(id=str(index), url=f"https://www.list.am/ru/item/{index}",
-                    district="Кентрон", price_usd=100000.0 + index, area=60.0,
+                    district="Кентрон", price_raw=f"${100000 + index:,}",
+                    currency="USD", price_usd=100000.0 + index, area=60.0,
                     rooms=2, status="active"),
             seen_at=NOW,
         )
@@ -139,3 +140,37 @@ def test_closings_are_counted_at_the_bottom_and_not_among_the_options(prepared):
     assert [event.match.listing_id for event in page.events] == ["0"]
     assert "отпало 1 (бюджет 1)" in printed
     assert "https://www.list.am/ru/item/0" not in printed
+
+
+def test_a_cheaper_one_says_what_it_used_to_cost(prepared):
+    """Вид «подешевел» проверяется здесь, а не на боевой базе: там история цен
+    и отметки матчей лежат на разных осях времени (находка фазы 2), и падение
+    цены не видно никогда. Боевая проверка ждёт фазы 7."""
+    database = build_database(prepared)
+    database.connect()
+    request = database.get_request("R-1")
+    # Цена двигается вместе с `price_raw`: `price_usd` — пересчитанное поле,
+    # и без смены сырой цены база считает карточку неизменившейся и новой
+    # точки истории не пишет.
+    database.upsert_listing(
+        Listing(id="0", url="https://www.list.am/ru/item/0", district="Кентрон",
+                price_raw="$90,000", currency="USD", price_usd=90000.0,
+                area=60.0, rooms=2, status="active"),
+        seen_at=NOW + timedelta(hours=2),
+    )
+    # Балл едет вслед за ценой: `matched_at` двигает только смена сравниваемых
+    # полей (`MATCH_COMPARED`), а подешевевшая квартира всегда набирает больше
+    # по бюджету и цене за метр — подбор её пересчитает.
+    database.upsert_matches(
+        [Match(request_id=request.id, listing_id="0", score=95.0)],
+        NOW + timedelta(hours=2),
+    )
+    database.close()
+
+    page = collect_events(prepared, since=NOW + timedelta(hours=1),
+                          until=NOW + timedelta(hours=3))
+
+    printed = render_events(page, per_request=5)
+
+    assert [event.kind for event in page.events] == ["cheaper"]
+    assert "подешевело с $100,000" in printed
