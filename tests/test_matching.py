@@ -14,8 +14,10 @@ from pathlib import Path
 
 import pytest
 
-from listam.config import Config
-from listam.matching import MatchesError, collect_matches, render_matches, run_match
+from listam.config import Config, ConfigError
+from listam.domain.scoring import DEFAULT_WEIGHTS
+from listam.matching import (MatchesError, collect_matches, display_limit,
+                             render_matches, run_match, settings)
 from listam.wiring import build_database
 
 from tests.contracts.test_database_contract import make_listing, make_request
@@ -561,3 +563,26 @@ def test_a_match_whose_listing_left_the_feed_is_not_retired(matching_config_gone
     assert report.retired == 0
     rows = collect_matches(matching_config_gone, external_id="R-1")
     assert [listing.id for _, _, listing in rows] == ["1"]
+
+
+# --- конфиг, который не врёт -------------------------------------------
+
+
+def test_a_misspelled_weight_is_refused_and_not_dropped_from_the_score(tmp_path):
+    config = cfg(tmp_path, match={"weights": {"budjet": 30, "district": 20}})
+    with pytest.raises(ConfigError) as exc:
+        settings(config)
+    assert "budjet" in str(exc.value)
+    assert "budget" in str(exc.value), "отказ обязан назвать, как правильно"
+
+
+def test_a_missing_weight_is_refused_too(tmp_path):
+    config = cfg(tmp_path, match={"weights": {"budget": 30}})
+    with pytest.raises(ConfigError) as exc:
+        settings(config)
+    assert "district" in str(exc.value)
+
+
+def test_a_weight_of_zero_is_a_weight_and_not_an_absence(tmp_path):
+    config = cfg(tmp_path, match={"weights": dict(DEFAULT_WEIGHTS, seller_type=0)})
+    assert settings(config).weights["seller_type"] == 0

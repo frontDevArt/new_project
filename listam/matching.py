@@ -25,7 +25,7 @@ from listam.adapters.db_sqlite import latest_schema_version
 from listam.adapters.run_lock import LockBusy
 from listam.changes import DASH, MINUS, money, per_sqm, since_point
 from listam.clustering_run import area_tolerance, cluster_database
-from listam.config import Config, threshold
+from listam.config import Config, ConfigError, threshold
 from listam.crawler import rotate_backups, take_the_fresher_copy
 from listam.domain.clustering import clusters
 from listam.domain.models import Listing, Match, Request
@@ -84,8 +84,30 @@ class Settings:
 
 
 def settings(config: Config) -> Settings:
-    """Читает секцию `match`. Ноль значит ноль, `null` — выключено."""
+    """Читает секцию `match`. Ноль значит ноль, `null` — выключено.
+
+    Имена факторов проверяются на входе. Опечатка `budjet` вместо `budget`
+    стоит фактору веса 30 и не видна ничем: балл считается, пишется в базу
+    и выглядит правдоподобно — просто он другой. Молчать про это нельзя,
+    как нельзя молчать про `--limit 0`.
+    """
     weights = config.get("match.weights", None)
+    if weights:
+        known = set(DEFAULT_WEIGHTS)
+        unknown = sorted(set(weights) - known)
+        missing = sorted(known - set(weights))
+        if unknown or missing:
+            trouble = []
+            if unknown:
+                trouble.append(f"таких факторов нет: {', '.join(unknown)}")
+            if missing:
+                trouble.append(f"не названы: {', '.join(missing)}")
+            raise ConfigError(
+                f"match.weights — {'; '.join(trouble)}. "
+                f"Факторы балла: {', '.join(sorted(known))}. "
+                f"Вес 0 выключает фактор; убирать его из списка нельзя — "
+                f"молча выпавший фактор меняет балл и не виден ничем."
+            )
     stretch = threshold(config, "match.budget_stretch_percent", DEFAULT_STRETCH_PERCENT)
     hot = threshold(config, "match.thresholds.hot", DEFAULT_HOT)
     digest = threshold(config, "match.thresholds.digest", DEFAULT_DIGEST)

@@ -4,7 +4,7 @@ from __future__ import annotations
 from pathlib import Path
 
 from listam.config import Config
-from listam.doctor import run_doctor
+from listam.doctor import match_check, run_doctor
 
 
 def cfg(tmp_path, **over) -> Config:
@@ -283,10 +283,25 @@ def test_a_zero_area_tolerance_is_listed_and_not_read_as_off(tmp_path):
     assert "area_tolerance = 0" in matching(report).details
 
 
-def test_an_unknown_weight_is_a_warning_because_nothing_will_read_it(tmp_path):
-    """Опечатка в имени фактора молча выбрасывает его вес из балла."""
-    typo = dict(MATCH, weights=dict(MATCH["weights"], distrikt=20))
-    report = run_doctor(cfg(tmp_path, match=typo), check_network=False)
+def test_doctor_calls_a_misspelled_weight_a_failure_and_not_a_warning(tmp_path):
+    """Опечатка в имени фактора молча выбрасывает его вес из балла.
 
-    assert matching(report).warn is True
-    assert "distrikt" in matching(report).details
+    До фазы 5 это было предупреждением: `doctor` говорил «посмотри», а
+    подбор ехал и писал в базу другой балл. Теперь такой конфиг — сбой:
+    `settings` на нём отказывается стартовать, и `doctor` обязан отвечать
+    то же самое, что ответит команда.
+    """
+    config = cfg(tmp_path, match={"weights": {"budjet": 30}})
+    check = match_check(config)
+    assert check.ok is False
+    assert "budjet" in check.details
+
+
+def test_doctor_calls_a_weight_nobody_named_a_failure_too(tmp_path):
+    """Фактор, выпавший из списка, в балл не войдёт — и это не видно ничем."""
+    short = dict(MATCH, weights={"budget": 30, "district": 20})
+    check = match_check(cfg(tmp_path, match=short))
+
+    assert check.ok is False
+    assert "seller_type" in check.details
+    assert "0" in check.details, "отказ обязан сказать, чем фактор выключают"

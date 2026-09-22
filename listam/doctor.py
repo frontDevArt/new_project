@@ -160,11 +160,18 @@ def match_check(config: Config) -> Check:
             "объявлению ставит 0 баллов — витрина будет ранжирована ничем"
         )
 
+    # Сбой, а не предупреждение: `settings` на таком конфиге отказывается
+    # стартовать, и `doctor` обязан отвечать то же самое, что ответит команда.
     unknown = sorted(set(weights) - set(DEFAULT_WEIGHTS))
+    missing = sorted(set(DEFAULT_WEIGHTS) - set(weights))
     if unknown:
-        warn.append(
-            f"вес неизвестного фактора не читается ничем и в балл не войдёт: "
-            f"{', '.join(unknown)}"
+        harm.append(
+            f"таких факторов нет, и их вес в балл не войдёт: {', '.join(unknown)}"
+        )
+    if missing:
+        harm.append(
+            f"фактор не назван и молча выпадет из балла: {', '.join(missing)}. "
+            f"Чтобы выключить — ставь вес 0"
         )
 
     if hot is not None and digest is not None and hot < digest:
