@@ -863,6 +863,17 @@ class SqliteDatabase(Database):
             params = (request_id,)
         return int(self.conn.execute(query, params).fetchone()["n"])
 
+    def count_matches_alive(self, request_id: int, min_score: float | None = None) -> int:
+        """См. порт. Тот же JOIN, что у витрины, но COUNT вместо колонок."""
+        query = ("SELECT COUNT(*) AS n FROM matches m "
+                 " JOIN listings l ON l.id = m.listing_id "
+                 " WHERE m.request_id = ? AND m.retired_at IS NULL")
+        params: list = [request_id]
+        if min_score is not None:
+            query += " AND m.score >= ?"
+            params.append(float(min_score))
+        return int(self.conn.execute(query, tuple(params)).fetchone()["n"])
+
     # --- журнал уведомлений ----------------------------------------------
     def record_notification(self, notification: Notification) -> int:
         with self.transaction():

@@ -292,6 +292,15 @@ class Database(ABC):
         """Сколько матчей в базе; `request_id` сужает до одной заявки."""
 
     @abstractmethod
+    def count_matches_alive(self, request_id: int, min_score: float | None = None) -> int:
+        """Сколько живых матчей заявки выше порога — счётом, без чтения строк.
+
+        Считает ровно то же, что отдала бы `matches_with_listings` без потолка:
+        живые, с карточкой в базе, от порога и выше. Иначе «…и ещё 704»
+        обещало бы человеку строки, которых он не получит.
+        """
+
+    @abstractmethod
     def record_notification(self, notification: Notification) -> int:
         """Записывает успешную отправку и отдаёт её идентификатор.
 
