@@ -10,14 +10,14 @@ import tempfile
 from dataclasses import dataclass, field
 from pathlib import Path
 
-from listam.config import Config, threshold
+from listam.config import Config, ConfigError, threshold
 from listam.crawler import DEFAULT_FRESH_MAX_PAGES, DEFAULT_FRESH_STOP_PAGES, \
     DEFAULT_MAX_GONE, DEFAULT_MAX_PAGES_DROP
 from listam.domain.clustering import DEFAULT_AREA_TOLERANCE
 from listam.domain.scoring import DEFAULT_STRETCH_PERCENT, DEFAULT_WEIGHTS
 from listam.ports.requests_source import EmptyRequestsSource
-from listam.wiring import build_exporter, build_fetcher, build_rate_provider, \
-    build_requests_source, build_storage, database_path
+from listam.wiring import UnknownAdapter, build_exporter, build_fetcher, build_notifier, \
+    build_rate_provider, build_requests_source, build_storage, database_path
 
 
 @dataclass
@@ -225,12 +225,46 @@ def requests_check(config: Config) -> Check:
                  warn=bool(rejected) or not active, details=details)
 
 
+NOTIFY_KINDS = ("hot", "digest", "feed")
+
+
+def notify_check(config: Config) -> Check:
+    """Куда пойдут уведомления и какие виды включены.
+
+    Канал описывает сам адаптер (`Notifier.describe`) — тот же, что соберёт
+    команда `notify`, поэтому сбой сборки здесь и там один и тот же. Пустой
+    секрет при `kind: telegram` — это сбой: команда всё равно откажется слать,
+    и узнать об этом лучше здесь, чем вечером, когда дайджест не пришёл.
+    В сеть проверка не ходит: живая отправка — отдельный явный шаг.
+    """
+    switches = ", ".join(
+        f"{name}: {'вкл' if threshold(config, f'notify.{name}.enabled', True) else 'выкл'}"
+        for name in NOTIFY_KINDS
+    )
+    harm: list[str] = []
+    warn: list[str] = []
+    try:
+        channel = build_notifier(config).describe()
+    except (ConfigError, UnknownAdapter) as exc:
+        channel = f"канал не собирается (notify.kind: {config.get('notify.kind', 'none')})"
+        harm.append(str(exc))
+
+    if str(config.get("notify.kind", "none")) in ("none", "null"):
+        warn.append("канал выключен: уведомления никуда не идут")
+    if all(not threshold(config, f"notify.{name}.enabled", True) for name in NOTIFY_KINDS):
+        warn.append("все три вида выключены — команда notify не пошлёт ничего")
+
+    details = "; ".join([f"{channel}; {switches}"] + harm + warn)
+    return Check(name="Уведомления", ok=not harm, details=details, warn=bool(warn))
+
+
 def run_doctor(config: Config, check_network: bool = True) -> DoctorReport:
     report = DoctorReport()
     report.add("Конфиг", True, f"{config.path} (APP_ENV={config.env})")
     report.checks.append(thresholds_check(config))
     report.checks.append(requests_check(config))
     report.checks.append(match_check(config))
+    report.checks.append(notify_check(config))
 
     # --- хранилище ----------------------------------------------------
     try:

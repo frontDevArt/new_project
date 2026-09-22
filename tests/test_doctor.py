@@ -341,3 +341,50 @@ def test_doctor_does_not_complain_when_there_is_no_working_database_yet(tmp_path
 
     assert schema(report).ok is True
     assert "ещё нет" in schema(report).details
+
+
+# --- канал уведомлений (фаза 5 M3) ------------------------------------
+# Канал, про который `doctor` молчит, включают вслепую.
+
+def test_doctor_names_the_notification_channel(tmp_path):
+    from listam.doctor import notify_check
+
+    config = cfg(tmp_path, notify={"kind": "stdout", "hot": {"enabled": True},
+                                   "digest": {"enabled": True},
+                                   "feed": {"enabled": False}})
+
+    check = notify_check(config)
+
+    assert check.ok
+    assert "stdout" in check.details
+    assert "feed: выкл" in check.details        # выключенный вид назван, а не спрятан
+
+
+def test_doctor_refuses_telegram_without_a_token(tmp_path):
+    """Пустой секрет — это сбой, а не предупреждение: команда всё равно не пошлёт."""
+    from listam.doctor import notify_check
+
+    check = notify_check(cfg(tmp_path, notify={"kind": "telegram", "token": "", "chat_id": ""}))
+
+    assert not check.ok
+    assert "TELEGRAM_BOT_TOKEN" in check.details
+
+
+def test_doctor_describes_telegram_without_printing_the_token(tmp_path):
+    """Отчёт `doctor` читают глазами и пересылают — токену там не место."""
+    from listam.doctor import notify_check
+
+    check = notify_check(cfg(tmp_path, notify={"kind": "telegram", "token": "8833:SECRET",
+                                               "chat_id": "1930501720"}))
+
+    assert check.ok
+    assert "Telegram" in check.details
+    assert "8833:SECRET" not in check.details
+
+
+def test_the_channel_check_is_in_the_report(tmp_path):
+    report = run_doctor(cfg(tmp_path, notify={"kind": "misspelled"}), check_network=False)
+
+    channel = next(check for check in report.checks if check.name == "Уведомления")
+    assert not channel.ok
+    assert "misspelled" in channel.details
