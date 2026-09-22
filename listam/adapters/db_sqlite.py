@@ -826,7 +826,13 @@ class SqliteDatabase(Database):
             f" WHERE ((m.first_matched_at > :since AND m.first_matched_at <= :until) "
             f"     OR (m.matched_at      > :since AND m.matched_at      <= :until) "
             f"     OR (m.retired_at      > :since AND m.retired_at      <= :until) "
-            f"     OR (m.revived_at      > :since AND m.revived_at      <= :until))"
+            f"     OR (m.revived_at      > :since AND m.revived_at      <= :until) "
+            # Цена двинулась в окне — даже если пересчёт матча не заметил:
+            # глубокая скидка не двигает балл, а дайджест, вставший между
+            # обходом и подбором, видел бы падение цены раньше пересчёта.
+            f"     OR EXISTS (SELECT 1 FROM price_history q "
+            f"                 WHERE q.listing_id = m.listing_id "
+            f"                   AND q.seen_at > :since AND q.seen_at <= :until))"
         )
         params = {"since": to_iso(since), "until": to_iso(until)}
         if request_id is not None:

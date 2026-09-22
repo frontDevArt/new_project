@@ -1273,6 +1273,24 @@ def test_match_events_do_not_reach_past_the_window(db):
     assert db.match_events_since(NOW, LATER) == []
 
 
+def test_match_events_see_a_price_drop_the_recount_did_not_notice(db):
+    """Цена упала, а балл — нет: глубокая скидка давно упёрлась в потолок
+    фактора выгодности. Матч пересчётом не тронут, но у объявления в окне
+    есть точка истории цен — и это событие."""
+    db.upsert_listing(make_listing(price_usd=60000.0), seen_at=NOW)
+    db.upsert_request(Request(external_id="R-1"), now=NOW)
+    request = db.get_request("R-1")
+    db.upsert_match(Match(request_id=request.id, listing_id="24254997", score=80.0), NOW)
+    db.upsert_listing(make_listing(price_usd=50000.0, price_raw="$50,000"), seen_at=LATER)
+
+    rows = db.match_events_since(NOW, EVEN_LATER)
+
+    assert len(rows) == 1
+    match, listing, price_before = rows[0]
+    assert price_before == 60000.0
+    assert listing.price_usd == 50000.0
+
+
 def test_the_journal_remembers_the_last_successful_send(db):
     """Окно следующего запуска — window_to последней успешной строки."""
     from listam.domain.models import Notification
