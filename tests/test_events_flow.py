@@ -82,3 +82,58 @@ def test_a_cheaper_card_found_by_the_hourly_match_comes_as_cheaper(tmp_path):
     run_match(config)
     assert events_after(config, night)[1] == [], \
         "ночной полный проход не должен закрыть прежнюю карточку второй раз"
+
+
+def cheaper(config, listing_id: str, price_usd: float, price_per_sqm: float) -> None:
+    """Обход увидел новую цену: строка в `listings` и точка в `price_history`."""
+    database = build_database(config)
+    database.connect()
+    try:
+        listing = database.get_listing(listing_id)
+        database.upsert_listing(
+            replace(listing, price_usd=price_usd, price_per_sqm=price_per_sqm,
+                    price_raw=f"{int(price_usd)} $"),
+            seen_at=now(),
+        )
+    finally:
+        database.close()
+
+
+def test_a_deep_discount_that_did_not_move_the_score_is_still_an_event(tmp_path):
+    """H-2 аудита: 60 000 → 50 000 $ у самой выгодной квартиры района —
+    «обновлённых 0», и до фазы 3 брокер об этом не узнавал никогда."""
+    config = cfg(tmp_path)
+    fill(config,
+         listings=[suitable("1", price_usd=60_000.0, price_per_sqm=705.0),
+                   suitable("2"), suitable("3", price_usd=112_000.0)],
+         requests=[make_request("R-1")])
+    run_match(config)
+    mark = now()
+    cheaper(config, "1", 50_000.0, 588.0)
+
+    report = run_match(config)
+
+    assert report.updated == 0, "балл не сдвинулся — ради этого случая тест и написан"
+    _, found = events_after(config, mark)
+    assert ("cheaper", "1") in found
+
+
+def test_a_price_drop_is_not_lost_when_the_digest_runs_before_the_match(tmp_path):
+    """H-1 аудита: дайджест встал между `scrape` и `match`. До фазы 3 в его
+    окне цена упала, но матч не пересчитан, а в следующем окне матч
+    пересчитан, но «цена до окна» уже новая, — и подешевевшее терялось."""
+    config = cfg(tmp_path)
+    fill(config, listings=[suitable("1"), suitable("2", price_usd=118_000.0)],
+         requests=[make_request("R-1")])
+    run_match(config)
+    previous = now()
+    cheaper(config, "2", 100_000.0, 1176.0)
+    digest_at = now()
+
+    _, before_match = events_after(config, previous, digest_at)
+    run_match(config)
+    _, after_match = events_after(config, digest_at)
+
+    both = before_match + after_match
+    assert ("cheaper", "2") in both, "подешевевшее потеряно"
+    assert both.count(("cheaper", "2")) == 1, "и пришло ровно один раз"

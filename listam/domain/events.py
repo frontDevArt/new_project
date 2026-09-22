@@ -66,7 +66,8 @@ def classify(match: Match, listing: Listing, price_before: float | None,
     не имеет права выглядеть новым, даже если он в этом же окне родился.
     Воскресение — вторым: оно крупнее пересчёта. Рождение — третьим.
     Подешевение — последним, потому что это единственное правило, которое
-    смотрит не на матч, а на цену карточки.
+    смотрит не на матч, а на цену карточки, — и поэтому оно не спрашивает
+    `matched_at`: цену двигает рынок, а `matched_at` — пересчёт.
     """
     if _inside(match.retired_at, since, until):
         return MatchEvent(kind=RETIRED, match=match, listing=listing)
@@ -78,8 +79,11 @@ def classify(match: Match, listing: Listing, price_before: float | None,
                           price_before=price_before)
     if _inside(match.first_matched_at, since, until):
         return MatchEvent(kind=NEW, match=match, listing=listing)
-    if _inside(match.matched_at, since, until) \
-            and price_before is not None and listing.price_usd is not None \
+    # Рождение в окне уже вернуло `new` выше. Здесь — матч, рождённый до окна,
+    # чья цена сейчас ниже цены на начало окна. `matched_at` не спрашиваем:
+    # его двигает пересчёт, а не рынок. Глубокая скидка балл не двигает, а
+    # дайджест, вставший между обходом и подбором, видит цену раньше пересчёта.
+    if price_before is not None and listing.price_usd is not None \
             and listing.price_usd < price_before:
         return MatchEvent(kind=CHEAPER, match=match, listing=listing,
                           price_before=price_before)

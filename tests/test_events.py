@@ -144,3 +144,14 @@ def test_a_closure_for_another_reason_is_not_merged():
     events = events_for(twins(reason="бюджет"), SINCE, UNTIL, min_score=None)
 
     assert sorted(event.kind for event in events) == sorted([NEW, RETIRED])
+
+
+def test_a_price_drop_is_an_event_even_when_the_recount_did_not_move():
+    """Глубокая скидка упирается в потолок фактора выгодности: балл тот же,
+    `matched_at` не двигается, а квартира стала дешевле на $10 000."""
+    quiet = match(first_matched_at=BEFORE, matched_at=BEFORE)
+
+    event = classify(quiet, listing(50000.0), 60000.0, SINCE, UNTIL)
+
+    assert event.kind == CHEAPER
+    assert event.price_before == 60000.0
