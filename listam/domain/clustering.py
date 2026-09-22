@@ -65,8 +65,22 @@ def _key(listing: Listing) -> tuple | None:
             listing.rooms, listing.floor, listing.floors_total)
 
 
-def _cluster_id(key: tuple, low: float, high: float) -> str:
-    raw = "|".join(str(part) for part in key) + f"|{low:.1f}-{high:.1f}"
+def _anchor(listing_ids: Iterable[str]) -> str:
+    """Самое старое объявление кластера — по нему кластер и называется.
+
+    Считать идентификатор по границам площади состава нельзя: сосед, попавший
+    внутрь допуска, сдвигает min/max — и кластер получает новое имя, хотя
+    квартира та же. Снимок `matches.cluster_id` после этого не совпадает
+    с базой ничем.
+
+    `(len, id)` вместо просто `id`: идентификаторы list.am — числа строками,
+    и лексикографически «9» больше «10», а по возрасту — младше.
+    """
+    return min(listing_ids, key=lambda item: (len(str(item)), str(item)))
+
+
+def _cluster_id(key: tuple, anchor: str) -> str:
+    raw = "|".join(str(part) for part in key) + f"|{anchor}"
     return hashlib.sha1(raw.encode("utf-8")).hexdigest()[:16]
 
 
@@ -106,8 +120,7 @@ def clusters(listings: Iterable[Listing],
     """Кластеры по выборке объявлений. Порядок выборки на результат не влияет."""
     found: list[Cluster] = []
     for key, members in _groups(list(listings), area_tolerance):
-        areas = [item.area for item in members if item.area is not None] or [0.0]
-        cluster_id = _cluster_id(key, min(areas), max(areas))
+        cluster_id = _cluster_id(key, _anchor(item.id for item in members))
         prices = [item.price_usd for item in members if item.price_usd is not None]
         # Объявление без цены в хвосте: «самый дешёвый» — это цена, а не её
         # отсутствие, и показывать карточку без цены лучшим вариантом нельзя.

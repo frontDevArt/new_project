@@ -125,6 +125,33 @@ def test_the_widest_cluster_is_no_wider_than_the_tolerance():
         assert max(areas) - min(areas) <= 2.0
 
 
+def test_a_newcomer_does_not_rename_the_cluster():
+    before = clusters([make_listing("100", area=60.0), make_listing("101", area=61.0)],
+                      area_tolerance=2.0)[0]
+    after = clusters([make_listing("100", area=60.0), make_listing("101", area=61.0),
+                      make_listing("102", area=61.5)], area_tolerance=2.0)[0]
+    assert before.cluster_id == after.cluster_id, (
+        "идентификатор кластера назван по самому старому объявлению в нём "
+        "и от прихода соседа не меняется"
+    )
+
+
+def test_the_anchor_is_the_oldest_id_and_not_the_shortest_string():
+    found = clusters([make_listing("9", area=60.0), make_listing("10", area=60.5)],
+                     area_tolerance=2.0)[0]
+    alone = clusters([make_listing("9", area=60.0)], area_tolerance=2.0)[0]
+    assert found.cluster_id == alone.cluster_id, (
+        "id list.am растут числами: 9 старше 10, хотя как строка — больше"
+    )
+
+
+def test_two_different_addresses_are_two_different_clusters():
+    found = clusters([make_listing("100", area=60.0, street="Абовяна"),
+                      make_listing("101", area=60.0, street="Маштоца")],
+                     area_tolerance=2.0)
+    assert len({cluster.cluster_id for cluster in found}) == 2
+
+
 def test_a_name_that_merely_starts_like_an_abbreviation_is_left_alone():
     # «ул» — слово, а не первые две буквы. Съесть их — значит свести
     # «Улучшенная» и «Ицавановская» к одной улице.
