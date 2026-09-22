@@ -201,3 +201,22 @@ def test_the_rendered_report_never_prints_none(csv_config_with_one_bad_row):
     text = run_requests_sync(csv_config_with_one_bad_row).render()
 
     assert "None" not in text
+
+
+def test_a_broken_database_is_a_message_and_not_a_traceback(tmp_path):
+    """Битый файл базы даёт `sqlite3.DatabaseError`, а не `OSError`.
+
+    Соседи (`match`, `cluster`) в этой ситуации отвечают человеку строкой
+    отчёта; `requests` падал трейсбеком.
+    """
+    config = cfg(tmp_path, write_csv(tmp_path / "requests.csv", [GOOD]))
+    path = database_path(config)
+    path.parent.mkdir(parents=True, exist_ok=True)
+    path.write_bytes(b"not a database at all")
+
+    report = run_requests_sync(config)
+
+    assert report.errors == 1
+    assert "файл базы недоступен" in (report.notes or ""), \
+        "человек должен прочитать, что случилось, а не разбирать трейсбек"
+    assert "file is not a database" in report.notes, "и что именно сломалось"

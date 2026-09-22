@@ -971,3 +971,20 @@ def test_retiring_one_request_does_not_touch_another(db):
     db.retire_matches(first.id, keep=set(), now=LATER, reason="бюджет")
 
     assert len(db.matches_for_request(second.id)) == 1
+
+
+def test_a_match_status_outside_the_list_is_refused(db):
+    """След звонка — закрытый список слов, а не свободная строка.
+
+    Выдуманное слово лежало бы в базе и выходило в выгрузку как есть,
+    а витрина переводит на русский только то, что знает.
+    """
+    db.upsert_request(make_request(), NOW)
+    request = db.get_request("R-1")
+    db.upsert_listing(make_listing("L-1"), NOW)
+    db.upsert_match(Match(request_id=request.id, listing_id="L-1", score=80.0), NOW)
+    stored = db.matches_for_request(request.id)[0]
+
+    with pytest.raises(ValueError) as exc:
+        db.set_match_status(stored.id, "ПОЖАЛУЙ НЕТ")
+    assert "new" in str(exc.value), "отказ обязан перечислить, какие статусы бывают"

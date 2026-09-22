@@ -54,6 +54,11 @@ MATCH_FIELDS = (
 )
 MATCH_COMPARED = tuple(name for name in MATCH_FIELDS if name != "run_id")
 
+# След звонка: что человек может сказать про матч. Список закрыт — выдуманное
+# слово лежало бы в базе и выходило в выгрузку как есть, а витрина переводит
+# на русский только то, что знает.
+MATCH_STATUSES = ("new", "sent", "called", "rejected")
+
 
 # Списки в TEXT-колонках: базе они нужны цельными, а не отдельной таблицей —
 # по ним не ищут, их читают вместе с заявкой.
@@ -676,6 +681,11 @@ class SqliteDatabase(Database):
 
     def set_match_status(self, match_id: int, status: str,
                          reject_reason: str | None = None) -> None:
+        if status not in MATCH_STATUSES:
+            raise ValueError(
+                f"Статус матча {status!r} не из списка. "
+                f"Бывают: {', '.join(MATCH_STATUSES)}"
+            )
         with self.transaction():
             self.conn.execute(
                 "UPDATE matches SET status = ?, reject_reason = ? WHERE id = ?",

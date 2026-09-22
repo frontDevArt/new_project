@@ -593,3 +593,36 @@ def test_a_zero_display_limit_is_refused_by_name(tmp_path):
     with pytest.raises(ConfigError) as exc:
         display_limit(config)
     assert "match.limit" in str(exc.value)
+
+
+def test_a_storage_that_refuses_the_upload_is_a_note_and_not_a_crash(
+        matching_config, monkeypatch):
+    """База уже записана и закрыта: провал заливки не имеет права съесть отчёт."""
+    import listam.matching as matching_module
+
+    class Refusing:
+        """Хранилище, до которого не дошла сеть — но уже после чтения базы.
+
+        `download` отвечает «копии нет» ровно как исправное пустое хранилище:
+        отказать раньше — значит проверить другую ветку, ту, где подбор не
+        начинался вовсе.
+        """
+
+        def download(self, *args, **kwargs):
+            return False
+
+        def exists(self, *args, **kwargs):
+            return False
+
+        def names(self, *args, **kwargs):
+            return []
+
+        def upload(self, *args, **kwargs):
+            raise OSError("хранилище недоступно")
+
+    monkeypatch.setattr(matching_module, "build_storage", lambda config: Refusing())
+
+    report = run_match(matching_config)
+
+    assert report.errors >= 1
+    assert "хранилище недоступно" in (report.notes or "")

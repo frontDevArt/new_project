@@ -378,13 +378,21 @@ def _upload(config: Config, database: Database, storage, local_db: Path,
         notes.append(f"снимок базы не сделан: {exc}")
         return False
     database.close()
-    rotate_backups(
-        storage,
-        remote_name,
-        int(config.get("storage.keep_backups", DEFAULT_KEEP_BACKUPS) or 0),
-        Path(local_db).parent,
-    )
-    storage.upload(snapshot, remote_name)
+    try:
+        rotate_backups(
+            storage,
+            remote_name,
+            int(config.get("storage.keep_backups", DEFAULT_KEEP_BACKUPS) or 0),
+            Path(local_db).parent,
+        )
+        storage.upload(snapshot, remote_name)
+    except Exception as exc:       # OSError, ошибки Google API — сеть отказала
+        # База уже записана и закрыта: заливка — это про копию в хранилище,
+        # и её провал не имеет права съесть отчёт о проделанной работе.
+        report.errors += 1
+        notes.append(f"база не залита в хранилище: {exc}")
+        snapshot.unlink(missing_ok=True)
+        return True
     snapshot.unlink(missing_ok=True)
     notes.append("база с матчами залита в хранилище")
     return True

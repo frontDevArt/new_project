@@ -111,7 +111,7 @@ def run_requests_sync(config: Config) -> SyncReport:
             database = build_database(config)
             database.connect()
             database.migrate()
-        except OSError as exc:
+        except Exception as exc:       # OSError, sqlite3.Error — базы нет
             report.errors = 1
             notes.append(f"файл базы недоступен: {exc}")
             return report
