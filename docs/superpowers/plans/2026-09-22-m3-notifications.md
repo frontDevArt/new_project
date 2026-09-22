@@ -21,7 +21,8 @@
 до выборки, и счётчик отдельно от строк.
 
 **Стек:** Python 3.12, SQLite, pytest, `requests` (уже в `requirements.txt`),
-openpyxl, PyYAML. Новых зависимостей план не вводит.
+openpyxl, PyYAML. В боевой путь новых зависимостей план не вводит; `playwright` появляется только как **dev-зависимость** живой проверки
+фазы 5 (задача 5.4) и живёт в отдельном `requirements-dev.txt`.
 
 **Исходное состояние (снято 22.09.2026):**
 
@@ -32,7 +33,7 @@ openpyxl, PyYAML. Новых зависимостей план не вводит
 | Схема базы | 9 (миграции 001–009) |
 | Боевые числа (срез ленты 21.09.2026) | 20 826 объявлений, 20 619 активных, 14 355 кластеров, 51 заявка, 51 117 матчей, из них 35 572 горячих |
 | Порт `Notifier` | `send(text)`; `none` и `stdout` есть, `telegram` нет |
-| `.env` | `TELEGRAM_BOT_TOKEN` и `TELEGRAM_CHAT_ID` заведены пустыми |
+| `.env` | на 22.09 заведены пустыми; заполнены и проверены позже — раздел «Ключи Telegram» |
 | Боевой файл базы | недоступен: `GDRIVE_FOLDER` и `GDRIVE_CREDENTIALS_FILE` пусты |
 
 ---
@@ -99,12 +100,51 @@ openpyxl, PyYAML. Новых зависимостей план не вводит
 | `listam/notifications.py` | окно, сборка сообщения, отправка, запись в журнал | 4 |
 | `listam/ports/notifier.py` | `send(text, to=None)`, `describe()`, `NotifyError` | 4 |
 | `listam/adapters/notify_telegram.py` | Telegram Bot API поверх `requests` | 5 |
+| `tests/live/test_telegram_live.py` | живая отправка, прочитанная в Telegram Web через Playwright | 5, 7 |
+| `requirements-dev.txt` | `playwright` — только для живой проверки | 5 |
 | `listam/matching.py` | причина закрытия из жёстких критериев | 6 |
 | `listam/config.py` | `score_threshold`: балл вне 0…100 — отказ | 6 |
 | `listam/doctor.py` | канал уведомлений, пороги вне шкалы, самомиграция | 5, 6 |
 | `listam/cli.py` | команда `notify`, флаг `matches --new` | 3, 4 |
 | `config/dev.yaml`, `config/prod.yaml` | секция `notify` | 4 |
 | `README.md` | уведомления, `matches --new`, самомиграция команд | 4, 6 |
+
+---
+
+## Ключи Telegram: заведены и проверены (22.09.2026, до фазы 5)
+
+Фазе 5 не нужно заводить бота: он есть, ключи лежат в `.env`, канал проверен
+живой отправкой. Числа ниже — из вывода команд, не из головы.
+
+| Что | Значение |
+| --- | --- |
+| Бот | `@ListamTotifybot`, id `8833522087` |
+| Чат уведомлений | **личка брокера**, `TELEGRAM_CHAT_ID = 1930501720` (`type: private`, `artuc2020`) |
+| `getMe` | `ok: true`, username `ListamTotifybot` |
+| `sendMessage` | HTTP 200, `ok: true`, `message_id 7` — сообщение «listam: канал проверен…» лежит в чате |
+| `TELEGRAM_WEB_CHAT` | `https://web.telegram.org/k/#@ListamTotifybot` — для браузерной проверки задачи 5.4 |
+| `TELEGRAM_LIVE` | **пусто** — живые тесты выключены, включает только явный `TELEGRAM_LIVE=1` |
+| `TELEGRAM_SEND_DELAY` | пусто → умолчание 4 с |
+
+Что из этого следует для фазы 5:
+
+- **Токен в репозиторий не попадает и в этом плане не пишется.** Он живёт
+  только в `.env`, а `.env` в `.gitignore` (строка 5). В yaml — ссылка
+  `${TELEGRAM_BOT_TOKEN}`. Если в выводе команды мелькнул токен — вывод
+  в отчёт не идёт.
+- **Чат — личка, а не группа.** Плановая рекомендация «отдельная группа для
+  проверок» не выполнена сознательно: личка с тестовым ботом клиентских
+  сообщений не содержит, а переезд на группу — это одна строка `chat_id`
+  и ноль строк кода. Но помни: **каждая живая отправка приходит брокеру
+  в личку**, в том числе четыре сообщения контрактного теста.
+- **`.env` есть только на этой машине** (`C:\Users\Admin\Downloads\list`).
+  Другая машина — `.env` заводится заново из `.env.example`, ключи берутся
+  у брокера.
+- **Батарея от этого не меняется.** `pytest` сам `.env` не читает: `load_dotenv`
+  зовётся внутри `load_config()`, а `skipif` контрактного теста и живых тестов
+  считается на сборе, когда `os.environ` ещё пуст. Поэтому контракт `telegram`
+  остаётся skip, и четыре сообщения в личку никто не шлёт, пока переменные
+  не выставлены в самой команде запуска.
 
 ---
 
@@ -2877,9 +2917,13 @@ PYTHONIOENCODING=utf-8 .venv/Scripts/python.exe -m listam notify --hot --dry-run
 **Одна сессия.** Канал наружу. Всё, что можно проверить без сети, проверяется
 без сети; живой чат — один явный шаг в конце и приёмка фазы 7.
 
-**Ожидается после фазы:** **749 passed, 22 skipped** (742 плюс пять тестов
+**Ожидается после фазы:** **749 passed, 25 skipped** (742 плюс пять тестов
 адаптера и два `doctor`; четыре новых skip — контракт `telegram` без токена
-в окружении, по одному на каждый тест контракта).
+в окружении, по одному на каждый тест контракта, и ещё три — живые тесты
+задачи 5.4, которые без `TELEGRAM_LIVE=1` не запускаются никогда).
+
+**Ключи Telegram нужны именно здесь** — раньше пятой фазы им применения нет
+(фазы 1–4 наружу не ходят вовсе). Где они лежат — задача 5.3, шаг 0.
 
 ### Задача 5.1. Адаптер
 
@@ -3235,7 +3279,26 @@ git commit -m "feat(doctor): канал уведомлений и его тум�
 
 ### Задача 5.3. Живой канал — один раз, руками
 
-- [ ] **Шаг 1: завести бота и чат**
+- [x] **Шаг 0: куда кладутся ключи** — сделано до фазы, см. «Ключи Telegram»
+
+Два значения: `TELEGRAM_BOT_TOKEN` (от `@BotFather`) и `TELEGRAM_CHAT_ID`
+(числовой id чата, у группы — со знаком минус). Оба живут в `.env` в корне
+проекта: файл в `.gitignore`, в репозиторий не уезжает. В `config/dev.yaml`
+стоит ссылка `${TELEGRAM_BOT_TOKEN}`, не значение.
+
+```
+TELEGRAM_BOT_TOKEN=8123456789:AAH...
+TELEGRAM_CHAT_ID=-1002345678901
+```
+
+**Чат для проверок — отдельный.** Живые тесты задачи 5.4 шлют настоящие
+сообщения при каждом прогоне; клиентский чат брокера для этого не годится.
+Завести группу вида «listam — проверки», добавить туда бота и держать её id
+в `.env` всё время, пока идут фазы 5 и 7.
+
+- [x] **Шаг 1: завести бота и чат** — сделано: `@ListamTotifybot`, чат
+`1930501720`, `getMe` и `sendMessage` прошли. Скрипт ниже остаётся на случай,
+если ключи придётся добывать заново на другой машине.
 
 Если `TELEGRAM_BOT_TOKEN` пуст: бот заводится у `@BotFather`, `TELEGRAM_CHAT_ID`
 узнаётся так (бот должен быть добавлен в чат и получить там хотя бы одно
@@ -3291,11 +3354,232 @@ PYTHONIOENCODING=utf-8 .venv/Scripts/python.exe -m listam notify --digest
 Что именно пришло в чат (текст первых строк), сколько сообщений, сколько
 символов, резалось ли длинное.
 
+### Задача 5.4. Живая отправка, прочитанная в браузере (Playwright)
+
+**Зачем.** Шаг 5.3 проверяет, что Bot API ответил `ok: true`. Это не то же
+самое, что «брокер увидел сообщение». Бот отвечает успехом и тогда, когда текст
+приехал в другой чат, разъехался по разметке или потерял хвост на разрезе.
+Единственная честная проверка — прочитать чат глазами; браузер делает это
+повторяемо, а мок вокруг `requests.post` — нет.
+
+**Файлы:**
+- Создать: `tests/live/__init__.py`, `tests/live/conftest.py`, `tests/live/test_telegram_live.py`
+- Создать: `requirements-dev.txt` — `playwright>=1.47` (в `requirements.txt` не идёт: боевому запуску браузер не нужен)
+- Изменить: `.gitignore` (`tmp/telegram-profile/`), `pytest.ini` — маркер `live`
+- Изменить: `.env.example` — `TELEGRAM_LIVE`, `TELEGRAM_WEB_CHAT`, `TELEGRAM_SEND_DELAY`
+
+Тесты **всегда пропускаются**, кроме явного прогона: нет `TELEGRAM_LIVE=1` —
+нет отправки. Поэтому обычная батарея растёт ровно на три skip.
+
+**Чат сейчас — личка брокера** (раздел «Ключи Telegram»), и живой прогон
+кладёт туда три сообщения, одно из них — длинное в несколько частей. Это
+ожидаемо; если мешает, заводится группа и меняется `TELEGRAM_CHAT_ID`.
+
+- [ ] **Шаг 1: вход в Telegram Web — один раз, руками**
+
+Профиль браузера с готовой сессией; лежит вне репозитория, живёт между
+прогонами. Команда интерактивная — её выполняет человек, не агент:
+
+```bash
+.venv/Scripts/python.exe -m pip install -r requirements-dev.txt
+.venv/Scripts/python.exe -m playwright install chromium
+PYTHONIOENCODING=utf-8 .venv/Scripts/python.exe -c "
+from playwright.sync_api import sync_playwright
+with sync_playwright() as p:
+    ctx = p.chromium.launch_persistent_context('tmp/telegram-profile', headless=False)
+    (ctx.pages[0] if ctx.pages else ctx.new_page()).goto('https://web.telegram.org/k/')
+    input('Войди по номеру телефона, открой чат проверок и нажми Enter...')
+    ctx.close()"
+```
+
+Персистентный профиль, а не `storage_state`: Telegram Web держит часть сессии
+в IndexedDB, и слепок `storage_state` её не увозит. Ссылку на открытый чат
+(`https://web.telegram.org/k/#-1002345678901`) положить в `.env` как
+`TELEGRAM_WEB_CHAT`.
+
+- [ ] **Шаг 2: падающие тесты**
+
+```python
+# tests/live/test_telegram_live.py
+"""Живой канал: сообщение доходит до чата и читается в Telegram Web.
+
+Прогон только явный:
+    TELEGRAM_LIVE=1 .venv/Scripts/python.exe -m pytest -q tests/live
+Нужны: .env с ключами и профиль tmp/telegram-profile со входом (шаг 1).
+Каждый прогон шлёт НАСТОЯЩИЕ сообщения в чат из TELEGRAM_CHAT_ID.
+"""
+import os
+import subprocess
+import sys
+import time
+import uuid
+
+import pytest
+
+# Ключи лежат в .env, а pytest его сам не читает: load_dotenv зовётся внутри
+# load_config(). Тянем его здесь — но только под флагом, чтобы в обычном
+# прогоне токен не появился в os.environ и не расскипал контракт telegram.
+if os.environ.get("TELEGRAM_LIVE") == "1":
+    from dotenv import load_dotenv
+
+    load_dotenv(".env", override=False)
+
+pytestmark = [
+    pytest.mark.live,
+    pytest.mark.skipif(
+        os.environ.get("TELEGRAM_LIVE") != "1"
+        or not os.environ.get("TELEGRAM_BOT_TOKEN")
+        or not os.environ.get("TELEGRAM_CHAT_ID"),
+        reason="живой канал выключен: нет TELEGRAM_LIVE=1 или ключей в .env",
+    ),
+]
+
+# Пауза между отправками. Bot API пускает в группу около 20 сообщений в минуту,
+# а на пачке частей длинного сообщения 429 ловится и на меньшем темпе.
+SEND_DELAY = float(os.environ.get("TELEGRAM_SEND_DELAY", "4"))
+RENDER_WAIT = 20_000  # сколько ждём, пока сообщение доедет до вкладки
+
+
+def notifier():
+    from listam.adapters.notify_telegram import TelegramNotifier
+
+    return TelegramNotifier(token=os.environ["TELEGRAM_BOT_TOKEN"],
+                            chat_id=os.environ["TELEGRAM_CHAT_ID"])
+
+
+def test_short_message_is_visible_in_the_chat(chat):
+    mark = f"listam-live {uuid.uuid4().hex[:8]}"
+    notifier().send(f"{mark}\nЗаявка R-1 — 3 новых")
+    chat.get_by_text(mark).last.wait_for(timeout=RENDER_WAIT)
+    time.sleep(SEND_DELAY)
+
+
+def test_long_message_arrives_whole_and_never_cuts_a_line(chat):
+    from listam.adapters.notify_telegram import LIMIT
+
+    mark = f"listam-live {uuid.uuid4().hex[:8]}"
+    lines = [f"{mark} строка {n:04d} " + "объявление" * 6 for n in range(200)]
+    body = "\n".join(lines)
+    assert len(body) > LIMIT, "тест бессмыслен, если текст влезает в одно сообщение"
+
+    notifier().send(body)
+    # последняя строка на месте — значит доехали все части
+    chat.get_by_text(f"{mark} строка 0199").last.wait_for(timeout=RENDER_WAIT)
+    chat.get_by_text(f"{mark} строка 0000").last.wait_for(timeout=RENDER_WAIT)
+    seen = "\n".join(chat.get_by_text(mark).all_inner_texts())
+    assert all(line in seen for line in lines[:5] + lines[-5:])
+    time.sleep(SEND_DELAY)
+
+
+def test_digest_command_reaches_the_chat(chat, live_config_dir):
+    """Сквозняк: команда CLI, а не только адаптер."""
+    run = subprocess.run(
+        [sys.executable, "-m", "listam", "notify", "--digest",
+         "--config-dir", str(live_config_dir)],
+        capture_output=True, text=True,
+        env={**os.environ, "PYTHONIOENCODING": "utf-8"},
+    )
+    assert run.returncode == 0, run.stdout + run.stderr
+    if "Событий: 0" in run.stdout:
+        pytest.skip("событий в окне нет: сдвинь окно журнала и повтори")
+    head = next(line for line in run.stdout.splitlines() if line.startswith("Заявка"))
+    chat.get_by_text(head[:40]).last.wait_for(timeout=RENDER_WAIT)
+    time.sleep(SEND_DELAY)
+```
+
+```python
+# tests/live/conftest.py
+"""Браузер с готовой сессией и конфиг с kind: telegram."""
+import os
+import shutil
+
+import pytest
+import yaml
+
+
+@pytest.fixture(scope="session")
+def chat():
+    from playwright.sync_api import sync_playwright
+
+    with sync_playwright() as play:
+        context = play.chromium.launch_persistent_context(
+            "tmp/telegram-profile", headless=False)
+        page = context.pages[0] if context.pages else context.new_page()
+        page.goto(os.environ.get("TELEGRAM_WEB_CHAT",
+                                 "https://web.telegram.org/k/"))
+        if page.get_by_text("Log in to Telegram").count():
+            pytest.skip("в профиле нет входа: выполни шаг 1 задачи 5.4 руками")
+        yield page
+        context.close()
+
+
+@pytest.fixture(scope="session")
+def live_config_dir(tmp_path_factory):
+    """Копия config/ с notify.kind: telegram — репозиторный конфиг не трогаем."""
+    target = tmp_path_factory.mktemp("config-live")
+    shutil.copytree("config", target, dirs_exist_ok=True)
+    path = target / "dev.yaml"
+    data = yaml.safe_load(path.read_text(encoding="utf-8"))
+    data["notify"].update({"kind": "telegram",
+                           "token": "${TELEGRAM_BOT_TOKEN}",
+                           "chat_id": "${TELEGRAM_CHAT_ID}"})
+    path.write_text(yaml.safe_dump(data, allow_unicode=True), encoding="utf-8")
+    return target
+```
+
+```ini
+# pytest.ini — маркер, чтобы `-m "not live"` работал без предупреждений
+[pytest]
+markers =
+    live: ходит в настоящий Telegram; включается TELEGRAM_LIVE=1
+```
+
+- [ ] **Шаг 3: обычная батарея — живые тесты обязаны пропуститься**
+
+```bash
+.venv/Scripts/python.exe -m pytest -q
+```
+
+Ожидается три новых skip и ни одного сообщения в чате. Если сообщение пришло —
+`skipif` написан неправильно, и это чинится **до** шага 4.
+
+- [ ] **Шаг 4: живой прогон**
+
+```powershell
+$env:TELEGRAM_LIVE="1"; $env:PYTHONIOENCODING="utf-8"
+.venv/Scripts/python.exe -m pytest -q tests/live -s
+$env:TELEGRAM_LIVE=""        # обязательно: иначе следующая батарея пошлёт живьём
+```
+
+Git Bash — то же самое одной строкой:
+
+```bash
+TELEGRAM_LIVE=1 PYTHONIOENCODING=utf-8 .venv/Scripts/python.exe -m pytest -q tests/live -s
+```
+
+Ожидается: три passed, окно браузера показывает чат, в нём — короткое
+сообщение, длинное несколькими частями и дайджест. Между отправками пауза
+`TELEGRAM_SEND_DELAY` секунд; если Bot API отвечает 429 — поднять паузу, а не
+глушить ошибку.
+
+- [ ] **Шаг 5: в отчёт**
+
+Сколько сообщений ушло, на сколько частей разрезалось длинное, сколько секунд
+паузы хватило, что именно увидел браузер (первые строки). Числа — из вывода.
+
+```bash
+git add tests/live requirements-dev.txt pytest.ini .gitignore .env.example
+git commit -m "test(notify): живая отправка в Telegram, прочитанная браузером"
+```
+
 ### Конец фазы 5
 
-- [ ] Батарея: ожидается **749 passed, 22 skipped**. Если токен в окружении
+- [ ] Батарея: ожидается **749 passed, 25 skipped**. Если токен в окружении
       есть, контракт `telegram` не пропускается, а **шлёт четыре сообщения
-      в чат** — это ожидаемо, но скажи об этом в отчёте.
+      в чат** — это ожидаемо, но скажи об этом в отчёте. Живые тесты задачи 5.4
+      в обычном прогоне остаются skip: их включает только `TELEGRAM_LIVE=1`.
+- [ ] Живой прогон задачи 5.4 **и вывод в отчёт**: сколько сообщений ушло,
+      какие увидел браузер, на сколько частей разрезалось длинное.
 - [ ] Дописать «Результат фазы 5»: живая отправка или причина, почему её не было.
 - [ ] Дописать стартовый промпт для фазы 6.
 - [ ] Коммит. **`config/prod.yaml` с `kind: telegram` коммитится только если
@@ -3309,7 +3593,7 @@ PYTHONIOENCODING=utf-8 .venv/Scripts/python.exe -m listam notify --digest
 заметными: «вариант отпал» без причины бесполезен, порог 170 молча выключает
 уведомления, а README не говорит, что команды мигрируют базу сами.
 
-**Ожидается после фазы:** **758 passed, 22 skipped** (749 плюс девять:
+**Ожидается после фазы:** **758 passed, 25 skipped** (749 плюс девять:
 два контрактных, два на подбор, три на конфиг, один на `settings`, один
 на README).
 
@@ -3778,7 +4062,7 @@ PYTHONIOENCODING=utf-8 .venv/Scripts/python.exe -m listam notify --digest --dry-
 на копии боевой базы и на живом канале: то, что нельзя показать живьём, не
 считается сделанным.
 
-**Ожидается после фазы:** батарея без изменений (**758 passed, 22 skipped**),
+**Ожидается после фазы:** батарея без изменений (**758 passed, 25 skipped**),
 схема боевой базы **10**.
 
 ### Задача 7.1. Копия базы, а не оригинал
@@ -3837,7 +4121,11 @@ db.close()"
 - [ ] **5. Сбой канала не теряет событие.** Испортить токен в `.env`
       (`TELEGRAM_BOT_TOKEN=сломано`), `python -m listam notify --hot` → код 1,
       строки в журнале нет; вернуть токен, повторить → уходит то, что не дошло.
-- [ ] **6. Витрина на боевых числах.** `python -m listam matches` → время
+- [ ] **6. Живой канал глазами браузера.** Прогон живых тестов фазы 5:
+      `TELEGRAM_LIVE=1 python -m pytest -q tests/live -s` → три passed,
+      в чате видно короткое сообщение, длинное несколькими частями и дайджест.
+      В отчёт — что увидел браузер, а не что ожидалось.
+- [ ] **7. Витрина на боевых числах.** `python -m listam matches` → время
       и число строк. Эталон фазы 8: **50 633 строки за 4,0 с**; ожидание —
       около 2 247 строк за 0,22 с. В отчёт идёт замеренное.
 
@@ -4863,6 +5151,27 @@ docs/superpowers/specs/2026-09-22-m3-notifications-design.md — решения 
 
 **Отправленное нельзя отозвать.** Живой чат — один явный шаг в конце,
 и до него наружу не уходит ничего.
+
+**Ключи Telegram уже есть и проверены** — раздел «Ключи Telegram» в начале
+плана. Бот `@ListamTotifybot`, чат — личка брокера `1930501720`, `.env`
+заполнен, `sendMessage` прошёл живьём (`message_id 7`). Шаги 0 и 1 задачи 5.3
+закрыты; заводить бота заново не надо. Токен в отчёт, в yaml и в коммит
+не попадает: в конфиге ссылка `${TELEGRAM_BOT_TOKEN}`, `.env` в `.gitignore`.
+Если ты на другой машине и `.env` там нет — задачи 5.1 и 5.2 делаются целиком
+(сети они не требуют), а 5.3 и 5.4 переносятся в фазу 7 **с записью первой
+строкой отчёта**. Выдумывать успешную отправку нельзя.
+
+**Каждая живая отправка приходит брокеру в личку** — там же, где он читает
+рабочую переписку. Перед `notify --digest` на боевой базе посмотри текст
+через `--dry-run`: отозвать нельзя.
+
+**Задача 5.4 — живая проверка браузером.** Отправка проверяется не только
+ответом Bot API, но и глазами: Playwright открывает Telegram Web с готовым
+профилем `tmp/telegram-profile` и читает чат. Тесты лежат в `tests/live/`,
+включаются переменной `TELEGRAM_LIVE=1` и в обычной батарее всегда skip.
+Между отправками — пауза `TELEGRAM_SEND_DELAY` (по умолчанию 4 с): Bot API
+режет темп. Вход в Telegram Web делается руками один раз (шаг 1 задачи 5.4) —
+это единственный шаг фазы, который агент не выполняет сам.
 
 В конце сессии допиши в план раздел «Результат фазы 5»: что сделано, числа
 батареи, что разошлось с планом и почему, и стартовый промпт для фазы 6.
