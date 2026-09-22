@@ -4808,7 +4808,7 @@ docs/superpowers/specs/2026-09-22-m3-notifications-design.md — решения 
 (docs/superpowers/specs/2026-09-22-m2-requests-and-matching-design.md)
 тоже в силе.
 
-Исходное состояние: HEAD `<ХЭШ ФАЗЫ 4>`, дерево чистое,
+Исходное состояние: HEAD `45227f5`, дерево чистое,
 батарея 747 passed, 18 skipped, схема базы 10.
 
 Твоя задача — фаза 5: адаптер Telegram, канал в `doctor` и одна живая
