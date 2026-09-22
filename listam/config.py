@@ -106,6 +106,49 @@ def threshold(config: Config, key: str, default: Any) -> Any:
     return value
 
 
+def _number(key: str, value: Any) -> float:
+    """Число из yaml. `true` — не число, хотя Python считает его единицей,
+    а строка «десять» давала трейсбек `ValueError` вместо ответа человеку."""
+    if isinstance(value, bool) or not isinstance(value, (int, float)):
+        raise ConfigError(f"{key} = {value!r} не годится: здесь нужно число, без кавычек.")
+    return float(value)
+
+
+def switch(config: Config, key: str, default: bool) -> bool:
+    """Тумблер: `true` или `false`; `null` — выключено.
+
+    Строка `"false"` в yaml — это не «нет», а непустая строка, и `bool()`
+    читал её как «да»: выключенный человеком вид уведомлений продолжал слать.
+    """
+    value = threshold(config, key, default)
+    if value is None:
+        return False
+    if not isinstance(value, bool):
+        raise ConfigError(
+            f"{key} = {value!r} не годится: тумблер — это true или false без "
+            f"кавычек. Строка {value!r} — не ответ «да» или «нет»."
+        )
+    return value
+
+
+def hours(config: Config, key: str, default: float) -> float:
+    """Окно в часах: число не меньше нуля. `null` — «как по умолчанию».
+
+    Отрицательное окно смотрит в будущее и отвечает «событий нет» — то есть
+    выглядит как спокойный рынок. Ноль — это ноль: окно пустое, но честное.
+    """
+    value = threshold(config, key, default)
+    if value is None:
+        return float(default)
+    number = _number(key, value)
+    if number < 0:
+        raise ConfigError(
+            f"{key} = {value} не годится: окно в часах не бывает отрицательным — "
+            f"оно смотрело бы в будущее и отвечало «событий нет»."
+        )
+    return number
+
+
 def positive(config: Config, key: str, default: Any) -> Any:
     """Порог, который обязан быть больше нуля. `null` по-прежнему «выключено».
 
@@ -117,7 +160,7 @@ def positive(config: Config, key: str, default: Any) -> Any:
     value = threshold(config, key, default)
     if value is None:
         return None
-    number = float(value)
+    number = _number(key, value)
     if number <= 0:
         raise ConfigError(
             f"{key} = {value} не годится: это счётчик, и меньше единицы он "
@@ -137,7 +180,7 @@ def score_threshold(config: Config, key: str, default: Any) -> float | None:
     value = threshold(config, key, default)
     if value is None:
         return None
-    number = float(value)
+    number = _number(key, value)
     if not 0 <= number <= 100:
         raise ConfigError(
             f"{key} = {value} не годится: балл — это шкала от 0 до 100, "

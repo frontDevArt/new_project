@@ -4,7 +4,7 @@ from pathlib import Path
 
 import pytest
 
-from listam.config import ConfigError, load_config, positive, threshold
+from listam.config import ConfigError, hours, load_config, positive, switch, threshold
 from listam.domain.scoring import DEFAULT_WEIGHTS
 
 
@@ -276,3 +276,32 @@ def test_both_configs_declare_the_notification_knobs():
         assert "per_request" in notify["digest"]
         assert "wide_request" in notify["digest"]
         assert "limit" in notify["feed"]
+
+
+def test_a_quoted_false_is_not_read_as_yes(tmp_path):
+    """`bool("false")` — это True: вид уведомлений, выключенный человеком,
+    продолжал слать."""
+    d = write_cfg(tmp_path, "dev", 'notify:\n  digest:\n    enabled: "false"\n')
+    config = load_config(env="dev", config_dir=d, dotenv_path=tmp_path / ".env")
+
+    with pytest.raises(ConfigError, match="notify.digest.enabled"):
+        switch(config, "notify.digest.enabled", True)
+
+
+def test_a_negative_window_is_refused(tmp_path):
+    """Окно −48 ч смотрит в будущее и отвечает «событий нет»."""
+    d = write_cfg(tmp_path, "dev", "notify:\n  digest:\n    fallback_hours: -48\n")
+    config = load_config(env="dev", config_dir=d, dotenv_path=tmp_path / ".env")
+
+    with pytest.raises(ConfigError, match="notify.digest.fallback_hours"):
+        hours(config, "notify.digest.fallback_hours", 24.0)
+
+
+def test_a_word_where_a_number_belongs_is_refused_by_name(tmp_path):
+    """`float("десять")` давал трейсбек `ValueError` вместо ответа с именем
+    ключа."""
+    d = write_cfg(tmp_path, "dev", "notify:\n  hot:\n    per_request: десять\n")
+    config = load_config(env="dev", config_dir=d, dotenv_path=tmp_path / ".env")
+
+    with pytest.raises(ConfigError, match="notify.hot.per_request"):
+        positive(config, "notify.hot.per_request", 10)
