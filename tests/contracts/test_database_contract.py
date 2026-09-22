@@ -1234,3 +1234,33 @@ def test_match_events_do_not_reach_past_the_window(db):
     )
 
     assert db.match_events_since(NOW, LATER) == []
+
+
+def test_the_journal_remembers_the_last_successful_send(db):
+    """Окно следующего запуска — window_to последней успешной строки."""
+    from listam.domain.models import Notification
+
+    db.record_notification(Notification(
+        kind="digest", sent_at=LATER, window_from=NOW, window_to=LATER,
+        events=7, requests=3, text="Заявка R-1 — 7 новых",
+    ))
+
+    last = db.last_notification("digest")
+
+    assert last.window_to == LATER
+    assert last.events == 7
+    assert last.text.startswith("Заявка R-1")
+
+
+def test_kinds_of_notification_do_not_mix(db):
+    """Часовое «горячее» не двигает окно дневного дайджеста и наоборот."""
+    from listam.domain.models import Notification
+
+    db.record_notification(Notification(kind="hot", sent_at=LATER, window_to=LATER))
+
+    assert db.last_notification("hot").window_to == LATER
+    assert db.last_notification("digest") is None
+
+
+def test_the_journal_answers_none_before_the_first_send(db):
+    assert db.last_notification("digest") is None

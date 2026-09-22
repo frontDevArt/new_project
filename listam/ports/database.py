@@ -4,7 +4,7 @@ from __future__ import annotations
 from abc import ABC, abstractmethod
 from datetime import datetime
 
-from listam.domain.models import Listing, Match, PricePoint, Request, Run
+from listam.domain.models import Listing, Match, Notification, PricePoint, Request, Run
 
 
 class Database(ABC):
@@ -290,6 +290,23 @@ class Database(ABC):
     @abstractmethod
     def count_matches(self, request_id: int | None = None) -> int:
         """Сколько матчей в базе; `request_id` сужает до одной заявки."""
+
+    @abstractmethod
+    def record_notification(self, notification: Notification) -> int:
+        """Записывает успешную отправку и отдаёт её идентификатор.
+
+        Строка пишется **только после того, как сообщение ушло**: окно
+        следующего запуска считается от неё, и запись до отправки означала бы
+        потерянное событие при первом же отказе сети.
+        """
+
+    @abstractmethod
+    def last_notification(self, kind: str) -> Notification | None:
+        """Последняя отправка этого вида; не было ни одной — None.
+
+        Виды не смешиваются: часовое «горячее» не двигает окно дневного
+        дайджеста, иначе вечерняя сводка показывала бы последний час.
+        """
 
     @abstractmethod
     def start_run(self, started_at: datetime, rate_amd_per_usd: float | None,

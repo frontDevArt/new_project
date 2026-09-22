@@ -10,7 +10,7 @@ from datetime import datetime, timezone
 from pathlib import Path
 from typing import Iterator
 
-from listam.domain.models import Listing, Match, PricePoint, Request, Run
+from listam.domain.models import Listing, Match, Notification, PricePoint, Request, Run
 from listam.ports.database import Database
 
 MIGRATIONS_DIR = Path(__file__).resolve().parent.parent / "migrations"
@@ -862,6 +862,35 @@ class SqliteDatabase(Database):
             query += " WHERE request_id = ?"
             params = (request_id,)
         return int(self.conn.execute(query, params).fetchone()["n"])
+
+    # --- журнал уведомлений ----------------------------------------------
+    def record_notification(self, notification: Notification) -> int:
+        with self.transaction():
+            cursor = self.conn.execute(
+                "INSERT INTO notifications "
+                "(kind, sent_at, window_from, window_to, events, requests, text, notes) "
+                "VALUES (?, ?, ?, ?, ?, ?, ?, ?)",
+                (notification.kind, to_iso(notification.sent_at),
+                 to_iso(notification.window_from), to_iso(notification.window_to),
+                 int(notification.events), int(notification.requests),
+                 notification.text, notification.notes),
+            )
+        return int(cursor.lastrowid)
+
+    def last_notification(self, kind: str) -> Notification | None:
+        row = self.conn.execute(
+            "SELECT * FROM notifications WHERE kind = ? ORDER BY sent_at DESC, id DESC "
+            "LIMIT 1", (kind,),
+        ).fetchone()
+        if row is None:
+            return None
+        return Notification(
+            id=row["id"], kind=row["kind"], sent_at=from_iso(row["sent_at"]),
+            window_from=from_iso(row["window_from"]),
+            window_to=from_iso(row["window_to"]),
+            events=row["events"], requests=row["requests"],
+            text=row["text"], notes=row["notes"],
+        )
 
     # --- журнал прогонов -------------------------------------------------
     def start_run(self, started_at: datetime, rate_amd_per_usd: float | None,
