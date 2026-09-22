@@ -1053,3 +1053,60 @@ def test_an_empty_batch_writes_nothing(db):
 
     assert db.upsert_matches([], NOW) == {"new": 0, "updated": 0, "unchanged": 0}
     assert db.matches_for_request(request.id) == []
+
+
+def test_matches_come_with_their_listings_in_one_go(db):
+    """Витрине нужны матч и карточка вместе: порознь это запрос на строку."""
+    request = stored_request(db)
+    db.upsert_listing(make_listing("L-1"), NOW)
+    db.upsert_match(Match(request_id=request.id, listing_id="L-1", score=80.0), NOW)
+
+    rows = db.matches_with_listings(request.id)
+
+    assert len(rows) == 1
+    match, listing = rows[0]
+    assert match.listing_id == "L-1"
+    assert listing.district == "Центр"
+
+
+def test_a_gone_listing_still_comes_with_its_match(db):
+    request = stored_request(db)
+    db.upsert_listing(make_listing("L-1"), NOW)
+    db.upsert_match(Match(request_id=request.id, listing_id="L-1", score=80.0), NOW)
+    db.mark_gone(["L-1"], LATER)
+
+    rows = db.matches_with_listings(request.id)
+
+    assert [listing.status for _, listing in rows] == ["gone"], (
+        "решение 8: снятое витрина помечает, а не прячет"
+    )
+
+
+def test_a_retired_match_does_not_come_to_the_window(db):
+    request = stored_request(db)
+    db.upsert_listing(make_listing("L-1"), NOW)
+    db.upsert_listing(make_listing("L-2"), NOW)
+    db.upsert_match(Match(request_id=request.id, listing_id="L-1", score=80.0), NOW)
+    db.upsert_match(Match(request_id=request.id, listing_id="L-2", score=70.0), NOW)
+    db.retire_matches(request.id, keep={"L-1"}, now=LATER, reason="бюджет")
+
+    rows = db.matches_with_listings(request.id)
+
+    assert [match.listing_id for match, _ in rows] == ["L-1"]
+
+
+def test_the_window_narrows_by_score_and_by_count(db):
+    """Те же сужения, что у `matches_for_request`, и тот же порядок."""
+    request = stored_request(db)
+    for number, value in enumerate([90.0, 50.0, 70.0]):
+        db.upsert_listing(make_listing(f"L-{number}"), NOW)
+        db.upsert_match(
+            Match(request_id=request.id, listing_id=f"L-{number}", score=value), NOW
+        )
+
+    ordered = [match.score for match, _ in db.matches_with_listings(request.id)]
+    assert ordered == [90.0, 70.0, 50.0]
+    assert [match.score for match, _
+            in db.matches_with_listings(request.id, min_score=60.0)] == [90.0, 70.0]
+    assert [match.score for match, _
+            in db.matches_with_listings(request.id, limit=1)] == [90.0]

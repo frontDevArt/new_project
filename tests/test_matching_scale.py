@@ -69,3 +69,25 @@ def test_matches_are_written_in_batches_and_not_one_transaction_each(
         f"{len(begins)} транзакций на {report.new} матчей: на боевых 67 000 "
         f"строках это минута записи вместо секунд"
     )
+
+
+def test_the_window_does_not_read_listings_one_by_one(matching_config, monkeypatch):
+    """На 50 заявках это были 66 910 отдельных запросов за одну витрину."""
+    run_match(matching_config)
+    from listam.matching import collect_matches
+
+    calls: list[str] = []
+    original = SqliteDatabase.get_listing
+
+    def counted(self, listing_id):
+        calls.append(listing_id)
+        return original(self, listing_id)
+
+    monkeypatch.setattr(SqliteDatabase, "get_listing", counted)
+    rows = collect_matches(matching_config)
+
+    assert len(rows) > 1, "тест бессмыслен на одной строке"
+    assert calls == [], (
+        f"{len(calls)} отдельных get_listing на {len(rows)} матчей: "
+        f"на боевых числах это 66 910 запросов"
+    )

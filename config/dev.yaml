@@ -58,6 +58,8 @@ match:                          # движок подбора: `python -m listam
 export:
   kind: xlsx_local
   path: ./out
+  matches_limit: 200            # строк на заявку в листе «Матчи»; 0 и
+                                # отрицательное — отказ кодом 2, без потолка — null
 
 changes:                        # витрина дельты: `python -m listam changes`
   limit: 50                     # сколько строк показывать в каждом разделе; 0 и

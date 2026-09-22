@@ -745,6 +745,43 @@ class SqliteDatabase(Database):
             params.append(int(limit))
         return [_row_to_match(row) for row in self.conn.execute(query, tuple(params))]
 
+    def matches_with_listings(self, request_id: int, min_score: float | None = None,
+                              limit: int | None = None
+                              ) -> list[tuple[Match, Listing]]:
+        """См. порт. INNER JOIN: матч без объявления показывать нечем.
+
+        Колонки перечисляются с префиксами: у матча и у объявления есть
+        одноимённые (`id`, `cluster_id`), и без префикса вторая затирала бы
+        первую в одной строке результата.
+        """
+        match_columns = [row["name"] for row in
+                         self.conn.execute("PRAGMA table_info(matches)")]
+        listing_columns = [row["name"] for row in
+                           self.conn.execute("PRAGMA table_info(listings)")]
+        select = ", ".join(
+            [f"m.{name} AS m_{name}" for name in match_columns]
+            + [f"l.{name} AS l_{name}" for name in listing_columns]
+        )
+        query = (f"SELECT {select} FROM matches m "
+                 f" JOIN listings l ON l.id = m.listing_id "
+                 f" WHERE m.request_id = ? AND m.retired_at IS NULL")
+        params: list = [request_id]
+        if min_score is not None:
+            query += " AND m.score >= ?"
+            params.append(float(min_score))
+        query += " ORDER BY m.score DESC, m.listing_id"
+        if limit is not None:
+            query += " LIMIT ?"
+            params.append(int(limit))
+
+        pairs: list[tuple[Match, Listing]] = []
+        for row in self.conn.execute(query, tuple(params)):
+            data = dict(row)
+            match_row = {name: data[f"m_{name}"] for name in match_columns}
+            listing_row = {name: data[f"l_{name}"] for name in listing_columns}
+            pairs.append((_row_to_match(match_row), _row_to_listing(listing_row)))
+        return pairs
+
     def set_match_status(self, match_id: int, status: str,
                          reject_reason: str | None = None) -> None:
         if status not in MATCH_STATUSES:

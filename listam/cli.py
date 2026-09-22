@@ -23,6 +23,12 @@ from listam.doctor import run_doctor
 from listam.wiring import build_database, build_exporter, build_storage, database_path
 
 
+# Сколько строк матчей на заявку уходит в лист «Матчи», когда конфиг молчит.
+# Число здесь — не политика, а страховка: боевая заявка даёт тысячи матчей,
+# и лист без потолка открывается минутами.
+DEFAULT_MATCHES_LIMIT = 200
+
+
 def build_parser() -> argparse.ArgumentParser:
     parser = argparse.ArgumentParser(prog="listam", description="Мониторинг list.am для брокера")
     parser.add_argument("--env", help="окружение: dev, prod (по умолчанию APP_ENV или dev)")
@@ -367,7 +373,12 @@ def _export(config, name: str | None) -> int:
     # Порог — дайджестный из конфига, он же по умолчанию у `matches`.
     from listam.matching import collect_matches
 
-    matches = collect_matches(config)
+    # Потолок на заявку, а не на весь лист: без него боевые числа дают
+    # десятки тысяч строк в .xlsx, и лист «Матчи» открывается минутами.
+    # Ноль здесь бессмыслен — это счётчик строк, а не порог (`positive`).
+    matches = collect_matches(
+        config, limit=positive(config, "export.matches_limit", DEFAULT_MATCHES_LIMIT)
+    )
     path = build_exporter(config).export(listings, name=name, matches=matches)
     print(f"Выгружено объявлений: {len(listings)}, матчей: {len(matches)} → {path}")
     return 0

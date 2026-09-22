@@ -572,3 +572,43 @@ def test_a_zero_changes_limit_in_the_config_is_refused_with_code_two(project, ca
 
     assert run(project, "changes") == 2
     assert "changes.limit" in capsys.readouterr().err
+
+
+# --- потолок листа «Матчи» (фаза 6 QA) --------------------------------
+# `_export` звал `collect_matches` без `limit`: на боевых числах это десятки
+# тысяч строк в .xlsx, и лист открывается минутами.
+
+def test_the_matches_sheet_has_a_ceiling_from_the_config(project, capsys):
+    from openpyxl import load_workbook
+
+    path = project / "config" / "test.yaml"
+    path.write_text(path.read_text(encoding="utf-8").replace(
+        "export:\n  kind: xlsx_local",
+        "export:\n  matches_limit: 2\n  kind: xlsx_local"), encoding="utf-8")
+    run(project, "scrape")
+    with_requests(project, "R-1,Ани,+374,active,1000000,,,,,,,,,нет,нет,,,,\n")
+    run(project, "requests")
+    run(project, "match", "--all")
+    capsys.readouterr()
+
+    assert run(project, "export") == 0
+
+    book = load_workbook(sorted((project / "out").glob("*.xlsx"))[-1])
+    rows = [row for row in book["Матчи"].iter_rows(min_row=2, values_only=True)
+            if row[0]]
+    assert len(rows) == 2, (
+        f"в листе «Матчи» {len(rows)} строк при потолке 2: лист без потолка "
+        f"на боевых числах — десятки тысяч строк"
+    )
+
+
+def test_a_zero_ceiling_for_the_matches_sheet_is_refused_with_code_two(project, capsys):
+    path = project / "config" / "test.yaml"
+    path.write_text(path.read_text(encoding="utf-8").replace(
+        "export:\n  kind: xlsx_local",
+        "export:\n  matches_limit: 0\n  kind: xlsx_local"), encoding="utf-8")
+    run(project, "scrape")
+    capsys.readouterr()
+
+    assert run(project, "export") == 2
+    assert "export.matches_limit" in capsys.readouterr().err

@@ -443,9 +443,13 @@ def collect_matches(config: Config, *, external_id: str | None = None,
                     limit: int | None = None) -> list[MatchRow]:
     """Матчи для витрины: заявка, матч и объявление одной строкой.
 
-    Объявление берётся `get_listing` даже когда оно снято (решение 8):
-    витрина его помечает, а не прячет. `external_id` не задан — все
-    активные заявки, по убыванию балла внутри каждой.
+    Объявление приходит вместе с матчем, одним запросом на заявку, и снятое
+    из выдачи не выпадает (решение 8): витрина его помечает, а не прячет.
+    Читать карточки по одной нельзя: на 50 заявках это было 66 910 запросов.
+    Матч, у которого объявления в базе нет вовсе, не показывается — `JOIN`
+    его не отдаёт; это не «снято», снятое лежит на месте с пометкой.
+    `external_id` не задан — все активные заявки, по убыванию балла внутри
+    каждой.
 
     `min_score` не задан — берётся порог дайджеста из конфига: витрина
     показывает то, о чём есть смысл разговаривать. `limit` не задан —
@@ -489,13 +493,8 @@ def collect_matches(config: Config, *, external_id: str | None = None,
 
         rows: list[MatchRow] = []
         for request in requests:
-            for match in database.matches_for_request(request.id, min_score=min_score,
-                                                      limit=limit):
-                listing = database.get_listing(match.listing_id)
-                if listing is None:
-                    # Объявления нет в базе вовсе — показывать нечего, и это
-                    # не «снято»: снятое лежит на месте с пометкой.
-                    continue
+            for match, listing in database.matches_with_listings(
+                    request.id, min_score=min_score, limit=limit):
                 rows.append((request, match, listing))
         return rows
     finally:

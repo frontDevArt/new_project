@@ -247,6 +247,16 @@ class Database(ABC):
         """
 
     @abstractmethod
+    def matches_with_listings(self, request_id: int, min_score: float | None = None,
+                              limit: int | None = None
+                              ) -> list[tuple[Match, Listing]]:
+        """Живые матчи заявки вместе с объявлениями, одним запросом.
+
+        Снятое объявление приходит с пометкой, а не выпадает (решение 8):
+        «мы звонили по этой квартире» не исчезает вместе с карточкой.
+        """
+
+    @abstractmethod
     def set_match_status(self, match_id: int, status: str,
                          reject_reason: str | None = None) -> None:
         """След звонка: `new` | `sent` | `called` | `rejected` и причина отказа.
