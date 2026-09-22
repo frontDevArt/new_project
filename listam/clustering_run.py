@@ -93,7 +93,7 @@ def run_clustering(config: Config) -> ClusterReport:
     try:
         # Схема здесь не проверяется — и не проверялась: команда сама катит
         # миграции, а пересчёт кластеров читает те колонки, что есть с M1.
-        with working_session(config, needs_schema=False) as session:
+        with working_session(config) as session:
             notes.extend(session.notes)
             session.notes = notes     # заливка пишет в тот же список
 

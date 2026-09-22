@@ -54,7 +54,7 @@ def run_recheck(config: Config) -> Recheck:
         # Схема здесь не проверяется: `recheck` — та самая команда, которой
         # остальные советуют накатить миграции. Отказ по старой схеме запер
         # бы базу насовсем.
-        with working_session(config, needs_schema=False) as session:
+        with working_session(config) as session:
             notes.extend(session.notes)
             session.notes = notes     # заливка пишет в тот же список
             database = session.database

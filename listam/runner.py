@@ -1,7 +1,6 @@
 """Каркас оркестрации: то общее, что делают все команды, пишущие в базу.
 
-Замок → свежая копия из хранилища → открыть → накатить миграции → проверить,
-что схема не старше кода. На выходе — закрыть и отпустить замок. Пять команд
+Замок → свежая копия из хранилища → открыть → накатить миграции. На выходе — закрыть и отпустить замок. Пять команд
 (`scrape`, `recheck`, `cluster`, `requests`, `match`) писали это пятью
 копиями, и копии уже разошлись: одна ловила `OSError` там, где другие ловили
 `Exception`, и падала трейсбеком на битом файле; другая звала `storage.upload`
@@ -18,7 +17,6 @@ from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Iterator
 
-from listam.adapters.db_sqlite import latest_schema_version
 from listam.adapters.run_lock import LockBusy
 from listam.config import Config
 from listam.crawler import rotate_backups, take_the_fresher_copy
@@ -30,7 +28,7 @@ DEFAULT_KEEP_BACKUPS = 5
 
 
 class SessionRefused(Exception):
-    """Работать нельзя: замок занят, файла нет, база бита или схема старая."""
+    """Работать нельзя: замок занят, файла нет или база бита."""
 
 
 @dataclass
@@ -47,12 +45,13 @@ class Session:
 
 
 @contextmanager
-def working_session(config: Config, *, needs_schema: bool = True) -> Iterator[Session]:
+def working_session(config: Config) -> Iterator[Session]:
     """Открытая база под замком. Отказ — `SessionRefused` с внятной причиной.
 
-    `needs_schema=False` — для команды, которая как раз миграции и катит:
-    отказ «накати миграции: python -m listam recheck» самому `recheck`
-    запер бы базу насовсем.
+    Миграции катятся здесь, у каждой команды на каркасе: база, отставшая на
+    версию, догоняется молча (README, «Кто мигрирует базу»). Отказ по схеме
+    остался только у тех, кто базу читает и не пишет, — у витрины, выгрузки,
+    `changes` и `doctor`.
     """
     lock = build_run_lock(config)
     try:
@@ -72,16 +71,6 @@ def working_session(config: Config, *, needs_schema: bool = True) -> Iterator[Se
             database.migrate()
         except Exception as exc:       # OSError, sqlite3.Error — базы нет или бита
             raise SessionRefused(f"файл базы недоступен: {exc}") from exc
-
-        if needs_schema:
-            required = latest_schema_version()
-            version = database.schema_version()
-            if version < required:
-                raise SessionRefused(
-                    f"схема базы {version}, а код ждёт {required}. "
-                    f"Команда ничего не мигрирует — накати миграции: "
-                    f"python -m listam recheck"
-                )
 
         session = Session(database=database, storage=storage, local_db=local_db,
                           remote_name=remote_name)

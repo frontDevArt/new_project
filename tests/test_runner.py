@@ -1,7 +1,7 @@
 """Каркас оркестрации: пять команд делали одно и то же пятью способами.
 
-Здесь проверяется только общий кусок — замок, копия из хранилища, миграции,
-проверка схемы и заливка. Что считать ошибкой и что печатать человеку,
+Здесь проверяется только общий кусок — замок, копия из хранилища, миграции
+и заливка. Что считать ошибкой и что печатать человеку,
 решает каждая команда сама, и это проверяется в её собственных тестах.
 """
 from __future__ import annotations
@@ -44,37 +44,27 @@ def test_a_broken_database_is_a_refusal_naming_the_trouble(runner_config):
     assert "not a database" in str(exc.value)
 
 
-def test_a_schema_older_than_the_code_is_a_refusal_naming_both_versions(
-        runner_config, monkeypatch):
-    """Код ждёт больше, чем есть в базе, — работать нельзя.
+def test_a_base_behind_the_code_is_caught_up_by_the_session(runner_config, tmp_path):
+    """База, отставшая на версию, догоняется молча: миграции катит сам каркас.
 
-    Версию кода задаёт старшая миграция на диске; подменяется именно она,
-    потому что базу сеанс сперва мигрирует, и отстать она может только от
-    кода, которого на диске ещё нет.
+    Отказа «схема старая» у команд на каркасе нет — он был мёртвой веткой
+    (`needs_schema`, R-1 QA после M3): после `migrate()` отставать нечему.
     """
-    import listam.runner as runner
+    from listam.adapters.db_sqlite import SqliteDatabase, latest_schema_version
+    from listam.wiring import database_path
+
+    from tests.test_migrations import upto
+
+    latest = latest_schema_version()
+    old = SqliteDatabase(database_path(runner_config),
+                         migrations_dir=upto(tmp_path, latest - 1))
+    old.connect()
+    old.migrate()
+    assert old.schema_version() == latest - 1
+    old.close()
 
     with working_session(runner_config) as session:
-        current = session.database.schema_version()
-    monkeypatch.setattr(runner, "latest_schema_version", lambda: current + 1)
-
-    with pytest.raises(SessionRefused) as exc:
-        with working_session(runner_config):
-            pass
-    assert str(current) in str(exc.value) and str(current + 1) in str(exc.value)
-
-
-def test_a_migrating_command_works_on_an_old_schema(runner_config, monkeypatch):
-    """`recheck` — та самая команда, которой отказ по схеме советует накатить
-    миграции. Отказывать ей самой значило бы запереть базу насовсем."""
-    import listam.runner as runner
-
-    with working_session(runner_config) as session:
-        current = session.database.schema_version()
-    monkeypatch.setattr(runner, "latest_schema_version", lambda: current + 1)
-
-    with working_session(runner_config, needs_schema=False) as session:
-        assert session.database.schema_version() == current
+        assert session.database.schema_version() == latest
 
 
 def test_publishing_closes_the_database_and_puts_a_copy_in_storage(runner_config):
