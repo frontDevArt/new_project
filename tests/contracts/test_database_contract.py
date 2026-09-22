@@ -649,6 +649,33 @@ def test_an_unknown_request_is_none_and_not_an_error(db):
     assert db.get_request("R-404") is None
 
 
+def test_a_request_gone_from_the_source_is_closed(db):
+    db.upsert_request(make_request("R-1"), NOW)
+    db.upsert_request(make_request("R-2"), NOW)
+
+    closed = db.close_requests_missing_from({"R-1"}, LATER)
+
+    assert closed == 1
+    assert [item.external_id for item in db.iter_requests()] == ["R-1"]
+    gone = db.get_request("R-2")
+    assert gone.status == "closed"
+    assert gone.updated_at == LATER
+
+
+def test_closing_twice_closes_nothing_the_second_time(db):
+    db.upsert_request(make_request("R-1"), NOW)
+    assert db.close_requests_missing_from(set(), LATER) == 1
+    assert db.close_requests_missing_from(set(), LATER) == 0
+
+
+def test_a_request_the_human_paused_is_not_closed_by_absence(db):
+    db.upsert_request(make_request("R-1", status="paused"), NOW)
+    assert db.close_requests_missing_from(set(), LATER) == 0, (
+        "закрываются только активные: приостановленную заявку человек "
+        "мог убрать из таблицы нарочно, и её статус — его решение"
+    )
+
+
 # --- кластеры и выборка для матчинга -----------------------------------
 def test_cluster_ids_are_stored_and_only_changed_rows_count(db):
     db.upsert_listing(make_listing("1"), NOW)

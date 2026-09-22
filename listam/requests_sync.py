@@ -35,6 +35,8 @@ class SyncReport:
     new: int = 0
     updated: int = 0
     unchanged: int = 0
+    closed: int = 0             # заявок закрыто: строки в источнике больше нет
+    closed_ids: list[str] = field(default_factory=list)
     rejected: list[RequestError] = field(default_factory=list)
     errors: int = 0
     notes: str | None = None
@@ -46,8 +48,10 @@ class SyncReport:
             lines.append(self.notes)
         lines.append(
             f"Заявки: новых {self.new}, обновлённых {self.updated}, "
-            f"без изменений {self.unchanged}"
+            f"без изменений {self.unchanged}, закрытых {self.closed}"
         )
+        if self.closed_ids:
+            lines.append(f"  закрыты (нет в источнике): {', '.join(self.closed_ids)}")
         if self.rejected:
             lines.append(f"⚠ Не разобрано: {len(self.rejected)}")
             lines.extend(f"  {item.render()}" for item in self.rejected)
@@ -129,7 +133,19 @@ def run_requests_sync(config: Config) -> SyncReport:
             outcome = database.upsert_request(request, now)
             setattr(report, outcome, getattr(report, outcome) + 1)
 
-        if report.new or report.updated:
+        # Пустой источник — почти всегда сбой доступа, а не «все клиенты ушли».
+        # Закрыть по нему всю базу заявок означало бы потерять работу месяца
+        # из-за одной недоступной таблицы.
+        if parsed:
+            present = {request.external_id for request in parsed}
+            before = {item.external_id for item in database.iter_requests()}
+            report.closed = database.close_requests_missing_from(present, now)
+            report.closed_ids = sorted(before - present)
+        else:
+            notes.append("источник не отдал ни одной заявки — "
+                         "ничего не закрываем, это похоже на сбой доступа")
+
+        if report.new or report.updated or report.closed:
             snapshot = local_db.with_name(local_db.name + ".snapshot")
             try:
                 database.snapshot(snapshot)

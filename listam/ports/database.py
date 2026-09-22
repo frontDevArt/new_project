@@ -185,6 +185,16 @@ class Database(ABC):
         """Заявка по внешнему идентификатору; незнакомая — None, а не ошибка."""
 
     @abstractmethod
+    def close_requests_missing_from(self, external_ids: set[str],
+                                    now: datetime) -> int:
+        """Закрывает активные заявки, которых нет в этом списке. Отдаёт, сколько закрыл.
+
+        Брокер удалил строку из таблицы — значит клиент ушёл. Удалять заявку
+        нельзя: на ней висят матчи и след звонков. Трогаются только активные:
+        `paused` и `closed` — решение человека, а не источника.
+        """
+
+    @abstractmethod
     def upsert_match(self, match: Match, now: datetime) -> str:
         """Возвращает 'new' | 'updated' | 'unchanged'.
 

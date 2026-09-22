@@ -550,6 +550,25 @@ class SqliteDatabase(Database):
         ).fetchone()
         return _row_to_request(row) if row else None
 
+    def close_requests_missing_from(self, external_ids: set[str],
+                                    now: datetime) -> int:
+        """См. порт."""
+        alive = [
+            row["external_id"] for row in self.conn.execute(
+                "SELECT external_id FROM requests WHERE status = 'active'"
+            ) if row["external_id"] not in external_ids
+        ]
+        if not alive:
+            return 0
+        stamp = to_iso(now)
+        with self.transaction():
+            self.conn.executemany(
+                "UPDATE requests SET status = 'closed', updated_at = ? "
+                " WHERE external_id = ?",
+                [(stamp, external_id) for external_id in alive],
+            )
+        return len(alive)
+
     def mark_requests_matched(self, request_ids: list[int], now: datetime) -> None:
         """См. порт. Отметка не содержательная правка — `updated_at` не трогаем."""
         if not request_ids:

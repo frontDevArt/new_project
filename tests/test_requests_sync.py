@@ -171,6 +171,32 @@ def test_the_source_is_not_configured_and_that_is_not_a_crash(tmp_path):
     assert "не настроен" in report.render()
 
 
+def test_a_row_deleted_from_the_table_closes_the_request(tmp_path, csv_config):
+    run_requests_sync(csv_config)
+
+    write_csv(tmp_path / "requests.csv", [GOOD])
+    report = run_requests_sync(csv_config)
+
+    assert report.closed == 1
+    assert "R-2" in report.render()
+    assert stored(csv_config) == ["R-1"]
+
+
+def test_an_empty_table_closes_nothing_and_says_why(tmp_path):
+    config = cfg(tmp_path, write_csv(tmp_path / "requests.csv", [GOOD]))
+    run_requests_sync(config)
+
+    write_csv(tmp_path / "requests.csv", [])
+    report = run_requests_sync(config)
+
+    assert report.closed == 0
+    assert "ни одной заявки" in (report.notes or ""), (
+        "пустая таблица — это чаще сбой доступа, чем «все клиенты ушли»; "
+        "закрывать по ней всю базу заявок нельзя"
+    )
+    assert stored(config) == ["R-1"]
+
+
 def test_the_rendered_report_never_prints_none(csv_config_with_one_bad_row):
     text = run_requests_sync(csv_config_with_one_bad_row).render()
 
