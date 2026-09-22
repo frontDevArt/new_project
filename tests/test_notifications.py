@@ -273,3 +273,28 @@ def test_a_wide_mark_does_not_stick_to_a_neighbour(prepared):
     assert report.text.count("слишком широкая") == 1
     marked = [line for line in report.text.splitlines() if "слишком широкая" in line]
     assert "2 событий" in marked[0]
+
+
+def test_telegram_without_a_token_is_refused_before_the_work(prepared, monkeypatch):
+    """Пустой секрет — отказ на входе (спека, «Ошибки и отказы»), а не после
+    десяти секунд выборки на боевой базе и не под замком рабочей копии."""
+    from listam.config import ConfigError
+
+    def no_work(*args, **kwargs):
+        raise AssertionError("выборка не должна начинаться без канала")
+
+    monkeypatch.setattr("listam.notifications.collect_events", no_work)
+    prepared.data["notify"].update({"kind": "telegram", "token": "", "chat_id": ""})
+
+    with pytest.raises(ConfigError, match="TELEGRAM_BOT_TOKEN"):
+        run_notify(prepared, kind="hot")
+
+
+def test_a_dry_run_does_not_need_the_channel(prepared):
+    """Посмотреть текст можно и до того, как ключи заведены."""
+    prepared.data["notify"].update({"kind": "telegram", "token": "", "chat_id": ""})
+
+    report = run_notify(prepared, kind="hot", dry_run=True)
+
+    assert report.errors == 0
+    assert not report.sent

@@ -113,3 +113,17 @@ def test_fetcher_kind_files_reads_saved_pages(tmp_path):
     )
     assert type(fetcher).__name__ == "FilesFetcher"
     assert fetcher.directory == tmp_path
+
+
+def test_notifier_kind_telegram_takes_the_secrets_from_the_config():
+    notifier = build_notifier(cfg({"notify": {"kind": "telegram", "token": "123:abc",
+                                              "chat_id": 1930501720}}))
+    assert isinstance(notifier, Notifier)
+    assert type(notifier).__name__ == "TelegramNotifier"
+    assert notifier.chat_id == "1930501720"
+
+
+def test_telegram_without_a_token_is_a_config_error_naming_the_variable():
+    """Отправлять в никуда мы не будем: пустой секрет — код 2 на входе."""
+    with pytest.raises(ConfigError, match="TELEGRAM_BOT_TOKEN"):
+        build_notifier(cfg({"notify": {"kind": "telegram", "token": "", "chat_id": "1"}}))

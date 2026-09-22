@@ -114,6 +114,10 @@ def run_notify(config: Config, *, kind: str, dry_run: bool = False) -> NotifyRep
         report.scope = "тумблер выключен"
         return report
 
+    # Канал собирается до работы: пустой секрет — отказ на входе, а не после
+    # выборки под замком рабочей копии. Пробному прогону канал не нужен.
+    notifier = None if dry_run else build_notifier(config)
+
     tuning = settings(config)
     min_score = tuning.hot if kind == "hot" else tuning.digest
     notes: list[str] = []
@@ -139,7 +143,6 @@ def run_notify(config: Config, *, kind: str, dry_run: bool = False) -> NotifyRep
                 notes.append("пробный прогон: не отправлено, журнал не тронут")
                 return report
 
-            notifier = build_notifier(config)
             try:
                 notifier.send(report.text)
             except NotifyError as exc:

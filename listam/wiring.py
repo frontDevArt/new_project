@@ -139,7 +139,22 @@ def build_notifier(config: Config) -> Notifier:
         return NullNotifier()
     if kind == "stdout":
         return StdoutNotifier()
-    raise _unknown("notify", kind, ["none", "stdout"])  # telegram появится на M3
+    if kind == "telegram":
+        from listam.adapters.notify_telegram import DEFAULT_TIMEOUT, TelegramNotifier
+
+        token = config.get("notify.token")
+        chat_id = config.get("notify.chat_id")
+        if not token or not chat_id:
+            raise ConfigError(
+                "notify.kind = telegram, но notify.token или notify.chat_id пуст: "
+                "секреты живут в .env (TELEGRAM_BOT_TOKEN, TELEGRAM_CHAT_ID), "
+                "а конфиг на них ссылается. Отправлять в никуда мы не будем."
+            )
+        return TelegramNotifier(
+            token=str(token), chat_id=str(chat_id),
+            timeout=float(config.get("notify.timeout_seconds", DEFAULT_TIMEOUT)),
+        )
+    raise _unknown("notify", kind, ["none", "stdout", "telegram"])
 
 
 def build_requests_source(config: Config) -> RequestsSource:
