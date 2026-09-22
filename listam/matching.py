@@ -179,6 +179,11 @@ def run_match(config: Config, *, external_id: str | None = None,
     """
     report = MatchReport(scope="заявка " + external_id if external_id else "вся база")
 
+    # Конфиг читается до замка и до базы: «бессмысленное значение отклоняется
+    # на входе» значит «до работы». Опечатка в имени веса, прочитанная посреди
+    # прохода, прилетала бы человеку уже поверх пересчитанных кластеров.
+    tuning = settings(config)
+
     # Тот же замок, что у прогона и пересчёта: подбор переписывает общую базу
     # и может по дороге проставить кластеры.
     lock = build_run_lock(config)
@@ -253,7 +258,6 @@ def run_match(config: Config, *, external_id: str | None = None,
 
         last_run = database.last_run()
         run_id = last_run.id if last_run else None
-        tuning = settings(config)
 
         # Заявка, которую тронули после её последнего подбора, выборкой
         # объявлений не покрывается: изменился не рынок, а условия. Такую

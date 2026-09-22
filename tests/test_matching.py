@@ -626,3 +626,25 @@ def test_a_storage_that_refuses_the_upload_is_a_note_and_not_a_crash(
 
     assert report.errors >= 1
     assert "хранилище недоступно" in (report.notes or "")
+
+
+def test_a_misspelled_weight_stops_the_match_before_it_touches_the_base(matching_config):
+    """«Отклоняется на входе» значит «до работы», а не «на середине прохода».
+
+    Веса читались после пересчёта кластеров: отказ прилетал человеку уже
+    поверх записанной базы. Читать конфиг надо до того, как что-то сделано.
+    """
+    matching_config.data["match"]["weights"] = {"budjet": 30, "district": 20,
+                                                "price_per_sqm": 20, "area_rooms": 15,
+                                                "floor": 10, "seller_type": 5}
+
+    with pytest.raises(ConfigError):
+        run_match(matching_config, recount_all=True)
+
+    database = build_database(matching_config)
+    database.connect()
+    try:
+        assert all(item.cluster_id is None for item in database.iter_listings()), \
+            "кластеры пересчитаны — значит, проход успел тронуть базу"
+    finally:
+        database.close()
