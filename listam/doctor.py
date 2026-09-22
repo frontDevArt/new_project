@@ -241,20 +241,40 @@ def run_doctor(config: Config, check_network: bool = True) -> DoctorReport:
         report.add("Хранилище", False, str(exc))
 
     # --- схема базы ---------------------------------------------------
+    # Пробник во временной папке отвечает на вопрос «накатываются ли миграции
+    # этим кодом», и это нужно. Но команда работает не с ним: рабочая база
+    # может стоять на версии 4, и тогда `match`, `export` и `matches` откажутся
+    # работать, а doctor до этой правки отвечал «OK, версия 9».
     try:
-        from listam.adapters.db_sqlite import SqliteDatabase
+        from listam.adapters.db_sqlite import SqliteDatabase, latest_schema_version
 
+        required = latest_schema_version()
         with tempfile.TemporaryDirectory() as tmp:
             probe = SqliteDatabase(Path(tmp) / "probe.sqlite")
             probe.connect()
             probe.migrate()
-            version = probe.schema_version()
             tables = sorted(probe.table_names() - {"schema_version", "sqlite_sequence"})
             probe.close()
-        report.add(
-            "Схема базы", True,
-            f"версия {version}, таблицы: {', '.join(tables)}; рабочий файл — {database_path(config)}",
-        )
+
+        working = database_path(config)
+        if not working.exists():
+            report.add(
+                "Схема базы", True,
+                f"код ждёт версию {required}, таблицы: {', '.join(tables)}; "
+                f"рабочего файла {working} ещё нет — он появится первым прогоном",
+            )
+        else:
+            live = SqliteDatabase(working)
+            live.connect()
+            version = live.schema_version()
+            live.close()
+            report.add(
+                "Схема базы", version >= required,
+                f"рабочий файл {working}: версия {version}, код ждёт {required}"
+                + ("" if version >= required
+                   else " — накати миграции: python -m listam recheck")
+                + f"; таблицы: {', '.join(tables)}",
+            )
     except Exception as exc:
         report.add("Схема базы", False, str(exc))
 

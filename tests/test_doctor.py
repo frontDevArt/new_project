@@ -3,8 +3,10 @@ from __future__ import annotations
 
 from pathlib import Path
 
+from listam.adapters.db_sqlite import SqliteDatabase
 from listam.config import Config
 from listam.doctor import match_check, run_doctor
+from listam.wiring import database_path
 
 
 def cfg(tmp_path, **over) -> Config:
@@ -305,3 +307,37 @@ def test_doctor_calls_a_weight_nobody_named_a_failure_too(tmp_path):
     assert check.ok is False
     assert "seller_type" in check.details
     assert "0" in check.details, "отказ обязан сказать, чем фактор выключают"
+
+
+# --- схема рабочей базы (фаза 5 QA) -----------------------------------
+# Пробник во временной папке отвечает на вопрос «накатываются ли миграции
+# этим кодом». Команда работает не с ним: рабочий файл может стоять на
+# версии 4, и тогда `match`, `export` и `matches` откажутся работать.
+
+def schema(report):
+    return next(check for check in report.checks if "Схема" in check.name)
+
+
+def test_doctor_names_the_version_of_the_working_database(tmp_path):
+    config = cfg(tmp_path)
+    database = SqliteDatabase(database_path(config))
+    database.connect()
+    database.migrate()
+    database.conn.execute("DELETE FROM schema_version WHERE version >= 5")
+    database.conn.commit()
+    database.close()
+
+    report = run_doctor(config, check_network=False)
+
+    assert schema(report).ok is False
+    assert "4" in schema(report).details, (
+        "версия рабочего файла, а не временного пробника: команда откажется "
+        "работать именно с ним"
+    )
+
+
+def test_doctor_does_not_complain_when_there_is_no_working_database_yet(tmp_path):
+    report = run_doctor(cfg(tmp_path), check_network=False)
+
+    assert schema(report).ok is True
+    assert "ещё нет" in schema(report).details
