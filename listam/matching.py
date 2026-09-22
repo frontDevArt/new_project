@@ -19,22 +19,19 @@ from __future__ import annotations
 
 from dataclasses import dataclass
 from datetime import datetime, timezone
-from pathlib import Path
 
 from listam.adapters.db_sqlite import latest_schema_version
-from listam.adapters.run_lock import LockBusy
 from listam.changes import DASH, MINUS, money, per_sqm, since_point
 from listam.clustering_run import area_tolerance, cluster_database
 from listam.config import Config, ConfigError, positive, threshold
-from listam.crawler import rotate_backups, take_the_fresher_copy
 from listam.domain.clustering import clusters
 from listam.domain.models import Listing, Match, Request
 from listam.domain.scoring import DEFAULT_STRETCH_PERCENT, DEFAULT_WEIGHTS, score
 from listam.domain.stats import median_price_per_sqm_by_district
 from listam.ports.database import Database
-from listam.wiring import build_database, build_run_lock, build_storage, database_path
+from listam.runner import SessionRefused, publish, working_session
+from listam.wiring import build_database, build_storage, database_path
 
-DEFAULT_KEEP_BACKUPS = 5
 DEFAULT_HOT = 70.0
 DEFAULT_DIGEST = 40.0
 
@@ -188,115 +185,83 @@ def run_match(config: Config, *, external_id: str | None = None,
     # прохода, прилетала бы человеку уже поверх пересчитанных кластеров.
     tuning = settings(config)
 
-    # Тот же замок, что у прогона и пересчёта: подбор переписывает общую базу
-    # и может по дороге проставить кластеры.
-    lock = build_run_lock(config)
-    try:
-        lock.acquire()
-    except LockBusy as exc:
-        report.errors = 1
-        report.notes = str(exc)
-        report.finished_at = datetime.now(timezone.utc)
-        return report
-
-    database = None
-    storage = None
-    local_db = database_path(config)
-    remote_name = config.get("storage.db_filename", "listam.sqlite")
+    # Замок, свежая копия, миграции и заливка — общий каркас
+    # (`listam/runner.py`): тот же порядок, что у прогона, пересчёта,
+    # кластеров и заявок.
     notes: list[str] = []
     try:
-        try:
-            storage = build_storage(config)
-            remote = take_the_fresher_copy(storage, remote_name, local_db)
-            if remote.note:
-                notes.append(remote.note)
-            database = build_database(config)
-            database.connect()
-            database.migrate()
-        except Exception as exc:       # OSError, sqlite3.Error — базы нет
-            report.errors = 1
-            notes.append(f"файл базы недоступен: {exc}")
-            return report
+        with working_session(config) as session:
+            notes.extend(session.notes)
+            session.notes = notes     # заливка пишет в тот же список
+            database = session.database
 
-        required = latest_schema_version()
-        version = database.schema_version()
-        if version < required:
-            report.errors = 1
-            notes.append(
-                f"Подбор не сделан: схема базы {version}, а код ждёт {required}. "
-                f"Команда ничего не мигрирует — накати миграции: "
-                f"python -m listam recheck"
+            requests, refusal = _requests_to_match(database, external_id)
+            if refusal is not None:
+                report.errors = 1
+                notes.append(refusal)
+                return report
+            report.requests = len(requests)
+            if not requests:
+                # Не ошибка: заявок может не быть ещё или уже. Но и не тишина —
+                # пустой подбор обязан сказать, почему он пустой.
+                notes.append("подбирать не под что: нет активных заявок")
+                return report
+
+            # Вся таблица читается один раз за прогон. Кластеры, медианы и
+            # выборка считаются по ней, а не каждый по своему чтению.
+            #
+            # Кластеры считаются по всей базе, а не по выборке: у свежего
+            # объявления двойники могли появиться задолго до него.
+            everything = database.listings_for_matching()
+            _count_clusters(database, config, notes, everything)
+            found = clusters(everything, area_tolerance(config))
+            representatives = {cluster.cheapest_id: cluster for cluster in found}
+            medians = median_price_per_sqm_by_district(everything)
+
+            selection, scope = _listings_scope(database, only_new, config, everything)
+            report.scope = f"заявка {external_id}" if external_id else scope
+            report.listings = len(selection)
+            candidates = [item for item in selection if item.id in representatives]
+            report.considered = len(candidates)
+
+            # Чего проход не видел: снятое с ленты и отложенное аномалией.
+            # Закрывать по такому нельзя — см. `_write_matches`.
+            off_the_feed = database.known_ids() - {item.id for item in everything}
+
+            last_run = database.last_run()
+            run_id = last_run.id if last_run else None
+
+            # Заявка, которую тронули после её последнего подбора, выборкой
+            # объявлений не покрывается: изменился не рынок, а условия. Такую
+            # ведём по всей базе — иначе поднятый бюджет заработает только ночью.
+            edited = [request for request in requests
+                      if only_new and _is_edited(request)]
+            fresh = [request for request in requests if request not in edited]
+            if edited:
+                notes.append(f"правленых заявок: {len(edited)} — по всей базе")
+                whole = [item for item in everything if item.id in representatives]
+                _write_matches(database, report, edited, whole, representatives,
+                               medians, run_id, tuning,
+                               full_sweep=True, off_the_feed=off_the_feed)
+            if fresh:
+                _write_matches(database, report, fresh, candidates, representatives,
+                               medians, run_id, tuning,
+                               full_sweep=not only_new, off_the_feed=off_the_feed)
+            database.mark_requests_matched(
+                [request.id for request in requests if request.id is not None],
+                datetime.now(timezone.utc),
             )
-            return report
 
-        requests, refusal = _requests_to_match(database, external_id)
-        if refusal is not None:
-            report.errors = 1
-            notes.append(refusal)
-            return report
-        report.requests = len(requests)
-        if not requests:
-            # Не ошибка: заявок может не быть ещё или уже. Но и не тишина —
-            # пустой подбор обязан сказать, почему он пустой.
-            notes.append("подбирать не под что: нет активных заявок")
-            return report
-
-        # Вся таблица читается один раз за прогон. Кластеры, медианы и выборка
-        # считаются по ней, а не каждый по своему чтению.
-        #
-        # Кластеры считаются по всей базе, а не по выборке: у свежего
-        # объявления двойники могли появиться задолго до него.
-        everything = database.listings_for_matching()
-        _count_clusters(database, config, notes, everything)
-        found = clusters(everything, area_tolerance(config))
-        representatives = {cluster.cheapest_id: cluster for cluster in found}
-        medians = median_price_per_sqm_by_district(everything)
-
-        selection, scope = _listings_scope(database, only_new, config, everything)
-        report.scope = f"заявка {external_id}" if external_id else scope
-        report.listings = len(selection)
-        candidates = [item for item in selection if item.id in representatives]
-        report.considered = len(candidates)
-
-        # Чего проход не видел: снятое с ленты и отложенное аномалией.
-        # Закрывать по такому нельзя — см. `_write_matches`.
-        off_the_feed = database.known_ids() - {item.id for item in everything}
-
-        last_run = database.last_run()
-        run_id = last_run.id if last_run else None
-
-        # Заявка, которую тронули после её последнего подбора, выборкой
-        # объявлений не покрывается: изменился не рынок, а условия. Такую
-        # ведём по всей базе — иначе поднятый бюджет заработает только ночью.
-        edited = [request for request in requests
-                  if only_new and _is_edited(request)]
-        fresh = [request for request in requests if request not in edited]
-        if edited:
-            notes.append(f"правленых заявок: {len(edited)} — по всей базе")
-            whole = [item for item in everything if item.id in representatives]
-            _write_matches(database, report, edited, whole, representatives,
-                           medians, run_id, tuning,
-                           full_sweep=True, off_the_feed=off_the_feed)
-        if fresh:
-            _write_matches(database, report, fresh, candidates, representatives,
-                           medians, run_id, tuning,
-                           full_sweep=not only_new, off_the_feed=off_the_feed)
-        database.mark_requests_matched(
-            [request.id for request in requests if request.id is not None],
-            datetime.now(timezone.utc),
-        )
-
-        if report.new or report.updated or report.retired:
-            if _upload(config, database, storage, local_db, remote_name,
-                       report, notes):
-                database = None    # заливка закрыла базу: снимок делается с живой
-        return report
+            if report.new or report.updated or report.retired:
+                publish(session, config, "база с матчами")
+                report.errors += session.failures
+    except SessionRefused as exc:
+        report.errors = 1
+        notes.append(str(exc))
     finally:
-        if database is not None:
-            database.close()
-        lock.release()
         report.notes = "; ".join(note for note in notes if note) or None
         report.finished_at = datetime.now(timezone.utc)
+    return report
 
 
 def _count_clusters(database: Database, config: Config, notes: list[str],
@@ -375,42 +340,6 @@ def _write_matches(database: Database, report: MatchReport, requests, candidates
                 request.id, keep=confirmed | off_the_feed, now=now,
                 reason="проход больше не подтверждает этот вариант",
             )
-
-
-def _upload(config: Config, database: Database, storage, local_db: Path,
-            remote_name: str, report: MatchReport, notes: list[str]) -> bool:
-    """Снимок базы в хранилище; отдаёт, закрыта ли база.
-
-    Порядок тот же, что у прогона и пересчёта: снимок с живой базы, ротация
-    копий, заливка. Закрывать базу здесь приходится потому, что залить надо
-    именно снимок, а не файл, в который ещё пишут.
-    """
-    snapshot = local_db.with_name(local_db.name + ".snapshot")
-    try:
-        database.snapshot(snapshot)
-    except Exception as exc:       # sqlite3.Error, OSError — заливать нечего
-        report.errors += 1
-        notes.append(f"снимок базы не сделан: {exc}")
-        return False
-    database.close()
-    try:
-        rotate_backups(
-            storage,
-            remote_name,
-            int(config.get("storage.keep_backups", DEFAULT_KEEP_BACKUPS) or 0),
-            Path(local_db).parent,
-        )
-        storage.upload(snapshot, remote_name)
-    except Exception as exc:       # OSError, ошибки Google API — сеть отказала
-        # База уже записана и закрыта: заливка — это про копию в хранилище,
-        # и её провал не имеет права съесть отчёт о проделанной работе.
-        report.errors += 1
-        notes.append(f"база не залита в хранилище: {exc}")
-        snapshot.unlink(missing_ok=True)
-        return True
-    snapshot.unlink(missing_ok=True)
-    notes.append("база с матчами залита в хранилище")
-    return True
 
 
 # --- витрина -----------------------------------------------------------
