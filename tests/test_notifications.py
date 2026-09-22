@@ -195,3 +195,51 @@ def test_without_a_send_the_view_says_so_out_loud(prepared, capsys):
     assert main(["--env", "test", "--config-dir", str(prepared.path.parent),
                  "matches", "--new"]) == 0
     assert "отправок ещё не было" in capsys.readouterr().out
+
+
+def fresh_listings(config, count: int) -> None:
+    """Объявления, попавшие на ленту внутри окна ленты.
+
+    Объявления фикстуры лежат на отметке NOW — вчерашней относительно «сейчас»,
+    и в суточное окно ленты не попадают. Это не мелочь теста: `first_seen`
+    у существующей строки не двигается повторной встречей, поэтому «новое
+    на ленте» — это всегда новая строка, а не новый проход.
+    """
+    now = datetime.now(timezone.utc)
+    database = build_database(config)
+    database.connect()
+    try:
+        for index in range(count):
+            database.upsert_listing(
+                Listing(id=f"fresh-{index}",
+                        url=f"https://www.list.am/ru/item/fresh-{index}",
+                        district="Кентрон", price_usd=90000.0 + index,
+                        area=60.0, price_per_sqm=1500.0 + index, rooms=2),
+                seen_at=now,
+            )
+    finally:
+        database.close()
+
+
+def test_the_feed_message_counts_what_came_outside_the_requests(prepared):
+    """Лента — отдельный разговор: брокеру нужно видеть её и тогда, когда
+    ни одна заявка ничего не взяла."""
+    fresh_listings(prepared, 2)
+
+    report = run_notify(prepared, kind="feed", dry_run=True)
+
+    assert report.events == 2
+    assert "На ленте: новых 2" in report.text
+    assert "https://www.list.am/ru/item/fresh-0" in report.text
+
+
+def test_the_feed_message_keeps_the_tail_honest(prepared):
+    """Потолок ленты режет строки, но не счётчик: «новых 2» остаётся правдой."""
+    fresh_listings(prepared, 2)
+    prepared.data["notify"]["feed"]["limit"] = 1
+
+    report = run_notify(prepared, kind="feed", dry_run=True)
+
+    assert report.events == 2
+    assert "На ленте: новых 2" in report.text
+    assert "…и ещё 1 — python -m listam changes" in report.text
