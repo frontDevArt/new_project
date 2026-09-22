@@ -60,14 +60,19 @@ def area_tolerance(config: Config) -> float:
     return DEFAULT_AREA_TOLERANCE if value is None else float(value)
 
 
-def cluster_database(database: Database, tolerance: float) -> ClusterReport:
+def cluster_database(database: Database, tolerance: float,
+                     listings: list | None = None) -> ClusterReport:
     """Пересчёт по уже открытой базе: им пользуется и команда, и матчинг.
 
     Замка и заливки здесь нет нарочно: матчинг в фазе 5 зовёт это изнутри
     своего замка, и второй замок на том же файле означал бы затор.
+
+    `listings` — уже прочитанная выборка. Подбор читает таблицу один раз и
+    отдаёт её сюда: на 20 826 строках каждое лишнее чтение стоит больше
+    секунды, а за прогон их набиралось три.
     """
     report = ClusterReport()
-    listings = database.listings_for_matching()
+    listings = database.listings_for_matching() if listings is None else listings
     report.listings = len(listings)
     report.without_street = sum(
         1 for item in listings if normalize_street(item.street) is None

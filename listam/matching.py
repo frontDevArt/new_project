@@ -141,11 +141,15 @@ def _requests_to_match(database: Database, external_id: str | None
     return [request], None
 
 
-def _listings_scope(database: Database, only_new: bool, config: Config
-                    ) -> tuple[list, str]:
-    """Выборка объявлений и как она называется по-человечески."""
+def _listings_scope(database: Database, only_new: bool, config: Config,
+                    everything: list) -> tuple[list, str]:
+    """Выборка объявлений и как она называется по-человечески.
+
+    `everything` — уже прочитанная вся база: при подборе без сужений выборка
+    это она и есть, и читать её вторым запросом незачем.
+    """
     if not only_new:
-        return database.listings_for_matching(), "вся база"
+        return everything, "вся база"
     # Мерка та же, что у `changes`: начало последнего прогона. Но берём не
     # «появившееся с неё», а «тронувшееся с неё»: подешевевшая квартира новой
     # не стала, а звонить по ней надо сегодня.
@@ -237,16 +241,18 @@ def run_match(config: Config, *, external_id: str | None = None,
             notes.append("подбирать не под что: нет активных заявок")
             return report
 
-        _count_clusters(database, config, notes)
-
+        # Вся таблица читается один раз за прогон. Кластеры, медианы и выборка
+        # считаются по ней, а не каждый по своему чтению.
+        #
         # Кластеры считаются по всей базе, а не по выборке: у свежего
         # объявления двойники могли появиться задолго до него.
         everything = database.listings_for_matching()
+        _count_clusters(database, config, notes, everything)
         found = clusters(everything, area_tolerance(config))
         representatives = {cluster.cheapest_id: cluster for cluster in found}
         medians = median_price_per_sqm_by_district(everything)
 
-        selection, scope = _listings_scope(database, only_new, config)
+        selection, scope = _listings_scope(database, only_new, config, everything)
         report.scope = f"заявка {external_id}" if external_id else scope
         report.listings = len(selection)
         candidates = [item for item in selection if item.id in representatives]
@@ -293,8 +299,8 @@ def run_match(config: Config, *, external_id: str | None = None,
         report.finished_at = datetime.now(timezone.utc)
 
 
-def _count_clusters(database: Database, config: Config,
-                    notes: list[str]) -> None:
+def _count_clusters(database: Database, config: Config, notes: list[str],
+                    listings: list) -> None:
     """Кластеры перед подбором — каждый раз, а не когда в базе есть пустые.
 
     Спека: пересчёт идёт автоматически перед матчингом. Команду `cluster`
@@ -308,9 +314,10 @@ def _count_clusters(database: Database, config: Config,
     считается заново каждым подбором.
 
     Замка здесь второго нет: `cluster_database` работает по уже открытой
-    базе — ровно для этого он и отделён от команды.
+    базе — ровно для этого он и отделён от команды. Выборку он тоже не читает
+    сам: её читает `run_match`, один раз за прогон.
     """
-    counted = cluster_database(database, area_tolerance(config))
+    counted = cluster_database(database, area_tolerance(config), listings=listings)
     notes.append(
         f"кластеры пересчитаны: объявлений {counted.listings}, "
         f"кластеров {counted.clusters}, изменено строк {counted.changed}"
