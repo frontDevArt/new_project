@@ -257,6 +257,27 @@ class Database(ABC):
         """
 
     @abstractmethod
+    def match_events_since(self, since: datetime, until: datetime,
+                           request_id: int | None = None
+                           ) -> list[tuple[Match, Listing, float | None]]:
+        """Матчи, которых коснулось окно `(since, until]`, с карточкой и старой ценой.
+
+        Коснулось — это любая из четырёх отметок: матч появился
+        (`first_matched_at`), пересчитался (`matched_at`), закрылся
+        (`retired_at`) или вернулся (`revived_at`). Что из этого считать
+        событием и как назвать, решает домен (`listam/domain/events.py`):
+        база отдаёт сырьё, а не приговор.
+
+        Третье значение строки — последняя цена объявления **до** окна.
+        Без неё «подешевело с 225 000 до 150 000» не написать, а балл
+        на этот вопрос не отвечает: его двигают и пересчёт кластера,
+        и смена медианы района.
+
+        Закрытые матчи из выборки не выпадают: дайджест обязан сказать,
+        почему вчерашняя карточка пропала.
+        """
+
+    @abstractmethod
     def set_match_status(self, match_id: int, status: str,
                          reject_reason: str | None = None) -> None:
         """След звонка: `new` | `sent` | `called` | `rejected` и причина отказа.

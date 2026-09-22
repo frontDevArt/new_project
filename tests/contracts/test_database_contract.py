@@ -1162,3 +1162,75 @@ def test_a_batch_revival_is_marked_too(db):
 
     assert counts == {"new": 0, "updated": 1, "unchanged": 0}
     assert db.matches_for_request(request.id)[0].revived_at == EVEN_LATER
+
+
+def test_match_events_bring_the_match_the_listing_and_the_old_price(db):
+    """Событие — это матч, карточка и цена до окна: без цены «подешевело»
+    не показать, а без карточки не позвонить."""
+    db.upsert_listing(make_listing(price_usd=200000.0), seen_at=NOW)
+    db.upsert_request(Request(external_id="R-1"), now=NOW)
+    request = db.get_request("R-1")
+    db.upsert_match(Match(request_id=request.id, listing_id="24254997", score=80.0), LATER)
+
+    rows = db.match_events_since(NOW, EVEN_LATER)
+
+    assert len(rows) == 1
+    match, listing, price_before = rows[0]
+    assert match.listing_id == "24254997"
+    assert listing.district == "Центр"
+    assert price_before == 200000.0      # точка истории от upsert_listing
+
+
+def test_match_events_skip_what_did_not_move(db):
+    """Матч, которого окно не коснулось, событием не считается."""
+    db.upsert_listing(make_listing(), seen_at=NOW)
+    db.upsert_request(Request(external_id="R-1"), now=NOW)
+    request = db.get_request("R-1")
+    db.upsert_match(Match(request_id=request.id, listing_id="24254997", score=80.0), NOW)
+
+    assert db.match_events_since(LATER, EVEN_LATER) == []
+
+
+def test_match_events_include_the_retired_ones(db):
+    """Закрытый матч из выборки не выпадает: дайджест обязан сказать, почему
+    вчерашняя карточка пропала. Показывать ли его — решает домен."""
+    db.upsert_listing(make_listing(), seen_at=NOW)
+    db.upsert_request(Request(external_id="R-1"), now=NOW)
+    request = db.get_request("R-1")
+    db.upsert_match(Match(request_id=request.id, listing_id="24254997", score=80.0), NOW)
+    db.retire_matches(request.id, keep=set(), now=LATER, reason="бюджет")
+
+    rows = db.match_events_since(NOW, EVEN_LATER)
+
+    assert len(rows) == 1
+    assert rows[0][0].retired_at == LATER
+    assert rows[0][0].retired_reason == "бюджет"
+
+
+def test_match_events_can_be_narrowed_to_one_request(db):
+    """Витрина одной заявки не читает события всех пятидесяти."""
+    db.upsert_listing(make_listing(), seen_at=NOW)
+    for external_id in ("R-1", "R-2"):
+        db.upsert_request(Request(external_id=external_id), now=NOW)
+        request = db.get_request(external_id)
+        db.upsert_match(
+            Match(request_id=request.id, listing_id="24254997", score=80.0), LATER
+        )
+
+    only = db.match_events_since(NOW, EVEN_LATER, request_id=db.get_request("R-2").id)
+
+    assert len(only) == 1
+    assert only[0][0].request_id == db.get_request("R-2").id
+
+
+def test_match_events_do_not_reach_past_the_window(db):
+    """Верхняя граница окна — не украшение: событие, случившееся после неё,
+    уйдёт в следующую отправку, а не в эту."""
+    db.upsert_listing(make_listing(), seen_at=NOW)
+    db.upsert_request(Request(external_id="R-1"), now=NOW)
+    request = db.get_request("R-1")
+    db.upsert_match(
+        Match(request_id=request.id, listing_id="24254997", score=80.0), EVEN_LATER
+    )
+
+    assert db.match_events_since(NOW, LATER) == []

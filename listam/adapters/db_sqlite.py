@@ -798,6 +798,50 @@ class SqliteDatabase(Database):
             pairs.append((_row_to_match(match_row), _row_to_listing(listing_row)))
         return pairs
 
+    def match_events_since(self, since: datetime, until: datetime,
+                           request_id: int | None = None
+                           ) -> list[tuple[Match, Listing, float | None]]:
+        """См. порт. Один запрос: карточки по одной — это 66 910 запросов на
+        50 заявках, мы это уже проходили в фазе 6 QA-плана.
+
+        Границы окна строковые, как и везде: все отметки пишет `to_iso`
+        в одном формате, и сравнение текстов даёт тот же порядок, что
+        сравнение времён.
+        """
+        match_columns = [row["name"] for row in
+                         self.conn.execute("PRAGMA table_info(matches)")]
+        listing_columns = [row["name"] for row in
+                           self.conn.execute("PRAGMA table_info(listings)")]
+        select = ", ".join(
+            [f"m.{name} AS m_{name}" for name in match_columns]
+            + [f"l.{name} AS l_{name}" for name in listing_columns]
+        )
+        query = (
+            f"SELECT {select}, "
+            f"       (SELECT p.price_usd FROM price_history p "
+            f"         WHERE p.listing_id = m.listing_id AND p.seen_at <= :since "
+            f"         ORDER BY p.id DESC LIMIT 1) AS price_before "
+            f"  FROM matches m JOIN listings l ON l.id = m.listing_id "
+            f" WHERE ((m.first_matched_at > :since AND m.first_matched_at <= :until) "
+            f"     OR (m.matched_at      > :since AND m.matched_at      <= :until) "
+            f"     OR (m.retired_at      > :since AND m.retired_at      <= :until) "
+            f"     OR (m.revived_at      > :since AND m.revived_at      <= :until))"
+        )
+        params = {"since": to_iso(since), "until": to_iso(until)}
+        if request_id is not None:
+            query += " AND m.request_id = :request_id"
+            params["request_id"] = request_id
+        query += " ORDER BY m.score DESC, m.listing_id"
+
+        events: list[tuple[Match, Listing, float | None]] = []
+        for row in self.conn.execute(query, params):
+            data = dict(row)
+            match_row = {name: data[f"m_{name}"] for name in match_columns}
+            listing_row = {name: data[f"l_{name}"] for name in listing_columns}
+            events.append((_row_to_match(match_row), _row_to_listing(listing_row),
+                           data["price_before"]))
+        return events
+
     def set_match_status(self, match_id: int, status: str,
                          reject_reason: str | None = None) -> None:
         if status not in MATCH_STATUSES:
