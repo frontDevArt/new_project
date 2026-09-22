@@ -27,6 +27,7 @@ from listam.changes import since_point
 from listam.clustering_run import area_tolerance, cluster_database
 from listam.config import Config, ConfigError, score_threshold, threshold
 from listam.domain.clustering import clusters
+from listam.domain.events import NOT_REPRESENTATIVE
 from listam.domain.models import Match, Request
 from listam.domain.scoring import DEFAULT_STRETCH_PERCENT, DEFAULT_WEIGHTS, score
 from listam.domain.stats import median_price_per_sqm_by_district
@@ -326,7 +327,7 @@ def _write_matches(database: Database, report: MatchReport, requests, candidates
         # уведомлении «отпало: бюджет 3, район 1», и общая фраза ему
         # не отвечает ни на что.
         reasons: dict[str, str] = dict.fromkeys(not_representatives,
-                                                "не представитель кластера")
+                                                NOT_REPRESENTATIVE)
         # Матчи заявки копятся и пишутся одной транзакцией: по одной на строку
         # боевые 67 000 матчей стоили минуту фиксаций на диск.
         batch: list[Match] = []

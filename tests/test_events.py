@@ -3,8 +3,8 @@ from __future__ import annotations
 
 from datetime import datetime, timezone
 
-from listam.domain.events import CHEAPER, NEW, RETIRED, REVIVED, classify, \
-    events_for, limited
+from listam.domain.events import CHEAPER, NEW, NOT_REPRESENTATIVE, RETIRED, \
+    REVIVED, classify, events_for, limited
 from listam.domain.models import Listing, Match
 
 SINCE = datetime(2026, 9, 21, 0, 0, tzinfo=timezone.utc)
@@ -103,3 +103,44 @@ def test_limited_without_a_ceiling_shows_everything():
     events = events_for([(match(), listing(), None)], SINCE, UNTIL, min_score=None)
     shown, total = limited(events, None)
     assert len(shown) == total == 1
+
+
+def card(listing_id: str, price: float) -> Listing:
+    return Listing(id=listing_id, url=f"https://www.list.am/ru/item/{listing_id}",
+                   district="Кентрон", price_usd=price, area=68.0, rooms=2)
+
+
+def twins(old_born=BEFORE, reason=NOT_REPRESENTATIVE, new_price=145000.0):
+    """Одна квартира, две карточки: прежняя уступила место новой в этом окне."""
+    old = match(listing_id="old", cluster_id="c1", first_matched_at=old_born,
+                matched_at=old_born, retired_at=INSIDE, retired_reason=reason)
+    new = match(listing_id="new", cluster_id="c1")
+    return [(old, card("old", 150000.0), None), (new, card("new", new_price), None)]
+
+
+def test_a_cheaper_twin_is_a_cheaper_flat_and_not_a_new_one():
+    """Брокер эту квартиру уже видел. Новое в ней одно — цена."""
+    events = events_for(twins(), SINCE, UNTIL, min_score=None)
+
+    assert [(event.kind, event.match.listing_id, event.price_before)
+            for event in events] == [(CHEAPER, "new", 150000.0)]
+
+
+def test_a_twin_at_the_same_price_is_not_an_event_at_all():
+    """Та же квартира по той же цене под другой карточкой: звонить не о чем."""
+    assert events_for(twins(new_price=150000.0), SINCE, UNTIL, min_score=None) == []
+
+
+def test_a_twin_of_a_card_nobody_saw_is_new():
+    """Прежняя карточка родилась и уступила место в одном окне — брокер её
+    не видел, и квартира для него новая."""
+    events = events_for(twins(old_born=INSIDE), SINCE, UNTIL, min_score=None)
+
+    assert [(event.kind, event.match.listing_id) for event in events] == [(NEW, "new")]
+
+
+def test_a_closure_for_another_reason_is_not_merged():
+    """«Бюджет» — это другая история: вариант отпал, а не сменил карточку."""
+    events = events_for(twins(reason="бюджет"), SINCE, UNTIL, min_score=None)
+
+    assert sorted(event.kind for event in events) == sorted([NEW, RETIRED])

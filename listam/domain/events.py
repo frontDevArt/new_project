@@ -33,6 +33,11 @@ EVENT_LABELS = {
     RETIRED: "отпал",
 }
 
+# Причина закрытия, которую пишет подбор, когда у кластера сменился
+# представитель. Одна строка на подбор и на классификатор: по ней домен
+# узнаёт, что квартира не ушла, а сменила карточку.
+NOT_REPRESENTATIVE = "не представитель кластера"
+
 
 @dataclass
 class MatchEvent:
@@ -85,20 +90,67 @@ def events_for(rows, since: datetime, until: datetime,
                min_score: float | None) -> list[MatchEvent]:
     """События окна, от лучшего к худшему.
 
+    Двойники склеиваются **до** порога: закрытие прежней карточки и рождение
+    новой — одно событие, и решать, проходит ли оно порог, надо по нему, а не
+    по половинкам.
+
     `min_score` не трогает закрытия: закрытие объясняет пропавшую карточку,
     а балл у закрытого матча — вчерашний, и порог о нём ничего не знает.
     """
-    events: list[MatchEvent] = []
+    classified: list[MatchEvent] = []
     for match, listing, price_before in rows:
         event = classify(match, listing, price_before, since, until)
-        if event is None:
-            continue
+        if event is not None:
+            classified.append(event)
+
+    events: list[MatchEvent] = []
+    for event in _merge_twins(classified, since, until):
         if event.kind != RETIRED and min_score is not None \
                 and (event.match.score or 0) < min_score:
             continue
         events.append(event)
     events.sort(key=lambda event: (-(event.match.score or 0), event.match.listing_id))
     return events
+
+
+def _merge_twins(events: list[MatchEvent], since: datetime,
+                 until: datetime) -> list[MatchEvent]:
+    """Смена представителя кластера — не новая квартира.
+
+    Подбор кладёт в `matches` самую дешёвую карточку кластера. Пришла карточка
+    дешевле — у той же квартиры в одном окне два следа: новый матч на новую
+    карточку и закрытие прежней с причиной «не представитель кластера».
+    Назвать это «новый» — значит позвать брокера звонить по квартире, о которой
+    он уже знает; настоящее событие здесь — «подешевела».
+    """
+    stepped_aside = {
+        (event.match.request_id, event.match.cluster_id): event
+        for event in events
+        if event.kind == RETIRED and event.match.cluster_id
+        and event.match.retired_reason == NOT_REPRESENTATIVE
+    }
+    if not stepped_aside:
+        return events
+
+    merged: list[MatchEvent] = []
+    absorbed: set[int] = set()
+    for event in events:
+        partner = stepped_aside.get((event.match.request_id, event.match.cluster_id))
+        if event.kind != NEW or partner is None:
+            merged.append(event)
+            continue
+        absorbed.add(id(partner))
+        before, now = partner.listing.price_usd, event.listing.price_usd
+        if _inside(partner.match.first_matched_at, since, until) \
+                or before is None or now is None:
+            # Прежнюю карточку брокер не видел (родилась и уступила место
+            # в одном окне) или цену не с чем сравнить — квартира для него новая.
+            merged.append(event)
+        elif now < before:
+            merged.append(MatchEvent(kind=CHEAPER, match=event.match,
+                                     listing=event.listing, price_before=before))
+        # Та же цена — та же квартира по другой карточке: звонить не о чем.
+    return [event for event in merged if id(event) not in absorbed]
 
 
 def limited(events: list[MatchEvent], per_request: int | None
