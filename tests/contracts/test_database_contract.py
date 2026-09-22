@@ -1110,3 +1110,55 @@ def test_the_window_narrows_by_score_and_by_count(db):
             in db.matches_with_listings(request.id, min_score=60.0)] == [90.0, 70.0]
     assert [match.score for match, _
             in db.matches_with_listings(request.id, limit=1)] == [90.0]
+
+
+def test_a_revived_match_remembers_when_it_came_back(db):
+    """Подтвердился снова — в строке остаётся след возврата, а не только
+    погашенное закрытие: иначе воскресение неотличимо от пересчёта."""
+    db.upsert_listing(make_listing(), seen_at=NOW)
+    db.upsert_request(Request(external_id="R-1"), now=NOW)
+    request = db.get_request("R-1")
+    db.upsert_match(Match(request_id=request.id, listing_id="24254997", score=80.0), NOW)
+    db.retire_matches(request.id, keep=set(), now=LATER, reason="бюджет")
+
+    db.upsert_match(
+        Match(request_id=request.id, listing_id="24254997", score=80.0), EVEN_LATER
+    )
+
+    match = db.matches_for_request(request.id)[0]
+    assert match.retired_at is None
+    assert match.retired_reason is None
+    assert match.revived_at == EVEN_LATER
+
+
+def test_a_match_that_was_never_retired_has_no_revival_mark(db):
+    """Обычный пересчёт отметку возврата не ставит: вернуться неоткуда."""
+    db.upsert_listing(make_listing(), seen_at=NOW)
+    db.upsert_request(Request(external_id="R-1"), now=NOW)
+    request = db.get_request("R-1")
+    db.upsert_match(Match(request_id=request.id, listing_id="24254997", score=80.0), NOW)
+
+    db.upsert_matches(
+        [Match(request_id=request.id, listing_id="24254997", score=91.0)], LATER
+    )
+
+    assert db.matches_for_request(request.id)[0].revived_at is None
+
+
+def test_a_batch_revival_is_marked_too(db):
+    """Пачка и одиночная запись ведут себя одинаково: у подбора путь один —
+    пачка, и правило, проверенное только на `upsert_match`, в бою не работает."""
+    db.upsert_listing(make_listing(), seen_at=NOW)
+    db.upsert_request(Request(external_id="R-1"), now=NOW)
+    request = db.get_request("R-1")
+    db.upsert_matches(
+        [Match(request_id=request.id, listing_id="24254997", score=80.0)], NOW
+    )
+    db.retire_matches(request.id, keep=set(), now=LATER, reason="бюджет")
+
+    counts = db.upsert_matches(
+        [Match(request_id=request.id, listing_id="24254997", score=80.0)], EVEN_LATER
+    )
+
+    assert counts == {"new": 0, "updated": 1, "unchanged": 0}
+    assert db.matches_for_request(request.id)[0].revived_at == EVEN_LATER

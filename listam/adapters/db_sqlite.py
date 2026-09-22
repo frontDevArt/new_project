@@ -629,7 +629,12 @@ class SqliteDatabase(Database):
         updates = dict(values)
         updates["matched_at"] = to_iso(now)
         # Подтвердился снова — значит, живой. Гасим закрытие вместе с причиной:
-        # причина без даты читалась бы как «закрыт неизвестно когда».
+        # причина без даты читалась бы как «закрыт неизвестно когда». А вот дату
+        # возврата, наоборот, ставим: без неё воскресение неотличимо от обычного
+        # пересчёта, и уведомление либо промолчит про вернувшийся вариант, либо
+        # расскажет про него дважды.
+        updates["revived_at"] = (to_iso(now) if existing["retired_at"] is not None
+                                 else existing["revived_at"])
         updates["retired_at"] = None
         updates["retired_reason"] = None
         updates["id"] = existing["id"]
@@ -685,8 +690,16 @@ class SqliteDatabase(Database):
             # След звонка (`status`, `reject_reason`) в присвоениях отсутствует
             # физически: колонку, которой нет в UPDATE, нельзя затереть
             # случайной правкой этого метода (решение 7).
-            values.update(matched_at=stamp, retired_at=None, retired_reason=None,
-                          id=was["id"])
+            # Ключи всех словарей пачки обязаны совпадать: `executemany` строит
+            # один SQL на всю пачку по первому из них. Поэтому `revived_at`
+            # перечисляется всегда — у не воскресавшего матча в него ложится
+            # то, что там и лежало.
+            values.update(
+                matched_at=stamp, retired_at=None, retired_reason=None,
+                revived_at=(stamp if was["retired_at"] is not None
+                            else was["revived_at"]),
+                id=was["id"],
+            )
             updates.append(values)
             counts["updated"] += 1
 
@@ -1094,4 +1107,5 @@ def _row_to_match(row: sqlite3.Row) -> Match:
         cluster_spread_usd=row["cluster_spread_usd"],
         retired_at=from_iso(row["retired_at"]),
         retired_reason=row["retired_reason"],
+        revived_at=from_iso(row["revived_at"]),
     )
