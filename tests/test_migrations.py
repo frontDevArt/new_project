@@ -290,7 +290,7 @@ def test_migration_010_adds_the_journal_and_the_revival_mark(tmp_path):
     assert "notifications" in database.table_names()
     columns = {row["name"] for row in database.conn.execute("PRAGMA table_info(matches)")}
     assert "revived_at" in columns
-    assert database.schema_version() == 10
+    assert database.schema_version() >= 10
     database.close()
 
 
@@ -318,4 +318,17 @@ def test_migration_010_keeps_what_was_in_the_base(tmp_path):
     assert row["revived_at"] is None
     assert database.conn.execute(
         "SELECT COUNT(*) AS n FROM notifications").fetchone()["n"] == 0
+    database.close()
+
+
+def test_migration_011_remembers_the_channel_of_a_send(tmp_path):
+    """Текст, напечатанный в консоль, до брокера не дошёл: окно Telegram
+    от него двигаться не должно — значит, журнал обязан помнить канал."""
+    database = opened(tmp_path, MIGRATIONS_DIR)
+    database.migrate()
+
+    columns = {row["name"] for row in
+               database.conn.execute("PRAGMA table_info(notifications)")}
+    assert "channel" in columns
+    assert database.schema_version() == 11
     database.close()
