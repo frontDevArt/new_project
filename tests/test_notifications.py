@@ -446,3 +446,53 @@ def test_hot_switched_off_by_its_threshold_sends_nothing(prepared):
     database.connect()
     assert database.last_notification("hot") is None
     database.close()
+
+
+def cli_args(config) -> list[str]:
+    return ["--env", "test", "--config-dir", str(config.path.parent)]
+
+
+def test_the_slice_on_an_old_schema_is_refused_in_words(prepared, capsys):
+    """До фазы 5 QA окно читалось из журнала раньше проверки схемы:
+    `OperationalError: no such table: notifications`."""
+    import sqlite3
+
+    from listam.cli import main
+    from listam.wiring import database_path
+
+    connection = sqlite3.connect(database_path(prepared))
+    connection.execute("DROP TABLE notifications")
+    connection.execute("DELETE FROM schema_version WHERE version >= 10")
+    connection.commit()
+    connection.close()
+
+    assert main(cli_args(prepared) + ["matches", "--new"]) == 1
+    assert "схема базы 9" in capsys.readouterr().err
+
+
+def test_the_slice_does_not_leave_an_empty_base_behind(prepared, capsys):
+    """`connect()` на отсутствующем пути заводит пустую базу. После неё
+    `matches` не скачивала копию, а отвечала «схема базы 0… накати
+    миграции» — совет, который не поможет: базы нет вовсе."""
+    from listam.cli import main
+    from listam.wiring import database_path
+
+    path = database_path(prepared)
+    path.unlink()
+
+    assert main(cli_args(prepared) + ["matches", "--new"]) == 1
+    assert not path.exists()
+    assert "базы нет" in capsys.readouterr().err
+
+
+def test_the_view_does_not_leave_an_empty_base_behind(prepared, capsys):
+    """То же у `matches` без `--new`: дверь для чтения у витрины одна."""
+    from listam.cli import main
+    from listam.wiring import database_path
+
+    path = database_path(prepared)
+    path.unlink()
+
+    assert main(cli_args(prepared) + ["matches"]) == 1
+    assert not path.exists()
+    assert "базы нет" in capsys.readouterr().err

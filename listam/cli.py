@@ -392,7 +392,7 @@ def _matches(config, external_id: str | None, limit: int | None,
 def _matches_new(config, external_id: str | None, limit: int | None,
                  min_score: float | None, hours: float | None) -> int:
     from listam.matches_view import (MatchesError, collect_events, display_limit,
-                                     render_events)
+                                     open_for_reading, render_events)
     from listam.matching import settings
     from listam.notifications import tuning_for, window_for
 
@@ -402,9 +402,13 @@ def _matches_new(config, external_id: str | None, limit: int | None,
         limit = display_limit(config)
     # Окно то же, что у `notify --digest`: срез витрины и текст сообщения
     # обязаны показывать одно и то же, иначе сличить их глазами нельзя.
-    # Базу открываем на чтение и без замка: витрина её не чинит.
-    database = build_database(config)
-    database.connect()
+    # Базу открываем на чтение и без замка: витрина её не чинит. Дверь та же,
+    # что у витрины: схема проверена до журнала, пустой файл не заводится.
+    try:
+        database = open_for_reading(config, "События")
+    except MatchesError as exc:
+        print(exc, file=sys.stderr)
+        return 1
     try:
         since, until, note = window_for(config, kind="digest", hours=hours,
                                         database=database)

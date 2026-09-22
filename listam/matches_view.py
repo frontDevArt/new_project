@@ -21,6 +21,7 @@ from listam.domain.events import (CHEAPER, EVENT_LABELS, NEW, RETIRED, REVIVED,
 from listam.domain.labels import MATCH_STATUSES, SELLER_TYPES
 from listam.domain.models import Listing, Match, Request
 from listam.matching import settings
+from listam.ports.database import Database
 from listam.wiring import build_database, build_storage, database_path
 
 MatchRow = tuple[Request, Match, Listing]
@@ -62,6 +63,36 @@ def display_limit(config: Config) -> int:
     return DEFAULT_LIMIT if value is None else int(value)
 
 
+def open_for_reading(config: Config, what: str) -> Database:
+    """База для витрины: без замка, без миграций и без создания файла.
+
+    `connect()` на отсутствующем пути заводит пустую базу. Витрина, открывшая
+    так файл, оставляла на диске 4 КБ без единой таблицы — и следующая
+    `matches` уже не скачивала копию из хранилища, а отвечала «схема 0».
+    `what` — чего не покажут при отказе: «Матчи», «События».
+    """
+    local_db = database_path(config)
+    if not local_db.exists():
+        storage = build_storage(config)
+        if not storage.download(config.get("storage.db_filename", "listam.sqlite"),
+                                local_db):
+            raise MatchesError(
+                f"{what} не показаны: базы нет ни здесь, ни в хранилище — "
+                f"сначала python -m listam scrape"
+            )
+    database = build_database(config)
+    database.connect()
+    required = latest_schema_version()
+    version = database.schema_version()
+    if version < required:
+        database.close()
+        raise MatchesError(
+            f"{what} не показаны: схема базы {version}, а код ждёт {required}. "
+            f"Витрина ничего не мигрирует — накати миграции: python -m listam recheck"
+        )
+    return database
+
+
 def collect_matches(config: Config, *, external_id: str | None = None,
                     min_score: float | None = None,
                     limit: int | None = None) -> MatchesPage:
@@ -79,23 +110,8 @@ def collect_matches(config: Config, *, external_id: str | None = None,
     if min_score is None:
         min_score = settings(config).digest
 
-    storage = build_storage(config)
-    local_db = database_path(config)
-    if not local_db.exists():
-        storage.download(config.get("storage.db_filename", "listam.sqlite"), local_db)
-
-    database = build_database(config)
-    database.connect()
+    database = open_for_reading(config, "Матчи")
     try:
-        required = latest_schema_version()
-        version = database.schema_version()
-        if version < required:
-            raise MatchesError(
-                f"Матчи не показаны: схема базы {version}, а код ждёт {required}. "
-                f"Витрина ничего не мигрирует — накати миграции: "
-                f"python -m listam recheck"
-            )
-
         if external_id is None:
             requests = list(database.iter_requests())
         else:
@@ -270,18 +286,8 @@ def collect_events(config: Config, *, since, until,
     if min_score is None:
         min_score = settings(config).digest
 
-    database = build_database(config)
-    database.connect()
+    database = open_for_reading(config, "События")
     try:
-        required = latest_schema_version()
-        version = database.schema_version()
-        if version < required:
-            raise MatchesError(
-                f"События не показаны: схема базы {version}, а код ждёт {required}. "
-                f"Витрина ничего не мигрирует — накати миграции: "
-                f"python -m listam recheck"
-            )
-
         if external_id is None:
             requests = list(database.iter_requests())
         else:
