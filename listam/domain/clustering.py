@@ -88,7 +88,11 @@ def _groups(listings: list[Listing],
         members.sort(key=lambda item: (item.area, item.id))
         chain = [members[0]]
         for listing in members[1:]:
-            if listing.area - chain[-1].area <= area_tolerance:
+            # Мерка — от первого члена цепочки, а не от предыдущего. Иначе
+            # цепочка разгоняется: 60→62→64→66 при допуске 2 даёт кластер
+            # шириной 6 м², в котором три квартиры из четырёх клиент никогда
+            # не увидит — показывается только самая дешёвая.
+            if listing.area - chain[0].area <= area_tolerance:
                 chain.append(listing)
                 continue
             groups.append((key, chain))

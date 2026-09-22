@@ -28,12 +28,16 @@ def test_areas_two_metres_apart_join_and_three_metres_apart_do_not():
     assert len(set(far.values())) == 2
 
 
-def test_a_chain_of_close_areas_stays_one_cluster():
-    # 85 — 87 — 89: соседи в пределах допуска, края — нет. Это одна квартира,
-    # обмеренная тремя агентствами, а не две разные.
+def test_a_chain_of_close_areas_breaks_where_the_tolerance_ends():
+    # 85 — 87 — 89: соседи в пределах допуска, края — нет. Раньше цепочка
+    # склеивала все три в кластер шириной 4 м²; показывалась одна карточка,
+    # и 89 м² клиент не видел вовсе. Допуск в 2 м² этого не разрешал:
+    # 85 и 89 — разные квартиры, а не одна, обмеренная тремя агентствами.
     items = [make_listing("1", area=85.0), make_listing("2", area=87.0),
              make_listing("3", area=89.0)]
-    assert len(set(assign(items).values())) == 1
+    mapping = assign(items)
+    assert mapping["1"] == mapping["2"]
+    assert mapping["3"] != mapping["1"]
 
 
 def test_a_listing_without_a_street_is_a_cluster_of_its_own():
@@ -91,6 +95,34 @@ def test_a_member_without_a_price_is_never_the_cheapest():
                       make_listing("2", price_usd=139_000.0)])
     assert found[0].cheapest_id == "2"
     assert found[0].spread_usd is None
+
+
+def test_a_chain_does_not_stretch_past_the_tolerance():
+    found = clusters([
+        make_listing("a", area=60.0), make_listing("b", area=62.0),
+        make_listing("c", area=64.0), make_listing("d", area=66.0),
+    ], area_tolerance=2.0)
+    sizes = sorted(cluster.size for cluster in found)
+    assert sizes == [2, 2], (
+        "60 и 66 — разные квартиры: допуск 2 м² не разрешал их склеивать. "
+        "Пары 60+62 и 64+66 он разрешал: ширина каждой ровно 2 м²"
+    )
+
+
+def test_neighbours_inside_the_tolerance_still_meet():
+    found = clusters([make_listing("a", area=60.0), make_listing("b", area=61.9)],
+                     area_tolerance=2.0)
+    assert [cluster.size for cluster in found] == [2], (
+        "бакет разрезал бы их по границе — объединение соседей этого не делает"
+    )
+
+
+def test_the_widest_cluster_is_no_wider_than_the_tolerance():
+    found = clusters([make_listing(f"x{n}", area=60.0 + n * 0.5) for n in range(12)],
+                     area_tolerance=2.0)
+    for cluster in found:
+        areas = [60.0 + int(item[1:]) * 0.5 for item in cluster.listing_ids]
+        assert max(areas) - min(areas) <= 2.0
 
 
 def test_a_name_that_merely_starts_like_an_abbreviation_is_left_alone():
