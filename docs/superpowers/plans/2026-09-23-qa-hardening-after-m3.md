@@ -2672,7 +2672,7 @@ matches.reject_reason) не трогает ничто, MATCH_COMPARED не ра�
 - Изменить: `tests/test_migrations.py:293` (`== 10` → `>= 10`)
 - Тест: `tests/test_migrations.py`
 
-- [ ] **Шаг 1: падающий тест**
+- [x] **Шаг 1: падающий тест**
 
 ```python
 # tests/test_migrations.py — в конец
@@ -2689,12 +2689,12 @@ def test_migration_011_remembers_the_channel_of_a_send(tmp_path):
     database.close()
 ```
 
-- [ ] **Шаг 2: убедиться, что тест падает**
+- [x] **Шаг 2: убедиться, что тест падает**
 
 Запуск: `.venv/Scripts/python.exe -m pytest -q tests/test_migrations.py -k 011`
 Ожидается: FAIL — `assert 'channel' in {…}`.
 
-- [ ] **Шаг 3: миграция**
+- [x] **Шаг 3: миграция**
 
 ```sql
 -- Версия 11: журнал отправок помнит канал.
@@ -2710,13 +2710,13 @@ def test_migration_011_remembers_the_channel_of_a_send(tmp_path):
 ALTER TABLE notifications ADD COLUMN channel TEXT;
 ```
 
-- [ ] **Шаг 4: тесты проходят**
+- [x] **Шаг 4: тесты проходят**
 
 Запуск: `.venv/Scripts/python.exe -m pytest -q tests/test_migrations.py`
 Ожидается: PASS после правки `== 10` → `>= 10` в
 `test_migration_010_…` (строка 293) — это ожидаемое следствие новой миграции.
 
-- [ ] **Шаг 5: коммит**
+- [x] **Шаг 5: коммит**
 
 ```bash
 git add listam/migrations/011_notification_channel.sql tests/test_migrations.py
@@ -2737,7 +2737,7 @@ Notification.channel: str | None = None
 Database.last_notification(kind: str, channel: str | None = None) -> Notification | None
 ```
 
-- [ ] **Шаг 1: падающие контрактные тесты**
+- [x] **Шаг 1: падающие контрактные тесты**
 
 ```python
 # tests/contracts/test_database_contract.py — после test_kinds_of_notification_do_not_mix
@@ -2764,12 +2764,12 @@ def test_a_send_from_before_the_channels_counts_for_every_channel(db):
     assert db.last_notification("digest", channel="telegram").window_to == LATER
 ```
 
-- [ ] **Шаг 2: убедиться, что тесты падают**
+- [x] **Шаг 2: убедиться, что тесты падают**
 
 Запуск: `.venv/Scripts/python.exe -m pytest -q tests/contracts/test_database_contract.py -k "channel"`
 Ожидается: FAIL — `TypeError: Notification.__init__() got an unexpected keyword argument 'channel'`.
 
-- [ ] **Шаг 3: модель, порт, адаптер**
+- [x] **Шаг 3: модель, порт, адаптер**
 
 ```python
 # listam/domain/models.py — в Notification, после notes
@@ -2828,7 +2828,7 @@ def test_a_send_from_before_the_channels_counts_for_every_channel(db):
         )
 ```
 
-- [ ] **Шаг 4: контракт целиком и коммит**
+- [x] **Шаг 4: контракт целиком и коммит**
 
 Запуск: `.venv/Scripts/python.exe -m pytest -q tests/contracts/test_database_contract.py`
 Ожидается: PASS.
@@ -2853,7 +2853,7 @@ notify_channel(config: Config) -> str          # "none" | "stdout" | "telegram"
 window_for(config, kind, hours=None, database=None, channel=None) -> tuple[datetime, datetime, str]
 ```
 
-- [ ] **Шаг 1: падающие тесты**
+- [x] **Шаг 1: падающие тесты**
 
 ```python
 def test_a_channel_that_goes_nowhere_does_not_move_the_window(prepared):
@@ -2888,12 +2888,12 @@ def test_text_printed_to_the_console_does_not_move_the_telegram_window(
     assert "Заявка R-1" in sent[0]
 ```
 
-- [ ] **Шаг 2: убедиться, что тесты падают**
+- [x] **Шаг 2: убедиться, что тесты падают**
 
 Запуск: `.venv/Scripts/python.exe -m pytest -q tests/test_notifications.py -k "goes_nowhere or printed_to_the_console"`
 Ожидается: FAIL — `assert True is False` и `assert 0 == 2`.
 
-- [ ] **Шаг 3: имя канала — из конфига**
+- [x] **Шаг 3: имя канала — из конфига**
 
 ```python
 # listam/wiring.py — после build_notifier
@@ -2908,7 +2908,7 @@ def notify_channel(config: Config) -> str:
     return "none" if kind in ("none", "null") else kind
 ```
 
-- [ ] **Шаг 4: окно по каналу, `none` — без журнала**
+- [x] **Шаг 4: окно по каналу, `none` — без журнала**
 
 ```python
 # listam/notifications.py — импорт
@@ -2963,7 +2963,7 @@ def window_for(config: Config, kind: str, hours: float | None = None,
                 ))
 ```
 
-- [ ] **Шаг 5: срез в терминале показывает окно того же канала**
+- [x] **Шаг 5: срез в терминале показывает окно того же канала**
 
 ```python
 # listam/cli.py — в _matches_new
@@ -2976,7 +2976,7 @@ def window_for(config: Config, kind: str, hours: float | None = None,
                                         channel=notify_channel(config))
 ```
 
-- [ ] **Шаг 6: батарея и коммит**
+- [x] **Шаг 6: батарея и коммит**
 
 Запуск: `.venv/Scripts/python.exe -m pytest -q`
 Ожидается: 814 passed, 25 skipped. Тест `test_a_send_writes_one_line_in_the_journal`
@@ -2993,7 +2993,7 @@ git commit -m "fix(notify): канал none не двигает окно, кон
 - Изменить: `listam/adapters/notify_telegram.py`
 - Тест: `tests/test_notify_telegram.py`
 
-- [ ] **Шаг 1: падающие тесты**
+- [x] **Шаг 1: падающие тесты**
 
 ```python
 # tests/test_notify_telegram.py — в конец
@@ -3059,12 +3059,12 @@ def test_a_wait_longer_than_a_minute_is_not_waited(monkeypatch):
     assert max(waited) <= 60
 ```
 
-- [ ] **Шаг 2: убедиться, что тесты падают**
+- [x] **Шаг 2: убедиться, что тесты падают**
 
 Запуск: `.venv/Scripts/python.exe -m pytest -q tests/test_notify_telegram.py -k "too_many or keeps_saying or longer_than_a_minute"`
 Ожидается: FAIL в первом и третьем — `NotifyError: Telegram отказал (код 429)`.
 
-- [ ] **Шаг 3: повтор только там, где часть точно не принята**
+- [x] **Шаг 3: повтор только там, где часть точно не принята**
 
 ```python
 # listam/adapters/notify_telegram.py — после DEFAULT_PAUSE
@@ -3137,14 +3137,14 @@ def _retry_after(answer) -> float | None:
             ))
 ```
 
-- [ ] **Шаг 4: тесты адаптера целиком**
+- [x] **Шаг 4: тесты адаптера целиком**
 
 Запуск: `.venv/Scripts/python.exe -m pytest -q tests/test_notify_telegram.py`
 Ожидается: PASS. `test_a_network_failure_does_not_leak_the_token` бросает
 `requests.ConnectionError` на каждый вызов — теперь их будет четыре вместо
 одного, и отказ прежний. Если тест считает вызовы — поправь число и запиши.
 
-- [ ] **Шаг 5: батарея и коммит**
+- [x] **Шаг 5: батарея и коммит**
 
 Запуск: `.venv/Scripts/python.exe -m pytest -q` → 817 passed, 25 skipped.
 
@@ -3155,14 +3155,165 @@ git commit -m "fix(telegram): 429 выжидается, и доставленн�
 
 ### Конец фазы 6
 
-- [ ] Миграция 011 на копии базы приёмки: числа `notifications` до и после
+- [x] Миграция 011 на копии базы приёмки: числа `notifications` до и после
       (`count(*)`, `max(id)`), `channel` у старых строк (ожидается `NULL`
       у всех), время `migrate()`.
-- [ ] `notify.kind: none` на копии → `notify --hot`: текст и `count(*)`
+- [x] `notify.kind: none` на копии → `notify --hot`: текст и `count(*)`
       журнала до и после.
-- [ ] Живого Telegram в этой фазе нет. 429 живьём не вызывается нарочно — он
+- [x] Живого Telegram в этой фазе нет. 429 живьём не вызывается нарочно — он
       закрыт модульным тестом; запиши это в отчёт как «не проверено живьём».
-- [ ] «Результат фазы 6», стартовый промпт фазы 7, чисто, коммит.
+- [x] «Результат фазы 6», стартовый промпт фазы 7, чисто, коммит.
+
+## Результат фазы 6
+
+**Сделано.** Четыре коммита, по задаче на коммит:
+
+- `165539b` — задача 6.1. `listam/migrations/011_notification_channel.sql`
+  слово в слово из плана; в `test_migration_010_…` `== 10` → `>= 10`. Тест
+  до правки: `AssertionError: assert 'channel' in {'events', 'id', 'kind',
+  'notes', 'requests', 'sent_at', ...}`.
+- `eeffc28` — задача 6.2. `Notification.channel`, `last_notification(kind,
+  channel=None)` в порте и адаптере, `record_notification` пишет канал. Оба
+  контрактных теста до правки падали `TypeError`, но разным: первый —
+  `Notification.__init__() got an unexpected keyword argument 'channel'`,
+  второй (строка без канала) — `SqliteDatabase.last_notification() got an
+  unexpected keyword argument 'channel'`.
+- `ffb91bb` — задача 6.3. `notify_channel` в `listam/wiring.py`;
+  `window_for(…, channel=)`; в `run_notify` проверка канала `none` стоит
+  сразу после проверки порога `null`, до сборки канала; строка журнала
+  пишет `channel`; `_matches_new` меряет окно канала из конфига. Тесты до
+  правки: `assert True is False` и `assert 0 == 2` — как в плане.
+  `test_a_send_writes_one_line_in_the_journal` зелёный.
+- `b7ab0af` — задача 6.4. `MAX_RETRIES`, `MAX_WAIT`, `_retry_after`,
+  `_deliver` — из плана, с одним сужением (см. «Что разошлось»). До правки
+  упали первый и третий тест (`NotifyError: Telegram отказал (код 429)`),
+  второй прошёл — как в плане.
+- `matches.status`/`reject_reason` не тронуты, `MATCH_COMPARED` не расширен,
+  пороги те же, `listam/crawler.py` не тронут, других миграций нет, в
+  Telegram не ушло ничего. Новый аргумент порта (`channel`) — два
+  контрактных теста в `tests/contracts/test_database_contract.py`.
+
+**Батарея.** `.venv/Scripts/python.exe -m pytest -q`:
+после `165539b` — **813 passed, 25 skipped** (99,60 с) = 812 + 1;
+после `eeffc28` — **815 passed, 25 skipped** (96,04 с) = 813 + 2;
+после `ffb91bb` — **817 passed, 25 skipped** (94,25 с) = 815 + 2;
+после `b7ab0af` — **822 passed, 25 skipped** (93,58 с) = 817 + 5.
+Схема базы — **11**.
+
+**Живая проверка.** Папка `p6` в scratchpad: конфиги `none`, `stdout`,
+`telegram` (`token: t`, `chat_id: 1`, только `--dry-run`) — копии
+`config/dev.yaml` с `storage.work_dir`/`directory` в scratchpad,
+`db_filename: qa6.sqlite`, `requests.kind: none`, `rate.kind: fixed` (390).
+Перед каждой серией копия `data/listam-m3.sqlite` (оригинал не тронут: те же
+36 225 024 байт, mtime 01:05) кладётся и в `work_dir`, и в хранилище. Всё —
+`PYTHONIOENCODING=utf-8 python -m listam --env dev --config-dir <конфиг> …`;
+«до» — `git worktree` на `d1062d6` в scratchpad, потом удалён.
+
+Миграция 011 на отдельной копии (скрипт: `SqliteDatabase.connect()`,
+`migrate()` под `time.perf_counter()`):
+
+| | До | После |
+| --- | --- | --- |
+| схема | 10 | 11 |
+| `notifications`: `count(*)`, `max(id)` | 14, 14 | 14, 14 |
+| `channel IS NULL` из всех | колонки нет | 14 из 14 |
+| `migrate()` | — | 0,123 с |
+
+Последняя строка `hot` в журнале копии — `id 7`, `window_to`
+2026-09-22T20:58:02 UTC.
+
+| Проверка | До (`d1062d6`) | После (`b7ab0af`) |
+| --- | --- | --- |
+| `none`: `notify --hot` | код 0; «Событий: 20, заявок: 14, отправлено»; журнал 14 → **15** строк, новая — `hot`, 20 событий | код 0; «notify.kind: none — уведомления никуда не идут. Окно не сдвинуто: канал, когда появится, получит всё накопленное»; «Событий: 0, заявок: 0, не отправлено»; журнал 14 → **14** |
+| затем `stdout`: `notify --hot --dry-run` | «Звони сейчас: событий нет (с прошлой отправки (22.09 22:58 UTC))», «Событий: 0» — **съедено** строкой `none` | — |
+| `stdout`: `notify --hot` | — | «с прошлой отправки (22.09 20:58 UTC)»; «Событий: 20, заявок: 14, отправлено»; журнал 14 → 15, новая строка `(15, 'hot', 20, 'stdout')` |
+| затем `telegram`: `notify --hot --dry-run` | — | «с прошлой отправки (22.09 20:58 UTC)»; «Событий: 20, заявок: 14, не отправлено (пробный прогон)» — строка `stdout` окно Telegram **не сдвинула** |
+| затем `stdout`: `notify --hot --dry-run` | — | «событий нет (с прошлой отправки (22.09 22:58 UTC))» — своё окно `stdout` сдвинуто |
+| `telegram` и `stdout`: `matches --new` | — | оба: «Что нового: событий нет (с прошлой отправки (22.09 21:05 UTC))» — дайджестов в серии не было, окно одно (строка `id 14` без канала) |
+
+Часы машины сразу после замеров: `date -u` → `Tue Sep 22 22:59:23 UTC 2026`.
+
+**429 живьём не проверено.** Живого Telegram в фазе нет, 429 нарочно не
+вызывался; закрыт модульными тестами `tests/test_notify_telegram.py`.
+
+**Что разошлось с планом.**
+
+- **Повтор на `requests.ConnectionError` сужен.** Код плана повторял часть
+  на любой `ConnectionError`, а docstring обещал повтор только там, где
+  соединение не установилось. `requests` зовёт `ConnectionError` и обрыв
+  **после** отправки (`ProtocolError("Connection aborted.")`,
+  `requests/adapters.py:710`): часть могла дойти, и повтор даёт брокеру
+  дубль — ровно H-4 с другого входа. Добавлен `_never_connected`: повтор —
+  на `ConnectTimeout` или на `MaxRetryError` с причиной `ConnectTimeoutError`
+  (её подкласс — `NewConnectionError`; проверено на `urllib3 2.8.0`,
+  `requests 2.34.2`). `urllib3` — обязательная зависимость `requests`, не
+  новая. Два теста сверх плана:
+  `test_a_connection_torn_after_the_send_is_not_repeated` — на коде плана
+  упал `assert 4 == 1` (часть ушла четыре раза), после сужения зелёный;
+  `test_a_connection_that_never_opened_is_tried_again` — сторож сужения,
+  зелёный и до, и после.
+- **`test_a_network_failure_does_not_leak_the_token`** бросает
+  `ConnectionError` со строкой, а не с `MaxRetryError`, — повтора нет, вызов
+  один, как и до фазы (план ждал четыре). Вызовов тест не считает, не правился.
+- **`test_a_refusal_in_the_middle_says_how_much_already_arrived`** слал на
+  третьей части `429` как пример отказа. После 6.4 429 выжидается, и тест
+  упал `StopIteration` (ответы в `iter` кончились). Суть теста — отказ
+  посреди отправки говорит, сколько дошло; статус заменён на `400 Bad
+  Request`. План этого не предвидел.
+- Комментарий `MAX_RETRIES` — «сколько раз повторить часть, которую Telegram
+  точно не принял», а не «сколько раз ждать»: счёт общий и для 429, и для
+  несостоявшегося соединения.
+- **Батарея 822 против ожидавшихся 820:** +2 — тесты сверх плана выше.
+  Числа фазы 7 в плане — исходные, без сдвигов (817 → 820). Сдвиг от
+  исходного — **+5**: после 7.1 — 822, 7.2 — 823, 7.3 — 824, 7.4 — **825**.
+- `README.md` не тронут: он не описывает ни канал в журнале, ни `kind: none`,
+  ни 429. Дописывает фаза 8 (вместе с `${VAR:-}` из фазы 5).
+
+## Стартовый промпт для фазы 7
+
+```
+Ты продолжаешь работу над инструментом мониторинга list.am
+в C:\Users\Admin\Downloads\list.
+
+Прочитай docs/superpowers/plans/2026-09-23-qa-hardening-after-m3.md:
+разделы «Что нашёл аудит», «Global Constraints», «Карта файлов»,
+«Результат фазы 6» и свою «Фазу 7». Чужие фазы не трогай. Рядом
+лежат спеки M2 и M3 — их решения в силе:
+docs/superpowers/specs/2026-09-22-m3-notifications-design.md (решения 1–12),
+docs/superpowers/specs/2026-09-22-m2-requests-and-matching-design.md
+(решения 1–11). Фаза 7 ни одно из них не уточняет.
+
+Исходное состояние: HEAD — коммит «docs: результат фазы 6 QA после M3»
+(следующий за b7ab0af), дерево чистое, батарея 822 passed, 25 skipped,
+схема базы 11. База для замеров — копия data/listam-m3.sqlite в scratchpad,
+не оригинал; клади её и в work_dir, и в storage.directory.
+
+Твоя задача — фаза 7: долг, который не меняет поведения для брокера, кроме
+одного места (R-1, R-2, R-3, L-1). Мёртвая ветка needs_schema уходит из
+working_session; уведомление читает базу своей сессии, а не открывает
+вторую; пометку широкой заявки ставит витрина, а не разбор напечатанного
+текста; у каждой части разрезанного раздела — шапка заявки. Адаптер
+Telegram после фазы 6 шлёт части через _deliver (429 и несостоявшееся
+соединение повторяются, обрыв после отправки — нет): split_message правь,
+не ломая этого.
+
+Работай по шагам задач: на каждое поведение — падающий тест ДО правки.
+Тесты гоняй только .venv/Scripts/python.exe -m pytest -q, любой прогон CLI
+из скрипта — только с PYTHONIOENCODING=utf-8. Пороги в конфиге не поднимай.
+Новый метод порта или новый аргумент метода порта — это новый контрактный
+тест в tests/contracts/. Схему не меняй: миграция 011 была последней.
+listam/crawler.py не правится. След звонка (matches.status,
+matches.reject_reason) не трогает ничто, MATCH_COMPARED не расширяется.
+Живого Telegram в этой фазе нет.
+Числа батареи в плане фазы 7 — исходные; сдвиг +5 (см. «Результат фазы 6»):
+ожидается 822 → 823 → 824 → 825.
+Ни одного числа в отчёте без команды, которая его напечатала.
+
+В конце сессии допиши в план раздел «Результат фазы 7»: что сделано, числа
+батареи, что разошлось с планом и почему, и стартовый промпт для фазы 8.
+Сделай коммит.
+```
+
 
 ---
 
