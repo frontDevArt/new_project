@@ -243,3 +243,33 @@ def test_the_feed_message_keeps_the_tail_honest(prepared):
     assert report.events == 2
     assert "На ленте: новых 2" in report.text
     assert "…и ещё 1 — python -m listam changes" in report.text
+
+
+def test_a_wide_mark_does_not_stick_to_a_neighbour(prepared):
+    """`R-1` — префикс `R-11`. Пометка, приклеенная по началу строки, вешала
+    на узкого соседа чужой счётчик: на боевой базе их выходило 77 на 50 заявок.
+
+    Широкая здесь именно `R-1` — два события против потолка в одно, — а `R-11`
+    с одним событием обязан остаться неотмеченным.
+    """
+    database = build_database(prepared)
+    database.connect()
+    database.upsert_request(Request(external_id="R-11", client_name="Тигран"), now=NOW)
+    neighbour = database.get_request("R-11")
+    database.upsert_listing(
+        Listing(id="2", url="https://www.list.am/ru/item/2", district="Кентрон",
+                price_usd=100000.0, area=60.0, rooms=2),
+        seen_at=NOW,
+    )
+    database.upsert_matches(
+        [Match(request_id=neighbour.id, listing_id="2", score=80.0)],
+        datetime.now(timezone.utc),
+    )
+    database.close()
+    prepared.data["notify"]["digest"]["wide_request"] = 1
+
+    report = run_notify(prepared, kind="digest", dry_run=True)
+
+    assert report.text.count("слишком широкая") == 1
+    marked = [line for line in report.text.splitlines() if "слишком широкая" in line]
+    assert "2 событий" in marked[0]

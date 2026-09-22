@@ -154,7 +154,7 @@ def run_notify(config: Config, *, kind: str, dry_run: bool = False) -> NotifyRep
                 window_from=since, window_to=until,
                 events=report.events, requests=report.requests, text=report.text,
             ))
-            publish(session, config, "журнал уведомлений")
+            publish(session, config, "база с журналом уведомлений")
             report.errors += session.failures
     except SessionRefused as exc:
         report.errors = 1
@@ -178,11 +178,14 @@ def _match_text(page, config: Config, kind: str) -> str:
     wide = positive(config, "notify.digest.wide_request", 50)
     if wide is None:
         return text
+    # Пробел после ключа обязателен: `R-1` — начало `R-11`, и пометка без него
+    # садилась на узкого соседа с чужим счётчиком. На боевой базе таких пометок
+    # выходило 77 на 50 заявок.
     marked = []
     for line in text.splitlines():
         marked.append(line)
         for key, total in page.totals.items():
-            if line.startswith(f"Заявка {key}") and total > int(wide):
+            if line.startswith(f"Заявка {key} ") and total > int(wide):
                 marked.append(
                     f"  ⚠ заявка слишком широкая: {total} событий за окно. "
                     f"Сузь районы или бюджет, иначе разговор не состоится"
