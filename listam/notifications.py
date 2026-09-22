@@ -143,12 +143,20 @@ def run_notify(config: Config, *, kind: str, dry_run: bool = False) -> NotifyRep
         report.scope = "тумблер выключен"
         return report
 
+    tuning = settings(config)
+    min_score = tuning.hot if kind == "hot" else tuning.digest
+    if kind != "feed" and min_score is None:
+        # Порог выключен (`null`) — подбор таких вариантов не считает вовсе.
+        # Подставить чужой порог значило бы слать под именем «горячего»
+        # то, что человек горячим не назвал.
+        report.scope = "порог выключен"
+        report.text = (f"порог match.thresholds.{kind} выключен (null): подбор "
+                       f"таких вариантов не считает, слать нечего")
+        return report
+
     # Канал собирается до работы: пустой секрет — отказ на входе, а не после
     # выборки под замком рабочей копии. Пробному прогону канал не нужен.
     notifier = None if dry_run else build_notifier(config)
-
-    tuning = settings(config)
-    min_score = tuning.hot if kind == "hot" else tuning.digest
     notes: list[str] = []
     try:
         with working_session(config) as session:

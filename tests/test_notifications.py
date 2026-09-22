@@ -429,3 +429,20 @@ def test_a_senseless_notify_setting_is_refused_before_the_work(
 
     with pytest.raises(ConfigError, match=f"notify.digest.{key}"):
         run_notify(prepared, kind="digest", dry_run=True)
+
+
+def test_hot_switched_off_by_its_threshold_sends_nothing(prepared):
+    """`hot: null` у подбора значит «горячих не бывает». До фазы 5 QA
+    `collect_events` подставлял вместо него порог дайджеста, и «Звони сейчас»
+    уходил с вариантами на 41 балл."""
+    prepared.data["match"]["thresholds"]["hot"] = None
+
+    report = run_notify(prepared, kind="hot")
+
+    assert report.sent is False
+    assert report.events == 0
+    assert "match.thresholds.hot" in report.text
+    database = build_database(prepared)
+    database.connect()
+    assert database.last_notification("hot") is None
+    database.close()
