@@ -6,6 +6,7 @@
     python -m listam export          выгрузить текущую базу в .xlsx
     python -m listam requests        прочитать заявки покупателей из источника
     python -m listam cluster         пересчитать кластеры-дубли по базе
+    python -m listam match           подобрать объявления под заявки
     python -m listam changes         что принёс последний прогон
 
 Окружение выбирается переменной APP_ENV или флагом --env.
@@ -59,6 +60,14 @@ def build_parser() -> argparse.ArgumentParser:
 
     commands.add_parser("cluster",
                         help="пересчитать кластеры-дубли по всей базе")
+
+    match = commands.add_parser("match", help="подобрать объявления под заявки")
+    match.add_argument("--request",
+                       help="внешний идентификатор заявки: подобрать по всей базе")
+    match.add_argument("--new", action="store_true",
+                       help="только объявления, которые принёс последний прогон")
+    match.add_argument("--all", action="store_true",
+                       help="пересчитать все активные заявки по всей базе")
 
     changes = commands.add_parser("changes", help="что принёс последний прогон")
     changes.add_argument("--hours", type=float,
@@ -138,6 +147,32 @@ def main(argv: list[str] | None = None) -> int:
     if args.command == "cluster":
         return _cluster(config)
 
+    if args.command == "match":
+        # Три флага — три разные выборки, и «оба сразу» не значит ничего.
+        # Бессмысленный ввод отклоняется на входе, а не истолковывается:
+        # угадав за человека, мы пересчитали бы не то, что он просил.
+        chosen = [
+            name for name, on in (("--request", bool(args.request)),
+                                  ("--new", args.new), ("--all", args.all)) if on
+        ]
+        if len(chosen) > 1:
+            print(
+                f"{' и '.join(chosen)} вместе не работают: это три разных выборки. "
+                "Выбери одно.",
+                file=sys.stderr,
+            )
+            return 2
+        if not chosen:
+            print(
+                "Нечего подбирать: укажи --request <id> для одной заявки, "
+                "--new для объявлений последнего прогона или --all "
+                "для полного пересчёта.",
+                file=sys.stderr,
+            )
+            return 2
+        return _match(config, external_id=args.request, only_new=args.new,
+                      recount_all=args.all)
+
     if args.command == "changes":
         # Разбор аргументов — дело командной строки: `run_changes` про коды
         # возврата ничего не знает. Бессмысленный ввод отклоняется на входе,
@@ -213,6 +248,15 @@ def _cluster(config) -> int:
     from listam.clustering_run import run_clustering
 
     report = run_clustering(config)
+    print(report.render())
+    return 1 if report.errors else 0
+
+
+def _match(config, external_id: str | None, only_new: bool, recount_all: bool) -> int:
+    from listam.matching import run_match
+
+    report = run_match(config, external_id=external_id, only_new=only_new,
+                       recount_all=recount_all)
     print(report.render())
     return 1 if report.errors else 0
 

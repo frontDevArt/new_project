@@ -436,3 +436,37 @@ def test_cluster_run_twice_changes_nothing(project, capsys):
 
     assert run(project, "cluster") == 0
     assert "Изменено строк: 0" in capsys.readouterr().out
+
+
+# --- listam match (фаза 5 M2) -----------------------------------------
+
+def test_match_refuses_two_scopes_at_once(project, capsys):
+    assert run(project, "match", "--new", "--all") == 2
+    assert "вместе не работают" in capsys.readouterr().err
+
+
+def test_match_without_a_scope_explains_the_three_options(project, capsys):
+    assert run(project, "match") == 2
+    err = capsys.readouterr().err
+    assert "--request" in err and "--new" in err and "--all" in err
+
+
+def test_match_picks_listings_for_a_request(project, capsys):
+    run(project, "scrape")
+    with_requests(project, "R-1,Ани,+374,active,1000000,,,,,,,,,нет,нет,,,,\n")
+    run(project, "requests")
+    capsys.readouterr()
+
+    assert run(project, "match", "--all") == 0
+
+    out = capsys.readouterr().out
+    assert "Подбор: вся база" in out
+    assert "Матчи: новых" in out
+
+
+def test_match_on_an_unknown_request_is_an_error(project, capsys):
+    run(project, "scrape")
+    capsys.readouterr()
+
+    assert run(project, "match", "--request", "R-404") == 1
+    assert "R-404" in capsys.readouterr().out
