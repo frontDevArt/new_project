@@ -14,7 +14,10 @@ from typing import Any
 import yaml
 from dotenv import load_dotenv
 
-PLACEHOLDER = re.compile(r"\$\{([A-Za-z_][A-Za-z0-9_]*)\}")
+# `${VAR}` — обязательный секрет: без него конфиг не грузится. `${VAR:-}` —
+# необязательный: пусто — значит пусто, и отказать вправе только тот, кому
+# он нужен. Канал уведомлений — не ключ обхода.
+PLACEHOLDER = re.compile(r"\$\{([A-Za-z_][A-Za-z0-9_]*)(:-)?\}")
 
 
 class ConfigError(Exception):
@@ -59,9 +62,11 @@ def _substitute(node: Any) -> Any:
         return [_substitute(v) for v in node]
     if isinstance(node, str):
         def replace(m: re.Match) -> str:
-            name = m.group(1)
+            name, optional = m.group(1), m.group(2)
             value = os.environ.get(name)
             if value is None or value == "":
+                if optional:
+                    return ""
                 raise ConfigError(
                     f"Переменная окружения {name} не задана, а конфиг на неё ссылается. "
                     f"Добавь её в .env (образец — .env.example)."

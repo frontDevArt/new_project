@@ -305,3 +305,32 @@ def test_a_word_where_a_number_belongs_is_refused_by_name(tmp_path):
 
     with pytest.raises(ConfigError, match="notify.hot.per_request"):
         positive(config, "notify.hot.per_request", 10)
+
+
+def test_an_optional_placeholder_may_stay_empty(tmp_path, monkeypatch):
+    """`${VAR:-}` — секрет, без которого конфиг грузится: отказать должен тот,
+    кому он нужен, а не загрузка конфига."""
+    d = write_cfg(tmp_path, "dev", "notify:\n  token: ${TELEGRAM_BOT_TOKEN:-}\n")
+    monkeypatch.delenv("TELEGRAM_BOT_TOKEN", raising=False)
+
+    config = load_config(env="dev", config_dir=d, dotenv_path=tmp_path / ".env")
+
+    assert config.get("notify.token") == ""
+
+
+def test_the_shipped_prod_config_loads_without_telegram_keys(tmp_path, monkeypatch):
+    """Без токена бота `scrape` обязан стартовать; отказать вправе только
+    `notify`. До фазы 5 QA пустой TELEGRAM_BOT_TOKEN останавливал все команды."""
+    from listam.wiring import build_notifier
+
+    monkeypatch.setenv("GDRIVE_FOLDER", "folder-abc123")
+    monkeypatch.setenv("GDRIVE_CREDENTIALS_FILE", "credentials.json")
+    monkeypatch.delenv("TELEGRAM_BOT_TOKEN", raising=False)
+    monkeypatch.delenv("TELEGRAM_CHAT_ID", raising=False)
+
+    config = load_config(env="prod", config_dir=ROOT / "config",
+                         dotenv_path=tmp_path / ".env")
+
+    assert config.get("notify.kind") == "telegram"
+    with pytest.raises(ConfigError, match="TELEGRAM_BOT_TOKEN"):
+        build_notifier(config)
