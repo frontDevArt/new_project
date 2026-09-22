@@ -259,7 +259,19 @@ def test_migration_008_adds_the_end_of_a_match_life(tmp_path):
     db.connect()
     db.migrate()
 
-    assert db.schema_version() == 8
+    assert db.schema_version() >= 8     # дальше идут миграции QA-ужесточения
     columns = {row["name"] for row in db.conn.execute("PRAGMA table_info(matches)")}
     assert {"retired_at", "retired_reason"} <= columns
+    db.close()
+
+
+def test_migration_009_remembers_when_a_request_was_matched(tmp_path):
+    """Схема 9: заявка помнит, когда по ней последний раз шёл подбор."""
+    db = SqliteDatabase(tmp_path / "m9.sqlite")
+    db.connect()
+    db.migrate()
+
+    assert db.schema_version() == 9
+    columns = {row["name"] for row in db.conn.execute("PRAGMA table_info(requests)")}
+    assert "matched_at" in columns
     db.close()
