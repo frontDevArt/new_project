@@ -4523,7 +4523,7 @@ docs/superpowers/specs/2026-09-22-m3-notifications-design.md — решения 
 (docs/superpowers/specs/2026-09-22-m2-requests-and-matching-design.md)
 тоже в силе.
 
-Исходное состояние: HEAD <ХЭШ ФАЗЫ 3>, дерево чистое,
+Исходное состояние: HEAD `a089e13`, дерево чистое,
 батарея 723 passed, 18 skipped, схема базы 10. База для замеров —
 data/listam-m3.sqlite (20 842 объявления, 51 548 матчей, схема 10);
 база потока по шагам ленты — data/listam-flow.sqlite (тоже схема 10,
