@@ -10,7 +10,7 @@ from __future__ import annotations
 from dataclasses import dataclass
 from datetime import datetime, timedelta, timezone
 
-from listam.config import Config, ConfigError, positive, threshold
+from listam.config import Config, ConfigError, hours, positive, switch
 from listam.domain.events import RETIRED
 from listam.domain.models import Notification
 from listam.matches_view import collect_events, render_events
@@ -45,9 +45,7 @@ def window_for(config: Config, kind: str, hours: float | None = None,
             f"с прошлой отправки ({last.window_to:%d.%m %H:%M} UTC)"
         )
 
-    fallback = threshold(config, f"notify.{kind}.fallback_hours",
-                         DEFAULT_FALLBACK_HOURS[kind])
-    fallback = DEFAULT_FALLBACK_HOURS[kind] if fallback is None else float(fallback)
+    fallback = tuning_for(config, kind).fallback_hours
     since = until - timedelta(hours=fallback)
     return since, until, (
         f"отправок ещё не было — беру последние {fallback:g} ч "
@@ -85,27 +83,41 @@ class NotifyReport:
         return "\n".join(lines)
 
 
-def enabled(config: Config, kind: str) -> bool:
-    """Тумблер вида уведомления. Выключено — это решение человека, не ошибка."""
-    return bool(threshold(config, f"notify.{kind}.enabled", True))
+@dataclass
+class NotifyTuning:
+    """Ручки одного вида уведомления, прочитанные и проверенные разом."""
+
+    enabled: bool
+    per_request: int | None      # строк на заявку; у ленты — notify.feed.limit
+    fallback_hours: float        # окно, когда отправок этого вида ещё не было
+    wide_request: int | None = None
+    include_retired: bool = False
 
 
-def per_request(config: Config, kind: str) -> int | None:
-    """Сколько строк на заявку. Ноль бессмыслен — это счётчик строк."""
-    key = f"notify.{kind}.limit" if kind == "feed" else f"notify.{kind}.per_request"
-    value = positive(config, key, 10)
-    return None if value is None else int(value)
+def tuning_for(config: Config, kind: str) -> NotifyTuning:
+    """Секция `notify.<kind>` целиком — или `ConfigError` с именем ключа.
 
+    Читается до замка и до базы. `enabled: "false"` в кавычках — непустая
+    строка, и `bool()` читал её как «да»; `fallback_hours: -48` давал окно
+    из будущего. И то и другое отклоняется на входе, как `--limit 0`.
 
-def shows_closures(config: Config, kind: str) -> bool:
-    """Идёт ли в текст тихий раздел «отпало».
-
-    В «горячее» — никогда (решение 1 спеки M3): закрытие не повод звонить.
-    В дайджест — по тумблеру `notify.digest.include_retired`.
+    Закрытия идут только в дайджест: в «горячее» — никогда (решение 1 спеки
+    M3), и тумблера для него нет нарочно.
     """
-    if kind != "digest":
-        return False
-    return bool(threshold(config, "notify.digest.include_retired", True))
+    base = f"notify.{kind}"
+    limit_key = f"{base}.limit" if kind == "feed" else f"{base}.per_request"
+    limit = positive(config, limit_key, 10)
+    tuning = NotifyTuning(
+        enabled=switch(config, f"{base}.enabled", True),
+        per_request=None if limit is None else int(limit),
+        fallback_hours=hours(config, f"{base}.fallback_hours",
+                             DEFAULT_FALLBACK_HOURS[kind]),
+    )
+    if kind == "digest":
+        wide = positive(config, f"{base}.wide_request", 50)
+        tuning.wide_request = None if wide is None else int(wide)
+        tuning.include_retired = switch(config, f"{base}.include_retired", True)
+    return tuning
 
 
 def run_notify(config: Config, *, kind: str, dry_run: bool = False) -> NotifyReport:
@@ -122,8 +134,11 @@ def run_notify(config: Config, *, kind: str, dry_run: bool = False) -> NotifyRep
     if kind not in KINDS:
         raise ConfigError(f"вид уведомления {kind!r} не из списка: {', '.join(KINDS)}")
 
+    # Секция `notify` проверяется до замка и до базы: бессмысленное значение
+    # отклоняется на входе, а не посреди выборки под замком рабочей копии.
+    knobs = tuning_for(config, kind)
     report = NotifyReport(kind=kind, dry_run=dry_run)
-    if not enabled(config, kind):
+    if not knobs.enabled:
         report.text = f"уведомления вида {kind} выключены в конфиге (notify.{kind}.enabled)"
         report.scope = "тумблер выключен"
         return report
@@ -145,18 +160,18 @@ def run_notify(config: Config, *, kind: str, dry_run: bool = False) -> NotifyRep
             report.scope = scope
 
             if kind == "feed":
-                report.text, report.events = _feed_text(database, config, since, until)
+                report.text, report.events = _feed_text(database, knobs, since, until)
             else:
                 page = collect_events(config, since=since, until=until,
                                       min_score=min_score, note=scope,
-                                      include_retired=shows_closures(config, kind))
+                                      include_retired=knobs.include_retired)
                 calls = page.calls()
                 report.events = len(calls)
                 report.retired = len(page.events) - len(calls)
                 # Заявка, у которой только закрытия, звонка не требует и
                 # в счёт заявок не входит.
                 report.requests = len({event.match.request_id for event in calls})
-                report.text = _match_text(page, config, kind)
+                report.text = _match_text(page, knobs, kind)
 
             if dry_run:
                 notes.append("пробный прогон: не отправлено, журнал не тронут")
@@ -194,18 +209,18 @@ def run_notify(config: Config, *, kind: str, dry_run: bool = False) -> NotifyRep
     return report
 
 
-def _match_text(page, config: Config, kind: str) -> str:
+def _match_text(page, knobs: NotifyTuning, kind: str) -> str:
     """Текст уведомления по заявкам плюс пометка слишком широких заявок.
 
     Широкая заявка — это разговор с брокером, а не с рынком: 10 250 матчей
     и 7 515 горячих на одной заявке боевая приёмка уже видела.
     """
     head = "Звони сейчас" if kind == "hot" else "Что нового со вчера"
-    text = render_events(page, per_request=per_request(config, kind), head=head)
+    text = render_events(page, per_request=knobs.per_request, head=head)
     if kind != "digest":
         return text
 
-    wide = positive(config, "notify.digest.wide_request", 50)
+    wide = knobs.wide_request
     if wide is None:
         return text
     # Широту мерят события, а закрытие событием не является (решение 1 спеки):
@@ -223,7 +238,7 @@ def _match_text(page, config: Config, kind: str) -> str:
     for line in text.splitlines():
         marked.append(line)
         for key, total in alive.items():
-            if line.startswith(f"Заявка {key} ") and total > int(wide):
+            if line.startswith(f"Заявка {key} ") and total > wide:
                 marked.append(
                     f"  ⚠ заявка слишком широкая: {total} событий за окно. "
                     f"Сузь районы или бюджет, иначе разговор не состоится"
@@ -231,7 +246,7 @@ def _match_text(page, config: Config, kind: str) -> str:
     return "\n".join(marked)
 
 
-def _feed_text(database, config: Config, since, until) -> tuple[str, int]:
+def _feed_text(database, knobs: NotifyTuning, since, until) -> tuple[str, int]:
     """Что пришло на ленту вне заявок: счётчики и лучшие по выгодности.
 
     Тумблер отдельный нарочно: брокеру нужно видеть ленту, даже когда
@@ -256,7 +271,7 @@ def _feed_text(database, config: Config, since, until) -> tuple[str, int]:
             return 0.0
         return (median - item.price_per_sqm) / median
 
-    best = sorted(fresh, key=cheapness, reverse=True)[:per_request(config, "feed") or 0]
+    best = sorted(fresh, key=cheapness, reverse=True)[:knobs.per_request or 0]
     lines = [
         f"На ленте: новых {len(fresh)}, подешевели {len(cheaper)}, снято {len(gone)}",
     ]

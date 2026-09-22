@@ -381,6 +381,18 @@ def test_doctor_refuses_telegram_without_a_token(tmp_path):
     assert "TELEGRAM_BOT_TOKEN" in check.details
 
 
+def test_doctor_calls_a_senseless_notify_setting_a_failure(tmp_path):
+    """`doctor` отвечает то же, что ответит `notify`: вечером, когда дайджест
+    не пришёл, узнавать об этом поздно."""
+    from listam.doctor import notify_check
+
+    check = notify_check(cfg(tmp_path, notify={"kind": "stdout",
+                                               "digest": {"enabled": "false"}}))
+
+    assert not check.ok
+    assert "notify.digest.enabled" in check.details
+
+
 def test_doctor_describes_telegram_without_printing_the_token(tmp_path):
     """Отчёт `doctor` читают глазами и пересылают — токену там не место."""
     from listam.doctor import notify_check

@@ -6,7 +6,7 @@ from pathlib import Path
 
 import pytest
 
-from listam.config import load_config
+from listam.config import ConfigError, load_config
 from listam.domain.models import Listing, Match, Request
 from listam.notifications import run_notify
 from listam.wiring import build_database
@@ -406,3 +406,26 @@ def test_a_journal_that_did_not_write_is_an_error_and_not_a_crash(prepared, monk
     assert report.errors == 1
     assert "журнал не записан" in report.notes
     assert "ещё раз" in report.notes
+
+
+@pytest.mark.parametrize("key, value", [
+    ("enabled", "false"),
+    ("include_retired", "no"),
+    ("fallback_hours", -48),
+    ("fallback_hours", "сутки"),
+    ("per_request", "десять"),
+    ("wide_request", 0),
+])
+def test_a_senseless_notify_setting_is_refused_before_the_work(
+        prepared, monkeypatch, key, value):
+    """Бессмысленное значение отклоняется на входе, до замка и до базы —
+    как опечатка в весе у `match`. До фазы 5 QA `enabled: "false"` слал,
+    `fallback_hours: -48` смотрел в будущее, а «сутки» роняли трейсбек."""
+    def no_work(*args, **kwargs):
+        raise AssertionError("работа не должна начинаться")
+
+    monkeypatch.setattr("listam.notifications.working_session", no_work)
+    prepared.data["notify"]["digest"][key] = value
+
+    with pytest.raises(ConfigError, match=f"notify.digest.{key}"):
+        run_notify(prepared, kind="digest", dry_run=True)

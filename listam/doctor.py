@@ -15,6 +15,7 @@ from listam.crawler import DEFAULT_FRESH_MAX_PAGES, DEFAULT_FRESH_STOP_PAGES, \
     DEFAULT_MAX_GONE, DEFAULT_MAX_PAGES_DROP
 from listam.domain.clustering import DEFAULT_AREA_TOLERANCE
 from listam.domain.scoring import DEFAULT_STRETCH_PERCENT, DEFAULT_WEIGHTS
+from listam.notifications import tuning_for
 from listam.ports.requests_source import EmptyRequestsSource
 from listam.wiring import UnknownAdapter, build_exporter, build_fetcher, build_notifier, \
     build_rate_provider, build_requests_source, build_storage, database_path
@@ -245,12 +246,18 @@ def notify_check(config: Config) -> Check:
     и узнать об этом лучше здесь, чем вечером, когда дайджест не пришёл.
     В сеть проверка не ходит: живая отправка — отдельный явный шаг.
     """
-    switches = ", ".join(
-        f"{name}: {'вкл' if threshold(config, f'notify.{name}.enabled', True) else 'выкл'}"
-        for name in NOTIFY_KINDS
-    )
     harm: list[str] = []
     warn: list[str] = []
+    knobs = {}
+    for name in NOTIFY_KINDS:
+        try:
+            knobs[name] = tuning_for(config, name)
+        except ConfigError as exc:
+            harm.append(str(exc))
+    switches = ", ".join(
+        f"{name}: {'вкл' if knobs[name].enabled else 'выкл'}"
+        for name in NOTIFY_KINDS if name in knobs
+    )
     try:
         channel = build_notifier(config).describe()
     except (ConfigError, UnknownAdapter) as exc:
@@ -259,7 +266,7 @@ def notify_check(config: Config) -> Check:
 
     if str(config.get("notify.kind", "none")) in ("none", "null"):
         warn.append("канал выключен: уведомления никуда не идут")
-    if all(not threshold(config, f"notify.{name}.enabled", True) for name in NOTIFY_KINDS):
+    if knobs and all(not item.enabled for item in knobs.values()):
         warn.append("все три вида выключены — команда notify не пошлёт ничего")
 
     details = "; ".join([f"{channel}; {switches}"] + harm + warn)
