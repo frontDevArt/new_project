@@ -550,6 +550,17 @@ class SqliteDatabase(Database):
         ).fetchone()
         return _row_to_request(row) if row else None
 
+    def mark_requests_matched(self, request_ids: list[int], now: datetime) -> None:
+        """См. порт. Отметка не содержательная правка — `updated_at` не трогаем."""
+        if not request_ids:
+            return
+        stamp = to_iso(now)
+        with self.transaction():
+            self.conn.executemany(
+                "UPDATE requests SET matched_at = ? WHERE id = ?",
+                [(stamp, int(request_id)) for request_id in request_ids],
+            )
+
     # --- матчи ------------------------------------------------------------
     def upsert_match(self, match: Match, now: datetime) -> str:
         """Пишет вычисленное и не трогает след звонка (решение 7).
@@ -909,6 +920,7 @@ def _row_to_request(row: sqlite3.Row) -> Request:
     data["no_last_floor"] = bool(data.get("no_last_floor"))
     data["created_at"] = from_iso(data.get("created_at"))
     data["updated_at"] = from_iso(data.get("updated_at"))
+    data["matched_at"] = from_iso(data.get("matched_at"))
     known = {f.name for f in dataclass_fields(Request)}
     return Request(**{k: v for k, v in data.items() if k in known})
 

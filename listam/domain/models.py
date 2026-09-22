@@ -80,6 +80,7 @@ class Request:
     client_phone: str | None = None
     created_at: datetime | None = None
     updated_at: datetime | None = None      # двигается только содержательной правкой
+    matched_at: datetime | None = None      # когда по ней последний раз шёл полный подбор
     status: str = "active"                  # active | paused | closed
     budget_max: float | None = None
     budget_stretch: float | None = None     # пусто — потолок плюс процент из конфига

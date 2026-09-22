@@ -151,6 +151,15 @@ class Database(ABC):
         """
 
     @abstractmethod
+    def mark_requests_matched(self, request_ids: list[int], now: datetime) -> None:
+        """Отмечает, что по этим заявкам только что шёл подбор.
+
+        Отметка нужна выборке `--new`: заявку, которую тронули после её
+        последнего подбора, выборка объявлений не покрывает — изменился
+        не рынок, а условия, и такую заявку надо вести по всей базе.
+        """
+
+    @abstractmethod
     def upsert_request(self, request: Request, now: datetime) -> str:
         """Возвращает 'new' | 'updated' | 'unchanged'.
 

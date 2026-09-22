@@ -124,12 +124,26 @@ def _listings_scope(database: Database, only_new: bool, config: Config
     """Выборка объявлений и как она называется по-человечески."""
     if not only_new:
         return database.listings_for_matching(), "вся база"
-    # Мерка та же, что у `changes`: начало последнего прогона. Второй мерки
-    # для «нового» заводить незачем — это тот же вопрос, что и там.
+    # Мерка та же, что у `changes`: начало последнего прогона. Но берём не
+    # «появившееся с неё», а «тронувшееся с неё»: подешевевшая квартира новой
+    # не стала, а звонить по ней надо сегодня.
     mark, note = since_point(
         database, None, fallback_hours=config.get("changes.fallback_hours", 24)
     )
-    return database.listings_for_matching(since=mark), f"новые объявления: {note}"
+    return (database.listings_touched_since(mark),
+            f"новое и подешевевшее: {note}")
+
+
+def _is_edited(request: Request) -> bool:
+    """Заявку тронули после её последнего подбора?
+
+    Ни разу не подбиравшаяся заявка — тоже «правленая»: по выборке последнего
+    прогона она увидит три вчерашних объявления вместо всей базы.
+    """
+    if request.matched_at is None:
+        return True
+    return (request.updated_at or request.created_at or request.matched_at) \
+        > request.matched_at
 
 
 def run_match(config: Config, *, external_id: str | None = None,
@@ -217,9 +231,28 @@ def run_match(config: Config, *, external_id: str | None = None,
 
         last_run = database.last_run()
         run_id = last_run.id if last_run else None
-        _write_matches(database, report, requests, candidates, representatives,
-                       medians, run_id, settings(config),
-                       full_sweep=not only_new, off_the_feed=off_the_feed)
+        tuning = settings(config)
+
+        # Заявка, которую тронули после её последнего подбора, выборкой
+        # объявлений не покрывается: изменился не рынок, а условия. Такую
+        # ведём по всей базе — иначе поднятый бюджет заработает только ночью.
+        edited = [request for request in requests
+                  if only_new and _is_edited(request)]
+        fresh = [request for request in requests if request not in edited]
+        if edited:
+            notes.append(f"правленых заявок: {len(edited)} — по всей базе")
+            whole = [item for item in everything if item.id in representatives]
+            _write_matches(database, report, edited, whole, representatives,
+                           medians, run_id, tuning,
+                           full_sweep=True, off_the_feed=off_the_feed)
+        if fresh:
+            _write_matches(database, report, fresh, candidates, representatives,
+                           medians, run_id, tuning,
+                           full_sweep=not only_new, off_the_feed=off_the_feed)
+        database.mark_requests_matched(
+            [request.id for request in requests if request.id is not None],
+            datetime.now(timezone.utc),
+        )
 
         if report.new or report.updated or report.retired:
             if _upload(config, database, storage, local_db, remote_name,

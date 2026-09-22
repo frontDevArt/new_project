@@ -143,9 +143,25 @@ def test_only_the_cheapest_listing_of_a_cluster_becomes_a_match(
     assert matches[0].cluster_spread_usd == 11_000.0
 
 
-def test_new_only_looks_at_listings_from_the_last_run(matching_config_with_two_runs):
-    report = run_match(matching_config_with_two_runs, only_new=True)
-    assert report.listings == 2          # столько принёс последний прогон
+def test_new_takes_everything_touched_since_the_last_run(matching_config_with_two_runs):
+    """Мерка — начало последнего прогона, а событие — не только появление.
+
+    Вчерашнее объявление, которое с тех пор подешевело, в выборку входит;
+    вчерашнее, которого никто не трогал, — нет.
+    """
+    config = matching_config_with_two_runs
+    database = build_database(config)
+    database.connect()
+    old = database.get_listing("old-1")
+    database.upsert_listing(
+        replace(old, price_usd=(old.price_usd or 0) - 10_000, price_raw="подешевело"),
+        datetime(2026, 9, 23, tzinfo=timezone.utc),
+    )
+    database.close()
+
+    report = run_match(config, only_new=True)
+
+    assert report.listings == 3          # два от последнего прогона плюс подешевевшее
     assert "прогон" in report.scope
 
 
@@ -439,6 +455,57 @@ def test_a_cheaper_twin_replaces_the_old_representative_and_not_doubles_it(
     assert len(clusters_shown) == len(set(clusters_shown)), \
         "одна квартира не может стоять в витрине дважды"
     assert "L-cheap" in [listing.id for listing in after]
+
+
+def test_new_sees_the_one_that_got_cheaper(tmp_path):
+    """Главное событие рынка — снижение цены, а не появление карточки.
+
+    Квартира вчера стоила 200 000 $ и в бюджет не влезала; сегодня она стоит
+    118 000 $. Новой она не стала — и по мерке `first_seen` не попадёт
+    в `--new` никогда.
+    """
+    config = cfg(tmp_path)
+    fill(config, listings=[suitable("pricey", price_usd=200_000.0)],
+         requests=[make_request("R-1")], seen_at=YESTERDAY)
+
+    run_match(config)          # полный проход: матча нет, заявка отмечена
+    assert collect_matches(config) == []
+
+    database = build_database(config)
+    database.connect()
+    listing = database.get_listing("pricey")
+    database.upsert_listing(
+        replace(listing, price_usd=118_000.0, price_raw="подешевело"),
+        datetime(2026, 9, 23, tzinfo=timezone.utc),
+    )
+    database.close()
+
+    report = run_match(config, only_new=True)
+
+    assert report.listings >= 1
+    assert "pricey" in [listing.id for _, _, listing in collect_matches(config)]
+
+
+def test_a_request_edited_after_its_last_matching_is_swept_whole(matching_config):
+    config = matching_config
+    run_match(config)
+
+    database = build_database(config)
+    database.connect()
+    request = next(iter(database.iter_requests()))
+    database.upsert_request(
+        replace(request, budget_max=(request.budget_max or 0) * 3),
+        datetime(2026, 9, 23, tzinfo=timezone.utc),
+    )
+    database.close()
+
+    report = run_match(config, only_new=True)
+
+    assert report.requests >= 1
+    assert "правленых заявок" in (report.notes or ""), (
+        "заявка, которую тронули после подбора, идёт по всей базе, "
+        "а не по выборке последнего прогона"
+    )
 
 
 def test_matching_only_the_new_ones_closes_nothing(matching_config_with_two_runs):

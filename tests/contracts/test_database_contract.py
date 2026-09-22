@@ -718,6 +718,16 @@ def test_touched_since_keeps_the_rules_of_the_matching_selection(db):
     assert {item.id for item in db.listings_touched_since(LATER)} == {"L-1"}
 
 
+def test_marking_a_request_matched_is_not_an_edit_of_it(db):
+    db.upsert_request(make_request(), NOW)
+    request = db.get_request("R-1")
+    db.mark_requests_matched([request.id], LATER)
+    stored = db.get_request("R-1")
+    assert stored.matched_at == LATER
+    assert stored.updated_at == NOW, "подбор заявку не правит"
+    assert db.upsert_request(make_request(), LATER) == "unchanged"
+
+
 # --- матчи --------------------------------------------------------------
 def stored_request(db, external_id="R-1"):
     db.upsert_request(make_request(external_id), NOW)
