@@ -14,7 +14,7 @@ from pathlib import Path
 import pytest
 
 from listam.config import Config
-from listam.matching import run_match
+from listam.matching import MatchesError, collect_matches, render_matches, run_match
 from listam.wiring import build_database
 
 from tests.contracts.test_database_contract import make_listing, make_request
@@ -256,3 +256,106 @@ def test_the_report_names_the_scope_and_has_no_none_in_it(matching_config):
     rendered = run_match(matching_config, recount_all=True).render()
     assert "вся база" in rendered
     assert "None" not in rendered
+
+
+# --- витрина: `listam matches` (фаза 6) --------------------------------
+
+@pytest.fixture
+def matching_config_gone(tmp_path):
+    """Матч есть, а объявления на ленте уже нет: решение 8."""
+    config = cfg(tmp_path)
+    fill(config, listings=[suitable("1")], requests=[make_request("R-1")])
+    run_match(config, external_id="R-1")
+    database = build_database(config)
+    database.connect()
+    try:
+        database.mark_gone(["1"], NOW + timedelta(hours=1))
+    finally:
+        database.close()
+    return config
+
+
+def test_the_shop_window_shows_score_price_district_and_the_cluster(matching_config):
+    run_match(matching_config, external_id="R-1")
+
+    printed = render_matches(collect_matches(matching_config, external_id="R-1"),
+                             limit=50)
+
+    assert "балл" in printed.lower()
+    assert "None" not in printed          # правило, добытое F-09 в M1
+    assert "$" in printed
+    assert "Кентрон" in printed
+    assert "R-1" in printed and "Ани" in printed
+
+
+def test_a_cluster_of_three_says_so_and_names_the_spread(matching_config_with_duplicates):
+    run_match(matching_config_with_duplicates, external_id="R-1")
+
+    printed = render_matches(collect_matches(matching_config_with_duplicates,
+                                             external_id="R-1"), limit=50)
+
+    assert "3 объявления" in printed
+    assert "разброс" in printed
+    assert "11,000" in printed
+
+
+def test_a_match_whose_listing_went_away_is_marked_and_not_hidden(matching_config_gone):
+    rows = collect_matches(matching_config_gone, external_id="R-1")
+
+    assert [listing.id for _, _, listing in rows] == ["1"]
+    assert "снято" in render_matches(rows, limit=50)
+
+
+def test_the_window_shows_every_active_request_when_none_is_named(tmp_path):
+    config = cfg(tmp_path)
+    fill(config, listings=[suitable("1")],
+         requests=[make_request("R-1"), make_request("R-2", client_name="Ваган")])
+    run_match(config, recount_all=True)
+
+    printed = render_matches(collect_matches(config), limit=50)
+
+    assert "R-1" in printed and "R-2" in printed
+
+
+def test_a_match_below_the_digest_threshold_stays_out_of_the_window(matching_config):
+    run_match(matching_config, external_id="R-1")
+
+    everything = collect_matches(matching_config, external_id="R-1", min_score=0)
+    strict = collect_matches(matching_config, external_id="R-1", min_score=99)
+
+    assert len(strict) < len(everything)
+    assert all(match.score >= 99 for _, match, _ in strict)
+
+
+def test_the_limit_cuts_the_list_and_says_how_many_are_left(matching_config):
+    run_match(matching_config, external_id="R-1")
+    rows = collect_matches(matching_config, external_id="R-1", min_score=0)
+
+    printed = render_matches(rows, limit=1)
+
+    assert "…и ещё 2" in printed
+
+
+def test_an_empty_window_says_so_instead_of_printing_nothing(tmp_path):
+    config = cfg(tmp_path)
+    fill(config, requests=[make_request("R-1")])
+
+    printed = render_matches(collect_matches(config, external_id="R-1"), limit=50)
+
+    assert "нет" in printed.lower()
+    assert "None" not in printed
+
+
+def test_a_request_that_does_not_exist_is_named_and_not_silently_empty(matching_config):
+    with pytest.raises(MatchesError) as failure:
+        collect_matches(matching_config, external_id="R-404")
+    assert "R-404" in str(failure.value)
+
+
+def test_the_header_names_the_digest_threshold_the_window_was_cut_by(matching_config):
+    run_match(matching_config, external_id="R-1")
+
+    printed = render_matches(collect_matches(matching_config, external_id="R-1"),
+                             limit=50, min_score=40)
+
+    assert "40" in printed

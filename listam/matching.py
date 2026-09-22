@@ -23,12 +23,12 @@ from pathlib import Path
 
 from listam.adapters.db_sqlite import latest_schema_version
 from listam.adapters.run_lock import LockBusy
-from listam.changes import since_point
+from listam.changes import DASH, MINUS, money, per_sqm, since_point
 from listam.clustering_run import area_tolerance, cluster_database
 from listam.config import Config, threshold
 from listam.crawler import rotate_backups, take_the_fresher_copy
 from listam.domain.clustering import clusters
-from listam.domain.models import Match, Request
+from listam.domain.models import Listing, Match, Request
 from listam.domain.scoring import DEFAULT_STRETCH_PERCENT, DEFAULT_WEIGHTS, score
 from listam.domain.stats import median_price_per_sqm_by_district
 from listam.ports.database import Database
@@ -301,3 +301,194 @@ def _upload(config: Config, database: Database, storage, local_db: Path,
     snapshot.unlink(missing_ok=True)
     notes.append("база с матчами залита в хранилище")
     return True
+
+
+# --- витрина -----------------------------------------------------------
+#
+# Показывается кластер, а не объявление: «N объявлений, разброс $X» лежит
+# в самом матче (`cluster_size`, `cluster_spread_usd`) — снимок, сделанный
+# подбором. Считать его заново незачем, да и нечестно: витрина обязана
+# показывать то, по чему звонили, а не то, что стало после.
+
+MatchRow = tuple[Request, Match, Listing]
+
+SELLER_TYPES = {"owner": "собственник", "agency": "агентство"}
+MATCH_STATUSES = {"new": "новый", "sent": "отправлен",
+                  "called": "звонили", "rejected": "отказ"}
+DEFAULT_LIMIT = 50
+
+
+class MatchesError(Exception):
+    """Витрину попросили показать то, чего в базе нет или чего она не поймёт."""
+
+
+def display_limit(config: Config) -> int:
+    """Сколько строк показывает витрина. Порог из конфига, а не число в коде."""
+    value = threshold(config, "match.limit", DEFAULT_LIMIT)
+    return DEFAULT_LIMIT if value is None else int(value)
+
+
+def collect_matches(config: Config, *, external_id: str | None = None,
+                    min_score: float | None = None,
+                    limit: int | None = None) -> list[MatchRow]:
+    """Матчи для витрины: заявка, матч и объявление одной строкой.
+
+    Объявление берётся `get_listing` даже когда оно снято (решение 8):
+    витрина его помечает, а не прячет. `external_id` не задан — все
+    активные заявки, по убыванию балла внутри каждой.
+
+    `min_score` не задан — берётся порог дайджеста из конфига: витрина
+    показывает то, о чём есть смысл разговаривать. `limit` не задан —
+    не сужаем: сколько строк **показать**, решает `render_matches`,
+    и только так «…и ещё 12» может быть правдой.
+
+    Замка здесь нет и записи тоже: витрина читает базу, а не чинит её.
+    """
+    if min_score is None:
+        min_score = settings(config).digest
+
+    storage = build_storage(config)
+    local_db = database_path(config)
+    if not local_db.exists():
+        storage.download(config.get("storage.db_filename", "listam.sqlite"), local_db)
+
+    database = build_database(config)
+    database.connect()
+    try:
+        required = latest_schema_version()
+        version = database.schema_version()
+        if version < required:
+            raise MatchesError(
+                f"Матчи не показаны: схема базы {version}, а код ждёт {required}. "
+                f"Витрина ничего не мигрирует — накати миграции: "
+                f"python -m listam recheck"
+            )
+
+        if external_id is None:
+            requests = list(database.iter_requests())
+        else:
+            one = database.get_request(external_id)
+            if one is None:
+                raise MatchesError(
+                    f"заявки {external_id} в базе нет — сначала прочитай источник: "
+                    f"python -m listam requests"
+                )
+            # Статус здесь не проверяется, в отличие от подбора: «кому мы уже
+            # звонили по этой квартире» переживает и паузу заявки.
+            requests = [one]
+
+        rows: list[MatchRow] = []
+        for request in requests:
+            for match in database.matches_for_request(request.id, min_score=min_score,
+                                                      limit=limit):
+                listing = database.get_listing(match.listing_id)
+                if listing is None:
+                    # Объявления нет в базе вовсе — показывать нечего, и это
+                    # не «снято»: снятое лежит на месте с пометкой.
+                    continue
+                rows.append((request, match, listing))
+        return rows
+    finally:
+        database.close()
+
+
+def _plural(count: int, one: str, few: str, many: str) -> str:
+    count = abs(int(count))
+    if count % 10 == 1 and count % 100 != 11:
+        return one
+    if 2 <= count % 10 <= 4 and not 12 <= count % 100 <= 14:
+        return few
+    return many
+
+
+def _score(value: float | None) -> str:
+    if value is None:
+        return DASH
+    whole = int(round(value))
+    return f"{whole} " + _plural(whole, "балл", "балла", "баллов")
+
+
+def _place(listing: Listing) -> str:
+    return f"{listing.district or DASH}, {listing.street or DASH}"
+
+
+def _what(listing: Listing) -> str:
+    rooms = f"{listing.rooms} ком." if listing.rooms is not None else DASH
+    area = f"{listing.area:g} м²" if listing.area is not None else DASH
+    if listing.floor is None:
+        floor = f"эт. {DASH}"
+    elif listing.floors_total is None:
+        floor = f"эт. {listing.floor}"
+    else:
+        floor = f"эт. {listing.floor}/{listing.floors_total}"
+    seller = SELLER_TYPES.get(listing.seller_type, listing.seller_type) or DASH
+    return f"{rooms}, {area}, {floor}, {seller}"
+
+
+def _note(match: Match, listing: Listing) -> str:
+    """Вторая строка матча: что важно знать до звонка.
+
+    «Снято» идёт первым: это единственное, что отменяет звонок целиком.
+    """
+    parts: list[str] = []
+    if listing.status == "gone":
+        when = f" {listing.gone_at:%d.%m}" if listing.gone_at else ""
+        parts.append(f"снято с ленты{when}")
+    if match.cluster_size and match.cluster_size > 1:
+        spread = (f", разброс {money(match.cluster_spread_usd)}"
+                  if match.cluster_spread_usd else "")
+        parts.append(
+            f"{match.cluster_size} "
+            + _plural(match.cluster_size, "объявление", "объявления", "объявлений")
+            + spread
+        )
+    if match.status and match.status != "new":
+        said = MATCH_STATUSES.get(match.status, match.status)
+        parts.append(f"{said}: {match.reject_reason}" if match.reject_reason else said)
+    return " · ".join(parts)
+
+
+def render_matches(rows: list[MatchRow], limit: int,
+                   min_score: float | None = None) -> str:
+    """Витрина: по разделу на заявку, по строке на кластер.
+
+    `min_score` называется в шапке, чтобы пустой раздел читался как «выше
+    порога ничего нет», а не как «матчинг не работает». Мерка приходит
+    аргументом, а не вычитывается из конфига: печать конфига не читает.
+    """
+    if not rows:
+        return "Подобранных вариантов нет."
+
+    by_request: dict[int, list[MatchRow]] = {}
+    requests: dict[int, Request] = {}
+    for request, match, listing in rows:
+        by_request.setdefault(request.id, []).append((request, match, listing))
+        requests[request.id] = request
+
+    lines: list[str] = []
+    for request_id, group in by_request.items():
+        request = requests[request_id]
+        who = f" ({request.client_name})" if request.client_name else ""
+        head = f"Заявка {request.external_id or request_id}{who}"
+        if min_score is not None:
+            head += f", порог дайджеста {min_score:g}"
+        head += f" — подобрано {len(group)}"
+        if lines:
+            lines.append("")
+        lines.append(head)
+        for _, match, listing in group[:limit]:
+            # Снятое видно с первого взгляда, а не из второй строки: минус
+            # в начале строки — та же пометка, что в разделе «Снято» у `changes`.
+            mark = MINUS if listing.status == "gone" else "•"
+            lines.append(
+                f"  {mark} {_score(match.score):>10}  {money(listing.price_usd):>10}  "
+                f"{per_sqm(listing):>12}  {_place(listing):<26}  {_what(listing):<40}  "
+                f"{listing.url}"
+            )
+            note = _note(match, listing)
+            if note:
+                lines.append(f"      {note}")
+        left = len(group) - len(group[:limit])
+        if left:
+            lines.append(f"  …и ещё {left}")
+    return "\n".join(lines)

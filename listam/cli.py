@@ -7,6 +7,7 @@
     python -m listam requests        прочитать заявки покупателей из источника
     python -m listam cluster         пересчитать кластеры-дубли по базе
     python -m listam match           подобрать объявления под заявки
+    python -m listam matches         показать подобранное по заявкам
     python -m listam changes         что принёс последний прогон
 
 Окружение выбирается переменной APP_ENV или флагом --env.
@@ -68,6 +69,17 @@ def build_parser() -> argparse.ArgumentParser:
                        help="только объявления, которые принёс последний прогон")
     match.add_argument("--all", action="store_true",
                        help="пересчитать все активные заявки по всей базе")
+
+    matches = commands.add_parser(
+        "matches", help="ранжированный список подобранных вариантов")
+    matches.add_argument("--request", help="внешний идентификатор заявки")
+    # Значений по умолчанию нет: и порог, и число строк — это пороги конфига
+    # (`match.thresholds.digest`, `match.limit`), а не числа в командной строке.
+    matches.add_argument("--limit", type=int,
+                         help="сколько строк показать (по умолчанию — из конфига)")
+    matches.add_argument("--min-score", type=float,
+                         help="показывать от этого балла и выше "
+                              "(по умолчанию — порог дайджеста из конфига)")
 
     changes = commands.add_parser("changes", help="что принёс последний прогон")
     changes.add_argument("--hours", type=float,
@@ -173,6 +185,27 @@ def main(argv: list[str] | None = None) -> int:
         return _match(config, external_id=args.request, only_new=args.new,
                       recount_all=args.all)
 
+    if args.command == "matches":
+        # Бессмысленный ввод отклоняется на входе: ноль строк — это пустая
+        # витрина вместо списка, а балл вне шкалы 0…100 — либо все матчи,
+        # либо ни одного, и человек об этом не узнает.
+        if args.limit is not None and args.limit <= 0:
+            print(
+                f"--limit {args.limit} не годится: это число строк витрины, "
+                "и меньше одной строки показывать нечего. Нужно число больше нуля.",
+                file=sys.stderr,
+            )
+            return 2
+        if args.min_score is not None and not 0 <= args.min_score <= 100:
+            print(
+                f"--min-score {args.min_score:g} не годится: балл — это шкала "
+                "от 0 до 100. Выше ста нет ничего, ниже нуля — тоже.",
+                file=sys.stderr,
+            )
+            return 2
+        return _matches(config, external_id=args.request, limit=args.limit,
+                        min_score=args.min_score)
+
     if args.command == "changes":
         # Разбор аргументов — дело командной строки: `run_changes` про коды
         # возврата ничего не знает. Бессмысленный ввод отклоняется на входе,
@@ -259,6 +292,24 @@ def _match(config, external_id: str | None, only_new: bool, recount_all: bool) -
                        recount_all=recount_all)
     print(report.render())
     return 1 if report.errors else 0
+
+
+def _matches(config, external_id: str | None, limit: int | None,
+             min_score: float | None) -> int:
+    from listam.matching import (MatchesError, collect_matches, display_limit,
+                                 render_matches, settings)
+
+    if min_score is None:
+        min_score = settings(config).digest
+    if limit is None:
+        limit = display_limit(config)
+    try:
+        rows = collect_matches(config, external_id=external_id, min_score=min_score)
+    except MatchesError as exc:
+        print(exc, file=sys.stderr)
+        return 1
+    print(render_matches(rows, limit=limit, min_score=min_score))
+    return 0
 
 
 def _changes(config, hours: float | None, limit: int | None) -> int:

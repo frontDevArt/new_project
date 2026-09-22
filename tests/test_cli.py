@@ -470,3 +470,50 @@ def test_match_on_an_unknown_request_is_an_error(project, capsys):
 
     assert run(project, "match", "--request", "R-404") == 1
     assert "R-404" in capsys.readouterr().out
+
+
+# --- listam matches (фаза 6 M2) ---------------------------------------
+
+def test_matches_refuses_a_limit_of_zero(project, capsys):
+    assert run(project, "matches", "--limit", "0") == 2
+    assert "--limit" in capsys.readouterr().err
+
+
+def test_matches_refuses_a_score_outside_the_scale(project, capsys):
+    assert run(project, "matches", "--min-score", "120") == 2
+    assert "0" in capsys.readouterr().err
+
+
+def test_matches_show_the_window_for_a_request(project, capsys):
+    run(project, "scrape")
+    with_requests(project, "R-1,Ани,+374,active,1000000,,,,,,,,,нет,нет,,,,\n")
+    run(project, "requests")
+    run(project, "match", "--all")
+    capsys.readouterr()
+
+    assert run(project, "matches", "--request", "R-1") == 0
+
+    out = capsys.readouterr().out
+    assert "Заявка R-1" in out
+    assert "балл" in out
+    assert "None" not in out
+
+
+def test_matches_on_an_unknown_request_is_an_error_naming_it(project, capsys):
+    run(project, "scrape")
+    capsys.readouterr()
+
+    assert run(project, "matches", "--request", "R-404") == 1
+    out = capsys.readouterr()
+    assert "R-404" in (out.out + out.err)
+
+
+def test_matches_refuse_a_database_older_than_the_code(project, capsys):
+    """Витрина читает базу, а не мигрирует её — как `changes` и `export`."""
+    database_at_schema(project, 1)
+
+    assert run(project, "matches") == 1
+
+    out = capsys.readouterr()
+    assert "схема базы" in (out.out + out.err)
+    assert schema_of(project) == 1

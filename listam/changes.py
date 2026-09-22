@@ -167,7 +167,7 @@ def _size(item: Listing) -> str:
     return f"{rooms}, {area}"
 
 
-def _per_sqm(item: Listing) -> str:
+def per_sqm(item: Listing) -> str:
     return DASH if item.price_per_sqm is None else f"{item.price_per_sqm:,.0f} $/м²"
 
 
@@ -210,7 +210,7 @@ def render(changes: Changes, limit: int) -> str:
         "Новые",
         [
             f"+ {_head(item)} {_size(item):<16} {money(item.price_usd):>10} "
-            f"{_per_sqm(item):>12}  {item.url}"
+            f"{per_sqm(item):>12}  {item.url}"
             for item in changes.new
         ],
         limit,
