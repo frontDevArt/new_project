@@ -71,6 +71,21 @@ class Run:
 
 
 @dataclass
+class Notification:
+    """Строка журнала отправок: одна успешная отправка одного вида."""
+
+    id: int | None = None
+    kind: str = ""                          # hot | digest | feed
+    sent_at: datetime | None = None
+    window_from: datetime | None = None     # None — первая отправка этого вида
+    window_to: datetime | None = None       # отсюда считается следующее окно
+    events: int = 0
+    requests: int = 0
+    text: str | None = None
+    notes: str | None = None
+
+
+@dataclass
 class Request:
     """Заявка покупателя — ядро системы. Фильтр производен от неё, а не наоборот."""
 
@@ -134,3 +149,4 @@ class Match:
     cluster_spread_usd: float | None = None
     retired_at: datetime | None = None      # когда проход перестал его подтверждать
     retired_reason: str | None = None       # почему: «бюджет», «район», «не представитель»
+    revived_at: datetime | None = None      # когда закрытый матч снова подтвердился

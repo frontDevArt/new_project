@@ -271,7 +271,51 @@ def test_migration_009_remembers_when_a_request_was_matched(tmp_path):
     db.connect()
     db.migrate()
 
-    assert db.schema_version() == 9
+    assert db.schema_version() >= 9     # дальше идут миграции M3
     columns = {row["name"] for row in db.conn.execute("PRAGMA table_info(requests)")}
     assert "matched_at" in columns
     db.close()
+
+
+def test_migration_010_adds_the_journal_and_the_revival_mark(tmp_path):
+    """Схема 9 → 10: журнал отправок и отметка воскресения матча."""
+    database = opened(tmp_path, upto(tmp_path, 9))
+    database.migrate()
+    assert database.schema_version() == 9
+    database.close()
+
+    database = opened(tmp_path, MIGRATIONS_DIR)
+    database.migrate()
+
+    assert "notifications" in database.table_names()
+    columns = {row["name"] for row in database.conn.execute("PRAGMA table_info(matches)")}
+    assert "revived_at" in columns
+    assert database.schema_version() == 10
+    database.close()
+
+
+def test_migration_010_keeps_what_was_in_the_base(tmp_path):
+    """Миграция ничего не закрывает и ничего не считает отправленным."""
+    database = opened(tmp_path, upto(tmp_path, 9))
+    database.migrate()
+    database.conn.execute(
+        "INSERT INTO listings (id, url, status, first_seen, last_seen) "
+        "VALUES ('1', 'u', 'active', '2026-09-21T10:00:00+00:00', "
+        "'2026-09-21T10:00:00+00:00')"
+    )
+    database.conn.execute("INSERT INTO requests (external_id) VALUES ('R-1')")
+    database.conn.execute(
+        "INSERT INTO matches (request_id, listing_id, score) VALUES (1, '1', 80)"
+    )
+    database.conn.commit()
+    database.close()
+
+    database = opened(tmp_path, MIGRATIONS_DIR)
+    database.migrate()
+
+    row = database.conn.execute("SELECT * FROM matches").fetchone()
+    assert row["score"] == 80
+    assert row["revived_at"] is None
+    assert database.conn.execute(
+        "SELECT COUNT(*) AS n FROM notifications").fetchone()["n"] == 0
+    database.close()
