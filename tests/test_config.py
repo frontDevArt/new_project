@@ -4,7 +4,7 @@ from pathlib import Path
 
 import pytest
 
-from listam.config import ConfigError, load_config, threshold
+from listam.config import ConfigError, load_config, positive, threshold
 from listam.domain.scoring import DEFAULT_WEIGHTS
 
 
@@ -172,3 +172,40 @@ def test_shipped_configs_name_every_scoring_factor(env, tmp_path, monkeypatch):
                          dotenv_path=tmp_path / ".env")
 
     assert set(config.section("match.weights")) == set(DEFAULT_WEIGHTS)
+
+
+# --- счётчик, которому ноль не годится --------------------------------
+# Правило командной строки («--limit 0 не годится: меньше одной строки
+# показывать нечего») ровно так же верно для конфига: ноль, пришедший из
+# yaml, давал витрину из одной строки «…и ещё 30» — то есть молча прятал
+# весь ответ.
+
+def test_a_positive_threshold_refuses_zero(tmp_path):
+    d = write_cfg(tmp_path, "dev", "match:\n  limit: 0\n")
+    config = load_config(env="dev", config_dir=d, dotenv_path=tmp_path / ".env")
+
+    with pytest.raises(ConfigError) as exc:
+        positive(config, "match.limit", 50)
+    assert "match.limit" in str(exc.value)
+
+
+def test_a_positive_threshold_refuses_a_negative_number(tmp_path):
+    d = write_cfg(tmp_path, "dev", "match:\n  limit: -5\n")
+    config = load_config(env="dev", config_dir=d, dotenv_path=tmp_path / ".env")
+
+    with pytest.raises(ConfigError):
+        positive(config, "match.limit", 50)
+
+
+def test_a_positive_threshold_lets_null_through_as_off(tmp_path):
+    d = write_cfg(tmp_path, "dev", "match:\n  limit: null\n")
+    config = load_config(env="dev", config_dir=d, dotenv_path=tmp_path / ".env")
+
+    assert positive(config, "match.limit", 50) is None
+
+
+def test_a_missing_key_gets_the_default(tmp_path):
+    d = write_cfg(tmp_path, "dev", "env: dev\n")
+    config = load_config(env="dev", config_dir=d, dotenv_path=tmp_path / ".env")
+
+    assert positive(config, "match.limit", 50) == 50

@@ -547,3 +547,28 @@ def test_export_without_matches_is_not_an_error(project, capsys):
 
     book = load_workbook(sorted((project / "out").glob("*.xlsx"))[-1])
     assert "Матчи" not in book.sheetnames
+
+
+# --- бессмысленное значение в конфиге (фаза 5 QA) ---------------------
+# Правило «бессмысленный ввод отклоняется на входе кодом 2» верно не только
+# для командной строки: ноль в `match.limit` давал витрину из одной строки
+# «…и ещё 30», то есть молча прятал ответ целиком.
+
+def test_a_zero_limit_in_the_config_is_refused_with_code_two(project, capsys):
+    path = project / "config" / "test.yaml"
+    path.write_text(path.read_text(encoding="utf-8") + "match:\n  limit: 0\n",
+                    encoding="utf-8")
+
+    assert run(project, "matches") == 2
+    assert "match.limit" in capsys.readouterr().err
+
+
+def test_a_zero_changes_limit_in_the_config_is_refused_with_code_two(project, capsys):
+    path = project / "config" / "test.yaml"
+    path.write_text(path.read_text(encoding="utf-8").replace(
+        "changes:\n  limit: 2", "changes:\n  limit: 0"), encoding="utf-8")
+    run(project, "scrape")          # иначе `changes` встанет раньше, на схеме базы
+    capsys.readouterr()
+
+    assert run(project, "changes") == 2
+    assert "changes.limit" in capsys.readouterr().err

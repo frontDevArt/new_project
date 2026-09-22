@@ -104,3 +104,23 @@ def threshold(config: Config, key: str, default: Any) -> Any:
     if value is _MISSING:
         return default
     return value
+
+
+def positive(config: Config, key: str, default: Any) -> Any:
+    """Порог, который обязан быть больше нуля. `null` по-прежнему «выключено».
+
+    Правило командной строки («--limit 0 не годится: меньше одной строки
+    показывать нечего») ровно так же верно для конфига. Ноль, пришедший
+    из yaml, до сих пор давал витрину из одной строки «…и ещё 30» — то есть
+    молча прятал весь ответ. Отклонять такое нужно там же, где читают.
+    """
+    value = threshold(config, key, default)
+    if value is None:
+        return None
+    number = float(value)
+    if number <= 0:
+        raise ConfigError(
+            f"{key} = {value} не годится: это счётчик, и меньше единицы он "
+            f"ничего не показывает. Чтобы снять ограничение, ставят null."
+        )
+    return value

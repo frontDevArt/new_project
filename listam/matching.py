@@ -25,7 +25,7 @@ from listam.adapters.db_sqlite import latest_schema_version
 from listam.adapters.run_lock import LockBusy
 from listam.changes import DASH, MINUS, money, per_sqm, since_point
 from listam.clustering_run import area_tolerance, cluster_database
-from listam.config import Config, ConfigError, threshold
+from listam.config import Config, ConfigError, positive, threshold
 from listam.crawler import rotate_backups, take_the_fresher_copy
 from listam.domain.clustering import clusters
 from listam.domain.models import Listing, Match, Request
@@ -411,7 +411,7 @@ class MatchesError(Exception):
 
 def display_limit(config: Config) -> int:
     """Сколько строк показывает витрина. Порог из конфига, а не число в коде."""
-    value = threshold(config, "match.limit", DEFAULT_LIMIT)
+    value = positive(config, "match.limit", DEFAULT_LIMIT)
     return DEFAULT_LIMIT if value is None else int(value)
 
 

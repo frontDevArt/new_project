@@ -18,7 +18,7 @@ import argparse
 import sys
 
 from listam.adapters.db_sqlite import latest_schema_version
-from listam.config import ConfigError, load_config
+from listam.config import ConfigError, load_config, positive
 from listam.doctor import run_doctor
 from listam.wiring import build_database, build_exporter, build_storage, database_path
 
@@ -120,6 +120,17 @@ def main(argv: list[str] | None = None) -> int:
         print(f"Конфигурация не загрузилась: {exc}", file=sys.stderr)
         return 2
 
+    # Бессмысленное значение в конфиге отклоняется так же, как бессмысленный
+    # флаг: кодом 2 и строкой человеку. Команда до работы не доходит — `0` в
+    # счётчике не «настройка помягче», а молча спрятанный ответ.
+    try:
+        return _dispatch(args, config)
+    except ConfigError as exc:
+        print(f"Конфигурация не годится: {exc}", file=sys.stderr)
+        return 2
+
+
+def _dispatch(args, config) -> int:
     if args.command == "doctor":
         report = run_doctor(config, check_network=not args.no_network)
         print(report.render())
@@ -320,7 +331,7 @@ def _changes(config, hours: float | None, limit: int | None) -> int:
         print(report.notes, file=sys.stderr)
         return 1
     if limit is None:
-        limit = config.get("changes.limit", 50)
+        limit = positive(config, "changes.limit", 50) or 50
     print(render(report, limit=limit))
     return 0
 

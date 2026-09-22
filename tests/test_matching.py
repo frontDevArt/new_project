@@ -586,3 +586,10 @@ def test_a_missing_weight_is_refused_too(tmp_path):
 def test_a_weight_of_zero_is_a_weight_and_not_an_absence(tmp_path):
     config = cfg(tmp_path, match={"weights": dict(DEFAULT_WEIGHTS, seller_type=0)})
     assert settings(config).weights["seller_type"] == 0
+
+
+def test_a_zero_display_limit_is_refused_by_name(tmp_path):
+    config = cfg(tmp_path, match={"limit": 0})
+    with pytest.raises(ConfigError) as exc:
+        display_limit(config)
+    assert "match.limit" in str(exc.value)
