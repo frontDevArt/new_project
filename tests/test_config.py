@@ -209,3 +209,22 @@ def test_a_missing_key_gets_the_default(tmp_path):
     config = load_config(env="dev", config_dir=d, dotenv_path=tmp_path / ".env")
 
     assert positive(config, "match.limit", 50) == 50
+
+
+def test_both_configs_declare_the_notification_knobs():
+    """Ручка, которой нет в конфиге, не существует для человека: он не знает,
+    что её можно покрутить, и правит код."""
+    import yaml
+    from pathlib import Path
+
+    for name in ("dev", "prod"):
+        data = yaml.safe_load(Path(f"config/{name}.yaml").read_text(encoding="utf-8"))
+        notify = data["notify"]
+        assert notify["kind"] in ("none", "stdout", "telegram")
+        for kind in ("hot", "digest", "feed"):
+            assert "enabled" in notify[kind], f"{name}: notify.{kind}.enabled"
+            assert "fallback_hours" in notify[kind], f"{name}: notify.{kind}.fallback_hours"
+        assert "per_request" in notify["hot"]
+        assert "per_request" in notify["digest"]
+        assert "wide_request" in notify["digest"]
+        assert "limit" in notify["feed"]

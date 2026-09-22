@@ -71,7 +71,23 @@ rate:
   # amd_per_usd: 363.25         # используется только при kind: fixed
 
 notify:
-  kind: stdout                  # none | stdout — telegram появится на M3
+  kind: stdout                  # none | stdout | telegram
+  # token: ${TELEGRAM_BOT_TOKEN}      # для kind: telegram
+  # chat_id: ${TELEGRAM_CHAT_ID}      # чат брокера: клиентам он пересылает сам
+  hot:                          # «звони сейчас»: раз в час, после match --new
+    enabled: true
+    per_request: 5              # строк на заявку; порог балла — match.thresholds.hot
+    fallback_hours: 2           # окно, когда отправок ещё не было
+  digest:                       # «посмотри вечером»: раз в сутки
+    enabled: true
+    per_request: 10             # строк на заявку; порог — match.thresholds.digest
+    wide_request: 15            # событий больше — заявка помечается как слишком широкая
+    include_retired: true       # тихий раздел «отпало»: куда делась вчерашняя карточка
+    fallback_hours: 24
+  feed:                         # что пришло на ленту вне заявок
+    enabled: false              # тумблер: от заявок не зависит вовсе
+    limit: 15                   # строк в сообщении, лучшие по выгодности
+    fallback_hours: 24
 
 scrape:
   kind: playwright                 # playwright — через браузер; http — голые запросы; files — с диска
