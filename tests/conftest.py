@@ -4,8 +4,33 @@ from __future__ import annotations
 import http.server
 import json
 import threading
+from pathlib import Path
 
 import pytest
+
+from listam.config import Config
+
+
+@pytest.fixture
+def runner_config(tmp_path) -> Config:
+    """Конфиг для каркаса оркестрации: хранилище и база, больше ничего.
+
+    Объявлений и заявок здесь нет нарочно: каркас про них не знает — он про
+    замок, копию из хранилища, миграции и заливку.
+    """
+    return Config(
+        {
+            "env": "test",
+            "storage": {
+                "kind": "local",
+                "directory": str(tmp_path / "remote"),
+                "work_dir": str(tmp_path / "work"),
+                "db_filename": "listam.sqlite",
+            },
+        },
+        env="test",
+        path=Path("config/test.yaml"),
+    )
 
 
 class _Handler(http.server.BaseHTTPRequestHandler):
