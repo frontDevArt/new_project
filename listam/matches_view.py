@@ -328,12 +328,15 @@ def collect_events(config: Config, *, since, until,
 
 
 def render_events(page: EventsPage, per_request: int | None,
-                  head: str = "Что нового") -> str:
+                  head: str = "Что нового", wide: int | None = None) -> str:
     """Срез событий: по разделу на заявку, лучшие сверху, честный хвост.
 
     Закрытые собираются в одну строку внизу: «отпало 4 (бюджет 3, …)».
     Закрытие не повод звонить — это объяснение, куда делась вчерашняя
     карточка, и место ему в конце, а не среди вариантов.
+
+    `wide` — сколько событий у заявки считается нормой; больше — раздел
+    помечается (решение 6 спеки M3). `None` — не помечать.
     """
     if not page.events:
         return f"{head}: событий нет" + (f" ({page.note})" if page.note else "")
@@ -357,6 +360,13 @@ def render_events(page: EventsPage, per_request: int | None,
         ) or ("только закрытия" if gone else "событий нет")
         lines.append("")
         lines.append(f"Заявка {request.external_id or key}{who} — {counts}")
+        if wide is not None and len(alive) > wide:
+            # Широту мерят события, а закрытие событием не является (решение 1
+            # спеки M3): сотни «отпало» — ответ на сужение заявки.
+            lines.append(
+                f"  ⚠ заявка слишком широкая: {len(alive)} событий за окно. "
+                f"Сузь районы или бюджет, иначе разговор не состоится"
+            )
         for event in shown:
             listing = event.listing
             mark = MINUS if listing.status == "gone" else "•"

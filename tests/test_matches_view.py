@@ -174,3 +174,24 @@ def test_a_cheaper_one_says_what_it_used_to_cost(prepared):
 
     assert [event.kind for event in page.events] == ["cheaper"]
     assert "подешевело с $100,000" in printed
+
+
+def test_the_view_marks_a_wide_request_by_itself():
+    """Пометку ставит тот, кто печатает раздел, а не разбор уже напечатанного
+    текста: разбор по строкам однажды уже вешал её на соседа `R-11`."""
+    from listam.domain.events import NEW, MatchEvent
+    from listam.domain.models import Listing, Match, Request
+    from listam.matches_view import EventsPage, render_events
+
+    request = Request(id=1, external_id="R-1", client_name="Ани")
+    events = [MatchEvent(kind=NEW,
+                         match=Match(request_id=1, listing_id=str(index), score=80.0),
+                         listing=Listing(id=str(index), url=f"https://x/{index}",
+                                         district="Кентрон", price_usd=100000.0))
+              for index in range(3)]
+    page = EventsPage(events=events, totals={"R-1": 3}, requests={"R-1": request})
+
+    text = render_events(page, per_request=10, wide=2)
+
+    assert "слишком широкая: 3 событий" in text
+    assert render_events(page, per_request=10, wide=3).count("слишком широкая") == 0
