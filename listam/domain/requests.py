@@ -131,6 +131,22 @@ def _rooms(row: dict) -> list[int]:
 
 def parse_row(row: dict, row_number: int = 0) -> Request:
     """Одна строка источника в заявку. Непонятное значение — `RequestParseError`."""
+    # Значений в строке больше, чем колонок в шапке: `csv.DictReader` кладёт
+    # остаток под ключ `None`. Такая строка разъехалась целиком — лишняя
+    # запятая обрезала заметку и сдвинула всё, что за ней, — и истолковывать
+    # её нельзя (решение 2). Отклонить нужно именно здесь: без этого
+    # `json.dumps(sort_keys=True)` ниже падает на сравнении `None` со строкой
+    # и уносит с собой всю таблицу вместо одной строки.
+    ragged = [key for key in row if not isinstance(key, str)]
+    if ragged:
+        extra = ", ".join(
+            str(item)
+            for key in ragged
+            for item in (row[key] if isinstance(row[key], list) else [row[key]])
+        )
+        raise RequestParseError("строка", extra,
+                                "значений больше, чем колонок в шапке — лишняя запятая?")
+
     external_id = _text(row, "id")
     if not external_id:
         raise RequestParseError("id", external_id, "заявка без идентификатора")

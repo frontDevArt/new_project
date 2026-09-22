@@ -125,3 +125,19 @@ def test_a_number_with_a_word_stuck_to_it_is_not_trimmed_to_the_digits():
     with pytest.raises(RequestParseError) as exc:
         parse_row(row(budget_max="100к"))
     assert exc.value.column == "budget_max"
+
+
+def test_a_row_with_more_values_than_columns_is_a_refusal_and_not_a_crash():
+    """Лишняя запятая в заметке — это разъехавшаяся строка, а не падение чтения.
+
+    `csv.DictReader` складывает лишние значения под ключ `None`, и разбор
+    такой строки обязан отклонить её по правилам решения 2, а не унести
+    с собой всю таблицу.
+    """
+    broken = row(notes="семья с ребёнком")
+    broken[None] = ["смотрит с октября"]
+    parsed, errors = parse_rows([row(id="R-1"), broken, row(id="R-3")])
+    assert [item.external_id for item in parsed] == ["R-1", "R-3"]
+    assert len(errors) == 1
+    assert "смотрит с октября" in errors[0].render()
+    assert "шапк" in errors[0].render()

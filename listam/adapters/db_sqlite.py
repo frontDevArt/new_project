@@ -42,9 +42,17 @@ REQUEST_FIELDS = (
 # Поля матча, которые считает пересчёт. `status` и `reject_reason` сюда
 # не входят и входить не могут: это след звонка, а не вычисленное значение
 # (решение 7 спеки). Их пишет только `set_match_status`.
+#
+# Что пишется и что сравнивается — разные списки. `run_id` пишется всегда,
+# но в сравнение не входит: номер прогона меняется между любыми двумя
+# пересчётами, и с ним в сравнении ночное `scrape && match --all` объявляло бы
+# обновлёнными все матчи разом. У матча он значит «в каком прогоне он в
+# последний раз менялся» — ровно то же, что `matched_at`, и двигается вместе
+# с ней.
 MATCH_FIELDS = (
     "score", "breakdown", "cluster_id", "cluster_size", "cluster_spread_usd", "run_id",
 )
+MATCH_COMPARED = tuple(name for name in MATCH_FIELDS if name != "run_id")
 
 
 # Списки в TEXT-колонках: базе они нужны цельными, а не отдельной таблицей —
@@ -558,7 +566,7 @@ class SqliteDatabase(Database):
 
         same = all(
             _normalize(values[name]) == _normalize(existing[name])
-            for name in MATCH_FIELDS
+            for name in MATCH_COMPARED
         )
         if same:
             # Балл и кластер те же — отметку пересчёта не двигаем: иначе

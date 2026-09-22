@@ -738,6 +738,31 @@ def test_an_unchanged_match_does_not_move_the_recount_stamp(db):
     assert db.matches_for_request(request.id)[0].matched_at == NOW
 
 
+def test_a_new_run_alone_does_not_make_an_unchanged_match_an_update(db):
+    """Прогон сменился, балл и кластер — нет: это всё ещё `unchanged`.
+
+    Расписание — `scrape && match --all`: между двумя пересчётами номер
+    прогона меняется всегда. Если он идёт в сравнение, первый же ночной
+    подбор объявляет обновлёнными все матчи разом и двигает им отметку
+    пересчёта — и «что изменилось со вчера» перестаёт отвечать на вопрос.
+    Номер прогона у матча значит «в каком прогоне он в последний раз
+    менялся», как и `matched_at`.
+    """
+    request = stored_request(db)
+    db.upsert_listing(make_listing("1"), NOW)
+    db.upsert_match(Match(request_id=request.id, listing_id="1", score=82.0,
+                          run_id=8), NOW)
+    assert db.upsert_match(Match(request_id=request.id, listing_id="1", score=82.0,
+                                 run_id=9), LATER) == "unchanged"
+    after = db.matches_for_request(request.id)[0]
+    assert after.matched_at == NOW
+    assert after.run_id == 8
+
+    assert db.upsert_match(Match(request_id=request.id, listing_id="1", score=91.0,
+                                 run_id=9), LATER) == "updated"
+    assert db.matches_for_request(request.id)[0].run_id == 9
+
+
 def test_a_changed_cluster_snapshot_is_an_update_too(db):
     """Тот же балл, но двойников стало больше — это другой разговор с клиентом."""
     request = stored_request(db)
