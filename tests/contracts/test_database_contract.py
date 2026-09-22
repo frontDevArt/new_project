@@ -1317,6 +1317,29 @@ def test_kinds_of_notification_do_not_mix(db):
     assert db.last_notification("digest") is None
 
 
+def test_the_journal_of_one_channel_does_not_move_another(db):
+    """Напечатанное в консоль брокеру не пришло: окно Telegram от него
+    не двигается (H-3 аудита QA после M3)."""
+    from listam.domain.models import Notification
+
+    db.record_notification(Notification(kind="digest", sent_at=LATER,
+                                        window_to=LATER, channel="stdout"))
+
+    assert db.last_notification("digest", channel="telegram") is None
+    assert db.last_notification("digest", channel="stdout").window_to == LATER
+    assert db.last_notification("digest", channel="stdout").channel == "stdout"
+
+
+def test_a_send_from_before_the_channels_counts_for_every_channel(db):
+    """Строки до миграции 011 канала не знают. Считать их чужими значило бы
+    послать в Telegram всё, что уже ушло."""
+    from listam.domain.models import Notification
+
+    db.record_notification(Notification(kind="digest", sent_at=LATER, window_to=LATER))
+
+    assert db.last_notification("digest", channel="telegram").window_to == LATER
+
+
 def test_the_journal_answers_none_before_the_first_send(db):
     assert db.last_notification("digest") is None
 

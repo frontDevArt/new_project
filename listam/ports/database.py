@@ -317,11 +317,15 @@ class Database(ABC):
         """
 
     @abstractmethod
-    def last_notification(self, kind: str) -> Notification | None:
+    def last_notification(self, kind: str, channel: str | None = None
+                          ) -> Notification | None:
         """Последняя отправка этого вида; не было ни одной — None.
 
         Виды не смешиваются: часовое «горячее» не двигает окно дневного
         дайджеста, иначе вечерняя сводка показывала бы последний час.
+        `channel` задан — не смешиваются и каналы: текст, напечатанный
+        в консоль, не двигает окно Telegram. Строка без канала (до миграции
+        011) считается за любой.
         """
 
     @abstractmethod

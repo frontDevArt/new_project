@@ -83,6 +83,7 @@ class Notification:
     requests: int = 0
     text: str | None = None
     notes: str | None = None
+    channel: str | None = None              # stdout | telegram; None — до миграции 011
 
 
 @dataclass

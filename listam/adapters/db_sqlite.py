@@ -886,20 +886,27 @@ class SqliteDatabase(Database):
         with self.transaction():
             cursor = self.conn.execute(
                 "INSERT INTO notifications "
-                "(kind, sent_at, window_from, window_to, events, requests, text, notes) "
-                "VALUES (?, ?, ?, ?, ?, ?, ?, ?)",
+                "(kind, sent_at, window_from, window_to, events, requests, text, notes, "
+                " channel) "
+                "VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)",
                 (notification.kind, to_iso(notification.sent_at),
                  to_iso(notification.window_from), to_iso(notification.window_to),
                  int(notification.events), int(notification.requests),
-                 notification.text, notification.notes),
+                 notification.text, notification.notes, notification.channel),
             )
         return int(cursor.lastrowid)
 
-    def last_notification(self, kind: str) -> Notification | None:
-        row = self.conn.execute(
-            "SELECT * FROM notifications WHERE kind = ? ORDER BY sent_at DESC, id DESC "
-            "LIMIT 1", (kind,),
-        ).fetchone()
+    def last_notification(self, kind: str, channel: str | None = None
+                          ) -> Notification | None:
+        query = "SELECT * FROM notifications WHERE kind = ?"
+        params: list = [kind]
+        if channel is not None:
+            # Строка без канала — из времён до миграции 011: куда она ушла,
+            # неизвестно, и считать её чужой значило бы послать всё заново.
+            query += " AND (channel = ? OR channel IS NULL)"
+            params.append(channel)
+        query += " ORDER BY sent_at DESC, id DESC LIMIT 1"
+        row = self.conn.execute(query, tuple(params)).fetchone()
         if row is None:
             return None
         return Notification(
@@ -907,7 +914,7 @@ class SqliteDatabase(Database):
             window_from=from_iso(row["window_from"]),
             window_to=from_iso(row["window_to"]),
             events=row["events"], requests=row["requests"],
-            text=row["text"], notes=row["notes"],
+            text=row["text"], notes=row["notes"], channel=row["channel"],
         )
 
     # --- журнал прогонов -------------------------------------------------
