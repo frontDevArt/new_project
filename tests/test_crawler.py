@@ -859,11 +859,15 @@ def test_rotation_keeps_its_hands_off_other_files(tmp_path):
     (remote / "listam.sqlite").write_text("общая база", encoding="utf-8")
     (remote / "listam-20260921-0937.xlsx").write_text("выгрузка", encoding="utf-8")
     (remote / "listam-заметки.txt").write_text("чужое", encoding="utf-8")
-    stamps = [f"2026092{n}-093700-000001" for n in range(1, 7)]
+    # Отметки заведомо в прошлом, а копий на одну больше, чем `keep`: ротация
+    # кладёт рядом ещё одну, с сегодняшней отметкой, и уйти обязана ровно
+    # самая старая. С отметками «сегодняшнего числа» ответ зависел бы от часов:
+    # сделанная сейчас копия попадала бы то в начало списка, то в конец.
+    stamps = [f"2020010{n}-093700-000001" for n in range(1, 7)]
     for stamp in stamps:
         (remote / f"listam-{stamp}.sqlite").write_text(stamp, encoding="utf-8")
 
-    rotate_backups(LocalStorage(remote), "listam.sqlite", keep=5, work_dir=tmp_path / "work")
+    rotate_backups(LocalStorage(remote), "listam.sqlite", keep=6, work_dir=tmp_path / "work")
 
     left = {item.name for item in remote.iterdir()}
     assert "listam-20260921-0937.xlsx" in left
