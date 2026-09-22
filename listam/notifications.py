@@ -17,7 +17,7 @@ from listam.matches_view import collect_events, render_events
 from listam.matching import settings
 from listam.ports.notifier import NotifyError
 from listam.runner import SessionRefused, publish, working_session
-from listam.wiring import build_notifier
+from listam.wiring import build_notifier, notify_channel
 
 KINDS = ("hot", "digest", "feed")
 
@@ -25,7 +25,8 @@ DEFAULT_FALLBACK_HOURS = {"hot": 2.0, "digest": 24.0, "feed": 24.0}
 
 
 def window_for(config: Config, kind: str, hours: float | None = None,
-               database=None) -> tuple[datetime, datetime, str]:
+               database=None, channel: str | None = None
+               ) -> tuple[datetime, datetime, str]:
     """Окно `(since, until]` и человеческое объяснение, откуда оно взялось.
 
     `hours` — окно назад от «сейчас», как у `changes --hours`. Иначе мерка —
@@ -33,13 +34,17 @@ def window_for(config: Config, kind: str, hours: float | None = None,
     не шлёт то же самое второй раз, а сбой сети не теряет событие. Отправок
     ещё не было — берём запасное окно из конфига и **говорим об этом вслух**,
     чтобы пустой список не читался как «на рынке тишина».
+
+    `channel` — окно своего канала: текст, напечатанный в консоль, не двигает
+    окно Telegram.
     """
     until = datetime.now(timezone.utc)
     if hours is not None:
         since = until - timedelta(hours=float(hours))
         return since, until, f"за последние {hours:g} ч (с {since:%d.%m %H:%M} UTC)"
 
-    last = database.last_notification(kind) if database is not None else None
+    last = (database.last_notification(kind, channel=channel)
+            if database is not None else None)
     if last is not None and last.window_to is not None:
         return last.window_to, until, (
             f"с прошлой отправки ({last.window_to:%d.%m %H:%M} UTC)"
@@ -154,6 +159,16 @@ def run_notify(config: Config, *, kind: str, dry_run: bool = False) -> NotifyRep
                        f"таких вариантов не считает, слать нечего")
         return report
 
+    channel = notify_channel(config)
+    if channel == "none" and not dry_run:
+        # Канал не настроен — значит, ничего и не ушло. Писать «отправлено»
+        # значило бы съесть события: когда Telegram появится, он получил бы
+        # только то, что случилось после.
+        report.scope = "канал не настроен"
+        report.text = ("notify.kind: none — уведомления никуда не идут. Окно не "
+                       "сдвинуто: канал, когда появится, получит всё накопленное")
+        return report
+
     # Канал собирается до работы: пустой секрет — отказ на входе, а не после
     # выборки под замком рабочей копии. Пробному прогону канал не нужен.
     notifier = None if dry_run else build_notifier(config)
@@ -164,7 +179,8 @@ def run_notify(config: Config, *, kind: str, dry_run: bool = False) -> NotifyRep
             session.notes = notes
             database = session.database
 
-            since, until, scope = window_for(config, kind, database=database)
+            since, until, scope = window_for(config, kind, database=database,
+                                             channel=channel)
             report.scope = scope
 
             if kind == "feed":
@@ -199,6 +215,7 @@ def run_notify(config: Config, *, kind: str, dry_run: bool = False) -> NotifyRep
                     kind=kind, sent_at=datetime.now(timezone.utc),
                     window_from=since, window_to=until,
                     events=report.events, requests=report.requests, text=report.text,
+                    channel=channel,
                 ))
             except Exception as exc:       # sqlite3.Error, OSError — база не приняла строку
                 report.errors = 1

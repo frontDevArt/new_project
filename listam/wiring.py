@@ -157,6 +157,17 @@ def build_notifier(config: Config) -> Notifier:
     raise _unknown("notify", kind, ["none", "stdout", "telegram"])
 
 
+def notify_channel(config: Config) -> str:
+    """Как называется канал в журнале отправок: `none`, `stdout`, `telegram`.
+
+    Имя берётся из конфига, а не из собранного адаптера: пробному прогону
+    канал не нужен (секретов может не быть), а окно он обязан показать то же,
+    что увидит настоящая отправка.
+    """
+    kind = _kind(config, "notify", "none")
+    return "none" if kind in ("none", "null") else kind
+
+
 def build_requests_source(config: Config) -> RequestsSource:
     kind = _kind(config, "requests", "none")
     if kind in ("none", "empty"):

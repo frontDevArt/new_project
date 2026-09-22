@@ -448,6 +448,38 @@ def test_hot_switched_off_by_its_threshold_sends_nothing(prepared):
     database.close()
 
 
+def test_a_channel_that_goes_nowhere_does_not_move_the_window(prepared):
+    """`kind: none` ничего не шлёт — значит, и не отправляло. До фазы 6 QA
+    журнал писал «отправлено 2», и когда Telegram появлялся, он получал
+    только то, что случилось после."""
+    prepared.data["notify"]["kind"] = "none"
+
+    report = run_notify(prepared, kind="hot")
+
+    assert report.sent is False
+    assert report.errors == 0
+    assert "никуда не идут" in report.text
+    database = build_database(prepared)
+    database.connect()
+    assert database.last_notification("hot") is None
+    database.close()
+
+
+def test_text_printed_to_the_console_does_not_move_the_telegram_window(
+        prepared, monkeypatch):
+    """Проверка текста в консоли не съедает события Telegram."""
+    run_notify(prepared, kind="hot")                     # stdout: напечатано
+    prepared.data["notify"].update({"kind": "telegram", "token": "t", "chat_id": "1"})
+    sent = []
+    monkeypatch.setattr("listam.adapters.notify_telegram.TelegramNotifier.send",
+                        lambda self, text, to=None: sent.append(text))
+
+    report = run_notify(prepared, kind="hot")
+
+    assert report.events == 2
+    assert "Заявка R-1" in sent[0]
+
+
 def cli_args(config) -> list[str]:
     return ["--env", "test", "--config-dir", str(config.path.parent)]
 

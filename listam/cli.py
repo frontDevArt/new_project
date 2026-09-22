@@ -395,6 +395,7 @@ def _matches_new(config, external_id: str | None, limit: int | None,
                                      open_for_reading, render_events)
     from listam.matching import settings
     from listam.notifications import tuning_for, window_for
+    from listam.wiring import notify_channel
 
     if min_score is None:
         min_score = settings(config).digest
@@ -411,7 +412,8 @@ def _matches_new(config, external_id: str | None, limit: int | None,
         return 1
     try:
         since, until, note = window_for(config, kind="digest", hours=hours,
-                                        database=database)
+                                        database=database,
+                                        channel=notify_channel(config))
     finally:
         database.close()
     try:
