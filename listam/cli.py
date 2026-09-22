@@ -351,8 +351,14 @@ def _export(config, name: str | None) -> int:
     listings = list(database.iter_listings())
     database.close()
 
-    path = build_exporter(config).export(listings, name=name)
-    print(f"Выгружено объявлений: {len(listings)} → {path}")
+    # Витрина матчей собирается тем же кодом, что печатает `matches`: два
+    # разных ответа на вопрос «что подобралось» разошлись бы через месяц.
+    # Порог — дайджестный из конфига, он же по умолчанию у `matches`.
+    from listam.matching import collect_matches
+
+    matches = collect_matches(config)
+    path = build_exporter(config).export(listings, name=name, matches=matches)
+    print(f"Выгружено объявлений: {len(listings)}, матчей: {len(matches)} → {path}")
     return 0
 
 

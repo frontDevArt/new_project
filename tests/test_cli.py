@@ -517,3 +517,33 @@ def test_matches_refuse_a_database_older_than_the_code(project, capsys):
     out = capsys.readouterr()
     assert "схема базы" in (out.out + out.err)
     assert schema_of(project) == 1
+
+
+def test_export_puts_the_matches_on_their_own_sheet(project, capsys):
+    from openpyxl import load_workbook
+
+    run(project, "scrape")
+    with_requests(project, "R-1,Ани,+374,active,1000000,,,,,,,,,нет,нет,,,,\n")
+    run(project, "requests")
+    run(project, "match", "--all")
+    capsys.readouterr()
+
+    assert run(project, "export") == 0
+
+    out = capsys.readouterr().out
+    assert "матчей" in out
+    book = load_workbook(sorted((project / "out").glob("*.xlsx"))[-1])
+    assert "Матчи" in book.sheetnames
+    assert book["Матчи"].cell(row=2, column=1).value == "R-1"
+
+
+def test_export_without_matches_is_not_an_error(project, capsys):
+    from openpyxl import load_workbook
+
+    run(project, "scrape")
+    capsys.readouterr()
+
+    assert run(project, "export") == 0
+
+    book = load_workbook(sorted((project / "out").glob("*.xlsx"))[-1])
+    assert "Матчи" not in book.sheetnames

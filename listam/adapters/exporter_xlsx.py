@@ -11,11 +11,15 @@ from openpyxl.styles import Alignment, Font, PatternFill
 from openpyxl.utils import get_column_letter
 
 from listam.adapters.filenames import safe_filename
-from listam.domain.models import Listing
+from listam.domain.models import Listing, Match, Request
 from listam.ports.exporter import Exporter
 
 SELLER_TYPES = {"owner": "собственник", "agency": "агентство"}
 STATUSES = {"active": "на ленте", "gone": "снято"}
+# Статусы матча по-русски: правило, добытое F-12 в M1 — в витрине не бывает
+# английских слов из схемы базы.
+MATCH_STATUSES = {"new": "новый", "sent": "отправлен",
+                  "called": "звонили", "rejected": "отказ"}
 
 # заголовок, как достать значение, ширина колонки, формат числа
 COLUMNS: list[tuple[str, str, int, str | None]] = [
@@ -53,7 +57,8 @@ class XlsxExporter(Exporter):
         self.directory = Path(directory)
         self.timezone_name = timezone_name
 
-    def export(self, listings: Iterable[Listing], name: str | None = None) -> Path:
+    def export(self, listings: Iterable[Listing], name: str | None = None,
+               matches: list[tuple[Request, Match, Listing]] | None = None) -> Path:
         rows = sorted(
             listings,
             key=lambda item: (item.first_seen or datetime.min.replace(tzinfo=timezone.utc)),
@@ -88,6 +93,12 @@ class XlsxExporter(Exporter):
 
         sheet.freeze_panes = "A2"
         sheet.auto_filter.ref = f"A1:{get_column_letter(len(COLUMNS))}{max(sheet.max_row, 1)}"
+
+        # Матчей нет — листа нет, и это не ошибка: выгрузка объявлений жила
+        # без него всю M1 и обязана выглядеть ровно как раньше.
+        if matches:
+            _write_matches_sheet(workbook, list(matches))
+
         workbook.save(path)
         return path
 
@@ -105,3 +116,76 @@ def _present(listing: Listing, attribute: str):
     if isinstance(value, datetime):
         return value.astimezone(timezone.utc).strftime("%Y-%m-%d %H:%M")
     return value
+
+
+# Лист «Матчи»: заголовок, откуда берётся значение, ширина, формат числа.
+# Единица строки — кластер, а не объявление: «объявлений в кластере» и
+# «разброс» лежат в самом матче снимком, сделанным подбором.
+MATCH_COLUMNS: list[tuple[str, str, int, str | None]] = [
+    ("Заявка", "request.external_id", 12, None),
+    ("Клиент", "request.client_name", 18, None),
+    ("Балл", "match.score", 8, "0"),
+    ("Статус матча", "match.status", 14, None),
+    ("Причина отказа", "match.reject_reason", 24, None),
+    ("Цена, $", "listing.price_usd", 13, "#,##0"),
+    ("$/м²", "listing.price_per_sqm", 10, "#,##0"),
+    ("Район", "listing.district", 18, None),
+    ("Улица", "listing.street", 22, None),
+    ("Комнат", "listing.rooms", 9, "0"),
+    ("Площадь, м²", "listing.area", 12, "0.0"),
+    ("Этаж", "listing.floor", 8, "0"),
+    ("Этажей", "listing.floors_total", 9, "0"),
+    ("Продавец", "listing.seller_type", 14, None),
+    ("Объявлений в кластере", "match.cluster_size", 22, "0"),
+    ("Разброс, $", "match.cluster_spread_usd", 12, "#,##0"),
+    ("Статус объявления", "listing.status", 18, None),
+    ("Ссылка", "listing.url", 16, None),
+]
+
+
+def _match_value(request: Request, match: Match, listing: Listing, key: str):
+    owner, attribute = key.split(".", 1)
+    source = {"request": request, "match": match, "listing": listing}[owner]
+    value = getattr(source, attribute, None)
+    if owner == "match" and attribute == "status":
+        return MATCH_STATUSES.get(value, value)
+    if owner == "listing":
+        return _present(listing, attribute)
+    return value
+
+
+def _write_matches_sheet(workbook: Workbook, rows: list[tuple]) -> None:
+    """Лист витрины: те же правила, что на листе объявлений.
+
+    Матч на снятое объявление остаётся в выгрузке с пометкой в колонке
+    «Статус объявления» (решение 8): «мы звонили по этой квартире» не
+    должно исчезать вместе с объявлением.
+    """
+    sheet = workbook.create_sheet("Матчи")
+    for index, (title, _, width, _) in enumerate(MATCH_COLUMNS, start=1):
+        cell = sheet.cell(row=1, column=index, value=title)
+        cell.fill = HEADER_FILL
+        cell.font = HEADER_FONT
+        cell.alignment = Alignment(vertical="center", wrap_text=False)
+        sheet.column_dimensions[get_column_letter(index)].width = width
+
+    ordered = sorted(
+        rows,
+        key=lambda row: (row[0].external_id or "", -(row[1].score or 0.0),
+                         row[2].id or ""),
+    )
+    for row_index, (request, match, listing) in enumerate(ordered, start=2):
+        for column_index, (title, key, _, number_format) in enumerate(MATCH_COLUMNS,
+                                                                      start=1):
+            value = _match_value(request, match, listing, key)
+            cell = sheet.cell(row=row_index, column=column_index, value=value)
+            if number_format and isinstance(value, (int, float)):
+                cell.number_format = number_format
+            if title == "Ссылка" and listing.url:
+                cell.hyperlink = listing.url
+                cell.font = LINK_FONT
+
+    sheet.freeze_panes = "A2"
+    sheet.auto_filter.ref = (
+        f"A1:{get_column_letter(len(MATCH_COLUMNS))}{max(sheet.max_row, 1)}"
+    )

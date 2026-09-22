@@ -7,7 +7,7 @@ import pytest
 from openpyxl import load_workbook
 
 from listam.adapters.exporter_xlsx import XlsxExporter
-from listam.domain.models import Listing
+from listam.domain.models import Listing, Match, Request
 from listam.ports.exporter import Exporter
 
 NOW = datetime(2026, 9, 21, 10, 0, tzinfo=timezone.utc)
@@ -107,7 +107,7 @@ def test_export_has_a_column_for_suspicious_rows(tmp_path):
     from openpyxl import load_workbook
 
     from listam.adapters.exporter_xlsx import XlsxExporter
-    from listam.domain.models import Listing
+    from listam.domain.models import Listing, Match, Request
 
     rows = [
         Listing(id="1", url="u", district="Центр", area=1.0, rooms=3,
@@ -195,3 +195,95 @@ def test_the_status_column_has_no_latin_left_in_it(exporter):
     printed = [sheet.cell(row=r, column=column).value for r in (2, 3)]
 
     assert not any(any("a" <= ch.lower() <= "z" for ch in value) for value in printed)
+
+
+# --- лист «Матчи» (фаза 6 M2) -----------------------------------------
+
+
+def match_row(**over):
+    """Строка витрины: заявка, матч и объявление вместе."""
+    request = Request(id=1, external_id="R-1", client_name="Ани",
+                      client_phone="+374 00 000000")
+    fields = dict(id=1, request_id=1, listing_id="1", score=85.0, status="called",
+                  reject_reason="окна во двор", cluster_id="c1", cluster_size=3,
+                  cluster_spread_usd=11000.0)
+    fields.update(over)
+    return request, Match(**fields), listing("1", NOW)
+
+
+def matches_sheet(exporter, rows):
+    return load_workbook(exporter.export([listing("1", NOW)], matches=rows))["Матчи"]
+
+
+def test_the_workbook_has_a_matches_sheet_when_matches_are_given(exporter):
+    path = exporter.export([listing("1", NOW)], matches=[match_row()])
+
+    book = load_workbook(path)
+    assert "Матчи" in book.sheetnames
+    sheet = book["Матчи"]
+    assert sheet.freeze_panes == "A2"
+    assert sheet.auto_filter.ref.startswith("A1")
+    assert sheet.cell(row=2, column=1).value == "R-1"
+
+
+def test_without_matches_the_workbook_is_exactly_what_it_was(exporter):
+    book = load_workbook(exporter.export([listing("1", NOW)]))
+    assert "Матчи" not in book.sheetnames
+    assert book.sheetnames == ["Объявления"]
+
+
+def test_the_matches_sheet_keeps_numbers_as_numbers(exporter):
+    sheet = matches_sheet(exporter, [match_row()])
+    values = {sheet.cell(row=1, column=i).value: sheet.cell(row=2, column=i).value
+              for i in range(1, sheet.max_column + 1)}
+
+    assert values["Балл"] == 85.0
+    assert values["Цена, $"] == 132000.0
+    assert values["Объявлений в кластере"] == 3
+    assert values["Разброс, $"] == 11000.0
+
+
+def test_the_match_status_is_russian_on_the_sheet(exporter):
+    """Правило, добытое F-12 в M1: в витрине не бывает английских статусов."""
+    sheet = matches_sheet(exporter, [match_row()])
+    row = [sheet.cell(row=2, column=i).value for i in range(1, sheet.max_column + 1)]
+
+    assert "звонили" in row
+    assert "called" not in row
+
+
+def test_a_match_on_a_listing_that_went_away_is_marked_and_not_hidden(exporter):
+    """Решение 8: звонок переживает уход объявления с ленты."""
+    gone = listing("1", NOW, status="gone", gone_at=NOW + timedelta(days=1))
+    request, match, _ = match_row()
+
+    sheet = matches_sheet(exporter, [(request, match, gone)])
+    row = [sheet.cell(row=2, column=i).value for i in range(1, sheet.max_column + 1)]
+
+    assert sheet.max_row == 2          # строка на месте, а не выброшена
+    assert "снято" in row
+
+
+def test_the_matches_sheet_has_no_none_written_out_as_a_word(exporter):
+    """Слово `None` в клетке читается как поломка.
+
+    Пустая клетка — не то же самое: в таблице она пуста и на листе
+    объявлений, и человек видит именно пустоту, а не английское слово.
+    """
+    bare = listing("2", NOW, district=None, street=None, price_usd=None,
+                   price_per_sqm=None, rooms=None, floor=None, floors_total=None,
+                   seller_type=None)
+    request, match, _ = match_row()
+
+    sheet = matches_sheet(exporter, [(request, match, bare)])
+    row = [sheet.cell(row=2, column=i).value for i in range(1, sheet.max_column + 1)]
+
+    assert "None" not in [value for value in row if isinstance(value, str)]
+
+
+def test_the_link_on_the_matches_sheet_is_clickable(exporter):
+    sheet = matches_sheet(exporter, [match_row()])
+    titles = [sheet.cell(row=1, column=i).value for i in range(1, sheet.max_column + 1)]
+    cell = sheet.cell(row=2, column=titles.index("Ссылка") + 1)
+
+    assert cell.hyperlink is not None
