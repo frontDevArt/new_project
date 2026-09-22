@@ -149,6 +149,10 @@ def test_resume_continues_the_interrupted_full_crawl_not_the_fresh_one(project, 
     )
     database.conn.commit()
     database.close()
+    # Оборванный обход с ошибкой в хранилище не заливается: там осталось то, что
+    # было до него, — ничего. Иначе удалённая копия с тем же прогоном, но
+    # законченным, свежее по последней записи и затирает обрыв.
+    (tmp_path / "remote" / "listam.sqlite").unlink()
     run_scrape(project, fresh=True)          # между ними — инкрементальный прогон
 
     run = run_scrape(project, resume=True)

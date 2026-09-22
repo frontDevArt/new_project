@@ -75,19 +75,45 @@ def apply_rate(listing: Listing, rate_amd_per_usd: float | None) -> Listing:
 
 
 
-def _latest_run_at(path) -> datetime | None:
-    """Когда по этой копии базы последний раз ходил прогон. Нечитаемая копия — None."""
+# Где база помнит, что её писали. Прогоны пишет только `scrape`; подбор,
+# заявки и уведомления прогона не открывают — без них копия с отправленным
+# дайджестом и копия без него выглядели ровесницами (B-3 QA после M3).
+WRITE_MARKS = (
+    ("runs", "started_at"),
+    ("runs", "finished_at"),
+    ("matches", "matched_at"),
+    ("matches", "retired_at"),
+    ("requests", "updated_at"),
+    ("requests", "matched_at"),
+    ("notifications", "sent_at"),
+)
+
+
+def _latest_write_at(path) -> datetime | None:
+    """Когда эту копию базы последний раз писали. Нечитаемая копия — None.
+
+    Таблицы или колонки, которой в старой схеме нет, просто не участвуют:
+    копия на схеме 9 без журнала отправок — не повод считать её нечитаемой.
+    """
     if not Path(path).exists():
         return None
     try:
         connection = sqlite3.connect(f"file:{Path(path).as_posix()}?mode=ro", uri=True)
-        try:
-            row = connection.execute("SELECT MAX(started_at) AS at FROM runs").fetchone()
-        finally:
-            connection.close()
     except sqlite3.Error:
         return None
-    return from_iso(row[0]) if row and row[0] else None
+    latest: datetime | None = None
+    try:
+        for table, column in WRITE_MARKS:
+            try:
+                row = connection.execute(f"SELECT MAX({column}) FROM {table}").fetchone()
+            except sqlite3.Error:
+                continue
+            when = from_iso(row[0]) if row and row[0] else None
+            if when is not None and (latest is None or when > latest):
+                latest = when
+    finally:
+        connection.close()
+    return latest
 
 
 def _listings_in(path) -> int | None:
@@ -118,6 +144,11 @@ def take_the_fresher_copy(storage, remote_name: str, local_db: Path) -> _Remote:
     Без этого вторая машина или откат папки data/ молча затирает общую базу
     старым снимком: заливка-то происходит всегда, а скачивание — только когда
     локального файла нет.
+
+    Свежесть — последняя запись (`_latest_write_at`): прогон, подбор, заявки,
+    отправка. Две копии, которые писали обе, не сливаются — побеждает поздняя,
+    и что было только в ранней, теряется. Слияние журналов двух машин — вне
+    этого плана.
     """
     if not local_db.exists():
         if not storage.download(remote_name, local_db):
@@ -131,7 +162,7 @@ def take_the_fresher_copy(storage, remote_name: str, local_db: Path) -> _Remote:
     try:
         if not storage.download(remote_name, candidate):
             return _Remote(note="в хранилище копии нет — идём с локальной")
-        there, here = _latest_run_at(candidate), _latest_run_at(local_db)
+        there, here = _latest_write_at(candidate), _latest_write_at(local_db)
         listings = _listings_in(candidate)
         if there is not None and (here is None or there > here):
             candidate.replace(local_db)
