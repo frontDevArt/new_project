@@ -243,16 +243,29 @@ class EventsPage:
     requests: dict[str, Request] = field(default_factory=dict)
     note: str = ""                                       # «с 21.09 19:00 UTC»
 
+    def calls(self) -> list:
+        """События, по которым звонят: всё, кроме закрытий.
+
+        Закрытие — объяснение пропавшей карточки, а не повод звонить
+        (решение 1 спеки M3). Считать его «событием» значило бы писать
+        брокеру «Событий: 2» там, где звонить некому.
+        """
+        return [event for event in self.events if event.kind != RETIRED]
+
 
 def collect_events(config: Config, *, since, until,
                    external_id: str | None = None,
                    min_score: float | None = None,
-                   note: str = "") -> EventsPage:
+                   note: str = "",
+                   include_retired: bool = True) -> EventsPage:
     """События окна по активным заявкам. Та же выборка, что у уведомления.
 
     Одна выборка и две подачи (решение 10 спеки): текст сообщения нельзя
     проверить иначе, чем отправкой, а отправленное не отзывается. Значит,
     человек обязан уметь посмотреть то же самое в терминале — до отправки.
+
+    `include_retired=False` — закрытия не отдаются: так их просит «горячее»
+    (никогда) и дайджест с `notify.digest.include_retired: false`.
     """
     if min_score is None:
         min_score = settings(config).digest
@@ -284,6 +297,11 @@ def collect_events(config: Config, *, since, until,
         for request in requests:
             rows = database.match_events_since(since, until, request_id=request.id)
             found = events_for(rows, since, until, min_score=min_score)
+            if not include_retired:
+                # Тихий раздел «отпало» просили не показывать — ни в тексте,
+                # ни в счёте: заявка, у которой только закрытия, раздела не
+                # получает вовсе.
+                found = [event for event in found if event.kind != RETIRED]
             if not found:
                 continue
             key = group_key(request)

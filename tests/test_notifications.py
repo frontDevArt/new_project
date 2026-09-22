@@ -319,3 +319,40 @@ def test_a_dry_run_does_not_need_the_channel(prepared):
 
     assert report.errors == 0
     assert not report.sent
+
+
+def retire_everything(config) -> None:
+    """Оба матча фикстуры закрываются подбором: «бюджет»."""
+    database = build_database(config)
+    database.connect()
+    try:
+        request = database.get_request("R-1")
+        database.retire_matches(request.id, keep=set(),
+                                now=datetime.now(timezone.utc),
+                                reasons={"0": "бюджет", "1": "бюджет"},
+                                default="бюджет")
+    finally:
+        database.close()
+
+
+def test_the_hot_message_never_carries_closures(prepared):
+    """Решение 1 спеки M3: немедленным уведомлением закрытие не шлётся никогда.
+    До фазы 1 QA «Звони сейчас» приносил раздел «только закрытия / отпало 2»."""
+    run_notify(prepared, kind="hot")             # оба варианта ушли брокеру
+    retire_everything(prepared)
+
+    report = run_notify(prepared, kind="hot", dry_run=True)
+
+    assert "отпало" not in report.text
+    assert "только закрытия" not in report.text
+    assert "событий нет" in report.text
+
+
+def test_the_digest_leaves_closures_out_when_told_so(prepared):
+    """`include_retired: false` стоял в конфиге и не читался ничем."""
+    retire_everything(prepared)
+    prepared.data["notify"]["digest"]["include_retired"] = False
+
+    report = run_notify(prepared, kind="digest", dry_run=True)
+
+    assert "отпало" not in report.text

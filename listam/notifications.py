@@ -95,6 +95,17 @@ def per_request(config: Config, kind: str) -> int | None:
     return None if value is None else int(value)
 
 
+def shows_closures(config: Config, kind: str) -> bool:
+    """Идёт ли в текст тихий раздел «отпало».
+
+    В «горячее» — никогда (решение 1 спеки M3): закрытие не повод звонить.
+    В дайджест — по тумблеру `notify.digest.include_retired`.
+    """
+    if kind != "digest":
+        return False
+    return bool(threshold(config, "notify.digest.include_retired", True))
+
+
 def run_notify(config: Config, *, kind: str, dry_run: bool = False) -> NotifyReport:
     """Одна отправка одного вида. Сводку печатает вызывающий.
 
@@ -135,7 +146,8 @@ def run_notify(config: Config, *, kind: str, dry_run: bool = False) -> NotifyRep
                 report.text, report.events = _feed_text(database, config, since, until)
             else:
                 page = collect_events(config, since=since, until=until,
-                                      min_score=min_score, note=scope)
+                                      min_score=min_score, note=scope,
+                                      include_retired=shows_closures(config, kind))
                 report.events = len(page.events)
                 report.requests = len(page.totals)
                 report.text = _match_text(page, config, kind)
