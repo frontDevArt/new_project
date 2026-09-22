@@ -40,22 +40,40 @@ class GSheetRequestsSource(RequestsSource):
         )
         return build("sheets", "v4", credentials=credentials, cache_discovery=False)
 
+    def _rows_from(self, values: list[list]) -> list[dict]:
+        """Ответ Sheets в строки словарями. Разбор значений — в домене.
+
+        Значений в строке больше, чем колонок в шапке, — строка разъехалась,
+        и читать её нельзя. `csv.DictReader` кладёт остаток под ключ `None`,
+        и домен на этот ключ уже умеет отказывать (решение 2). Повторяем его
+        договор ровно, а не «почти»: иначе одна и та же строка в двух
+        источниках даст две разные заявки, и решение 1 перестанет что-либо
+        значить.
+        """
+        if not values:
+            return []
+        header = [str(name).strip() for name in values[0]]
+        rows: list[dict] = []
+        for raw in values[1:]:
+            cells = [str(cell) for cell in raw]
+            if not any(cell.strip() for cell in cells):
+                continue
+            # Пустые хвостовые ячейки Sheets не присылает вовсе: короткую
+            # строку дополняем пустыми, иначе колонки разъедутся на первой же
+            # заявке без заметки.
+            padded = cells + [""] * (len(header) - len(cells))
+            row = dict(zip(header, padded))
+            if len(cells) > len(header):
+                row[None] = cells[len(header):]
+            rows.append(row)
+        return rows
+
     def rows(self) -> list[dict]:
         service = self._service()
         values = service.spreadsheets().values().get(
             spreadsheetId=self.sheet_id, range=self.range_name
         ).execute().get("values", [])
-        if not values:
-            return []
-        header = [str(name).strip() for name in values[0]]
-        # Пустые хвостовые ячейки Sheets не присылает вовсе: короткую строку
-        # дополняем пустыми, иначе колонки разъедутся на первой же заявке
-        # без заметки.
-        return [
-            dict(zip(header, list(row) + [""] * (len(header) - len(row))))
-            for row in values[1:]
-            if any(str(cell).strip() for cell in row)
-        ]
+        return self._rows_from(values)
 
     def describe(self) -> str:
-        return f"Google Sheet: {self.sheet_id}"
+        return f"Google Sheet: {self.sheet_id} (диапазон {self.range_name})"
