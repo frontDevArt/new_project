@@ -359,3 +359,25 @@ def test_the_header_names_the_digest_threshold_the_window_was_cut_by(matching_co
                              limit=50, min_score=40)
 
     assert "40" in printed
+
+
+def test_a_cluster_priced_the_same_says_the_spread_is_zero(tmp_path):
+    """Ноль значит ноль: три карточки по одной цене — это «разброс $0».
+
+    Пустая пометка на её месте читается как «разброса нет данных», хотя он
+    как раз известен и как раз нулевой — это самый частый кластер на боевой
+    базе, и молчать о нём нельзя.
+    """
+    config = cfg(tmp_path)
+    same = dict(district="Кентрон", street="ул. Туманяна", rooms=3, floor=4,
+                floors_total=9, seller_type="agency", price_usd=119_000.0)
+    fill(config,
+         listings=[make_listing("a", area=85.0, **same),
+                   make_listing("b", area=86.0, **same),
+                   make_listing("c", area=87.0, **same)],
+         requests=[make_request("R-1")])
+    run_match(config, external_id="R-1")
+
+    printed = render_matches(collect_matches(config, external_id="R-1"), limit=50)
+
+    assert "3 объявления, разброс $0" in printed

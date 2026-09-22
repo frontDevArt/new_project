@@ -435,8 +435,10 @@ def _note(match: Match, listing: Listing) -> str:
         when = f" {listing.gone_at:%d.%m}" if listing.gone_at else ""
         parts.append(f"снято с ленты{when}")
     if match.cluster_size and match.cluster_size > 1:
+        # `is not None`, а не `if`: разброс $0 — это «три карточки по одной
+        # цене», самый частый кластер на боевой базе, а не «разброс неизвестен».
         spread = (f", разброс {money(match.cluster_spread_usd)}"
-                  if match.cluster_spread_usd else "")
+                  if match.cluster_spread_usd is not None else "")
         parts.append(
             f"{match.cluster_size} "
             + _plural(match.cluster_size, "объявление", "объявления", "объявлений")
