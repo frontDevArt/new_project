@@ -29,7 +29,11 @@ def chat():
         context = play.chromium.launch_persistent_context(str(PROFILE), headless=False)
         page = context.pages[0] if context.pages else context.new_page()
         page.goto(os.environ.get("TELEGRAM_WEB_CHAT", "https://web.telegram.org/k/"))
-        page.wait_for_load_state("networkidle")
+        # `networkidle` у Telegram Web не наступает никогда: соединение с сервером
+        # открыто всё время. Ждём то, что видит человек: поле ввода открытого
+        # чата — или экран входа.
+        ready = page.locator(".input-message-input").or_(page.get_by_text("Log in to Telegram"))
+        ready.first.wait_for(timeout=60_000)
         if page.get_by_text("Log in to Telegram").count():
             context.close()
             pytest.skip("в профиле нет входа: выполни шаг 1 задачи 5.4 руками")
