@@ -16,6 +16,7 @@ from __future__ import annotations
 import time
 
 import requests
+from urllib3.exceptions import ConnectTimeoutError, MaxRetryError
 
 from listam.ports.notifier import NotifyError, Notifier
 
@@ -25,6 +26,8 @@ DEFAULT_TIMEOUT = 20.0
 # Bot API просит не больше сообщения в секунду в один чат; на пачке частей
 # дайджеста 429 ловится и так, поэтому пауза стоит между частями всегда.
 DEFAULT_PAUSE = 1.0
+MAX_RETRIES = 3          # сколько раз повторить часть, которую Telegram точно не принял
+MAX_WAIT = 60.0          # дольше минуты не ждём: повторит следующий запуск
 
 
 def split_message(text: str, limit: int = LIMIT) -> list[str]:
@@ -67,6 +70,31 @@ def _split_lines(block: str, limit: int) -> list[str]:
     return parts
 
 
+def _retry_after(answer) -> float | None:
+    """Сколько секунд Telegram просит подождать. Не 429 — не просит."""
+    if getattr(answer, "status_code", None) != 429:
+        return None
+    try:
+        return float(answer.json()["parameters"]["retry_after"])
+    except (ValueError, KeyError, TypeError):
+        return DEFAULT_PAUSE
+
+
+def _never_connected(exc: requests.ConnectionError) -> bool:
+    """Соединение не установилось — значит, часть точно не ушла.
+
+    `requests.ConnectionError` зовёт так и обрыв уже после отправки
+    («Connection aborted»): там часть могла дойти, и повтор дал бы дубль.
+    Отказ соединиться `requests` приносит как `MaxRetryError` с причиной
+    `ConnectTimeoutError` (её подкласс — `NewConnectionError`).
+    """
+    if isinstance(exc, requests.ConnectTimeout):
+        return True
+    reason = exc.args[0] if exc.args else None
+    return (isinstance(reason, MaxRetryError)
+            and isinstance(reason.reason, ConnectTimeoutError))
+
+
 class TelegramNotifier(Notifier):
     def __init__(self, token: str, chat_id: str, timeout: float = DEFAULT_TIMEOUT,
                  api_url: str = DEFAULT_API, pause: float = DEFAULT_PAUSE):
@@ -82,6 +110,18 @@ class TelegramNotifier(Notifier):
         for number, part in enumerate(parts):
             if number:
                 time.sleep(self.pause)
+            self._deliver(chat, part, number, parts)
+
+    def _deliver(self, chat: str, part: str, number: int, parts: list[str]) -> None:
+        """Одна часть. Повтор — только там, где Telegram её точно не принял.
+
+        429 — «подожди N секунд», и сообщение не доставлено; соединение,
+        которое не установилось, тоже ничего не доставило. А обрыв после
+        отправки (таймаут чтения, «Connection aborted») не повторяется: часть
+        могла уйти, и брокер получил бы её дважды.
+        """
+        for attempt in range(MAX_RETRIES + 1):
+            last = attempt == MAX_RETRIES
             try:
                 answer = requests.post(
                     f"{self.api_url}/bot{self.token}/sendMessage",
@@ -89,15 +129,30 @@ class TelegramNotifier(Notifier):
                           "disable_web_page_preview": True},
                     timeout=self.timeout,
                 )
+            except requests.ConnectionError as exc:
+                if _never_connected(exc) and not last:
+                    time.sleep(self.pause)
+                    continue
+                raise NotifyError(self._hide(
+                    f"Telegram не ответил: {exc}{self._progress(number, parts)}"
+                )) from None
             except requests.RequestException as exc:
                 raise NotifyError(self._hide(
                     f"Telegram не ответил: {exc}{self._progress(number, parts)}"
                 )) from None
-            if not getattr(answer, "ok", False):
-                raise NotifyError(self._hide(
-                    f"Telegram отказал (код {answer.status_code}): {answer.text}"
-                    f"{self._progress(number, parts)}"
-                ))
+            if getattr(answer, "ok", False):
+                return
+            wait = _retry_after(answer)
+            if wait is not None and not last:
+                # Час ожидания в команде по расписанию — зависшая команда.
+                # Ждём не дольше минуты; если Telegram всё ещё занят, он
+                # ответит 429 снова, и на последней попытке это отказ словами.
+                time.sleep(min(wait, MAX_WAIT))
+                continue
+            raise NotifyError(self._hide(
+                f"Telegram отказал (код {answer.status_code}): {answer.text}"
+                f"{self._progress(number, parts)}"
+            ))
 
     @staticmethod
     def _progress(delivered: int, parts: list[str]) -> str:

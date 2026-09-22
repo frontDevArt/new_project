@@ -137,7 +137,7 @@ def test_a_refusal_in_the_middle_says_how_much_already_arrived(monkeypatch):
     """Журнал при отказе не пишется (решение 2 спеки), и следующий запуск пошлёт
     всё заново — включая дошедшее. Брокер должен узнать об этом из отчёта,
     а не из дублей в чате."""
-    answers = iter([Answer(), Answer(), Answer(ok=False, status=429, text="Too Many Requests")])
+    answers = iter([Answer(), Answer(), Answer(ok=False, status=400, text="Bad Request")])
     monkeypatch.setattr("listam.adapters.notify_telegram.requests.post",
                         lambda url, json, timeout: next(answers))
 
@@ -153,3 +153,109 @@ def test_describe_names_the_channel_but_not_the_token():
 
     assert "Telegram" in text
     assert "8833:SECRET" not in text
+
+
+class TooMany:
+    """Ответ Bot API на 429: сообщение не принято, подожди `retry_after` секунд."""
+
+    ok, status_code = False, 429
+    text = '{"ok":false,"error_code":429,"description":"Too Many Requests"}'
+
+    def __init__(self, retry_after=5):
+        self.retry_after = retry_after
+
+    def json(self):
+        return {"ok": False, "error_code": 429,
+                "parameters": {"retry_after": self.retry_after}}
+
+
+def five_sections() -> str:
+    return "\n\n".join(f"Заявка R-{index} — новый: 1" for index in range(5))
+
+
+def test_a_too_many_requests_answer_is_waited_out_and_not_resent(monkeypatch):
+    """H-4 аудита: 429 на третьей части из пяти давал `NotifyError`, и повтор
+    слал все пять — две из них брокеру во второй раз."""
+    answers = iter([Answer(), Answer(), TooMany(), Answer(), Answer(), Answer()])
+    sent, waited = [], []
+
+    def post(url, json, timeout):
+        answer = next(answers)
+        if answer.ok:
+            sent.append(json["text"])
+        return answer
+
+    monkeypatch.setattr("listam.adapters.notify_telegram.requests.post", post)
+    monkeypatch.setattr("listam.adapters.notify_telegram.time.sleep", waited.append)
+
+    TelegramNotifier(token="t", chat_id="1").send(five_sections())
+
+    assert len(sent) == 5
+    assert len(set(sent)) == 5, "ни одна часть не пришла дважды"
+    assert 5 in waited
+
+
+def test_a_channel_that_keeps_saying_wait_gives_up_in_words(monkeypatch):
+    monkeypatch.setattr("listam.adapters.notify_telegram.requests.post",
+                        lambda url, json, timeout: TooMany())
+
+    with pytest.raises(NotifyError, match="429"):
+        TelegramNotifier(token="t", chat_id="1").send("Заявка R-1 — новый: 1")
+
+
+def test_a_wait_longer_than_a_minute_is_not_waited(monkeypatch):
+    """Час ожидания в команде по расписанию — это зависшая команда. Дольше
+    минуты не ждём: повтор сделает следующий запуск."""
+    answers = iter([TooMany(retry_after=3600), Answer()])
+    waited = []
+    monkeypatch.setattr("listam.adapters.notify_telegram.requests.post",
+                        lambda url, json, timeout: next(answers))
+    monkeypatch.setattr("listam.adapters.notify_telegram.time.sleep", waited.append)
+
+    TelegramNotifier(token="t", chat_id="1").send("Заявка R-1 — новый: 1")
+
+    assert max(waited) <= 60
+
+
+def test_a_connection_torn_after_the_send_is_not_repeated(monkeypatch):
+    """Обрыв после отправки — часть могла дойти: повтор принёс бы брокеру
+    дубль. Повторяется только соединение, которое не установилось."""
+    from urllib3.exceptions import ProtocolError
+
+    calls = []
+
+    def post(url, json, timeout):
+        calls.append(json["text"])
+        raise requests.ConnectionError(ProtocolError("Connection aborted."))
+
+    monkeypatch.setattr("listam.adapters.notify_telegram.requests.post", post)
+
+    with pytest.raises(NotifyError):
+        TelegramNotifier(token="t", chat_id="1").send("Заявка R-1 — новый: 1")
+
+    assert len(calls) == 1
+
+
+def test_a_connection_that_never_opened_is_tried_again(monkeypatch):
+    """Соединение не установилось — ничего не ушло, и повтор дубля не даст."""
+    from urllib3.exceptions import MaxRetryError, NewConnectionError
+
+    def refused(url):
+        return requests.ConnectionError(MaxRetryError(
+            None, url, NewConnectionError(None, "Connection refused")))
+
+    answers = iter([refused, Answer()])
+    sent = []
+
+    def post(url, json, timeout):
+        answer = next(answers)
+        if callable(answer):
+            raise answer(url)
+        sent.append(json["text"])
+        return answer
+
+    monkeypatch.setattr("listam.adapters.notify_telegram.requests.post", post)
+
+    TelegramNotifier(token="t", chat_id="1").send("Заявка R-1 — новый: 1")
+
+    assert sent == ["Заявка R-1 — новый: 1"]
