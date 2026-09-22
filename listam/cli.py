@@ -199,8 +199,7 @@ def _dispatch(args, config) -> int:
                 file=sys.stderr,
             )
             return 2
-        return _match(config, external_id=args.request, only_new=args.new,
-                      recount_all=args.all)
+        return _match(config, external_id=args.request, only_new=args.new)
 
     if args.command == "matches":
         # Бессмысленный ввод отклоняется на входе: ноль строк — это пустая
@@ -302,19 +301,19 @@ def _cluster(config) -> int:
     return 1 if report.errors else 0
 
 
-def _match(config, external_id: str | None, only_new: bool, recount_all: bool) -> int:
+def _match(config, external_id: str | None, only_new: bool) -> int:
     from listam.matching import run_match
 
-    report = run_match(config, external_id=external_id, only_new=only_new,
-                       recount_all=recount_all)
+    report = run_match(config, external_id=external_id, only_new=only_new)
     print(report.render())
     return 1 if report.errors else 0
 
 
 def _matches(config, external_id: str | None, limit: int | None,
              min_score: float | None) -> int:
-    from listam.matching import (MatchesError, collect_matches, display_limit,
-                                 render_matches, settings)
+    from listam.matches_view import (MatchesError, collect_matches, display_limit,
+                                     render_matches)
+    from listam.matching import settings
 
     if min_score is None:
         min_score = settings(config).digest
@@ -371,7 +370,7 @@ def _export(config, name: str | None) -> int:
     # Витрина матчей собирается тем же кодом, что печатает `matches`: два
     # разных ответа на вопрос «что подобралось» разошлись бы через месяц.
     # Порог — дайджестный из конфига, он же по умолчанию у `matches`.
-    from listam.matching import collect_matches
+    from listam.matches_view import collect_matches
 
     # Потолок на заявку, а не на весь лист: без него боевые числа дают
     # десятки тысяч строк в .xlsx, и лист «Матчи» открывается минутами.

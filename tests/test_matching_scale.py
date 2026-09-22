@@ -74,7 +74,7 @@ def test_matches_are_written_in_batches_and_not_one_transaction_each(
 def test_the_window_does_not_read_listings_one_by_one(matching_config, monkeypatch):
     """На 50 заявках это были 66 910 отдельных запросов за одну витрину."""
     run_match(matching_config)
-    from listam.matching import collect_matches
+    from listam.matches_view import collect_matches
 
     calls: list[str] = []
     original = SqliteDatabase.get_listing

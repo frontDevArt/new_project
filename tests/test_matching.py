@@ -16,8 +16,9 @@ import pytest
 
 from listam.config import Config, ConfigError
 from listam.domain.scoring import DEFAULT_WEIGHTS
-from listam.matching import (MatchesError, collect_matches, display_limit,
-                             render_matches, run_match, settings)
+from listam.matches_view import (MatchesError, collect_matches, display_limit,
+                                 render_matches)
+from listam.matching import run_match, settings
 from listam.wiring import build_database
 
 from tests.contracts.test_database_contract import make_listing, make_request
@@ -168,8 +169,8 @@ def test_new_takes_everything_touched_since_the_last_run(matching_config_with_tw
 
 
 def test_recounting_everything_creates_no_duplicates(matching_config):
-    run_match(matching_config, recount_all=True)
-    second = run_match(matching_config, recount_all=True)
+    run_match(matching_config)
+    second = run_match(matching_config)
     assert second.new == 0
     assert second.unchanged > 0
 
@@ -188,7 +189,7 @@ def test_a_paused_request_named_by_hand_is_an_error_naming_its_status(
 
 
 def test_a_paused_request_is_not_matched(matching_config_with_paused_request):
-    report = run_match(matching_config_with_paused_request, recount_all=True)
+    report = run_match(matching_config_with_paused_request)
     assert report.requests == 0
     assert "нет активных заявок" in report.notes.lower()
 
@@ -225,7 +226,7 @@ def test_a_human_touched_match_keeps_its_status_through_a_recount(matching_confi
     database.set_match_status(first.id, "called", reject_reason="окна во двор")
     database.close()
 
-    run_match(matching_config, recount_all=True)
+    run_match(matching_config)
 
     after = [m for m in matches_of(matching_config) if m.id == first.id][0]
     assert after.status == "called"
@@ -282,7 +283,7 @@ def test_a_broken_database_is_an_error_and_not_a_crash(tmp_path):
 
 
 def test_the_report_names_the_scope_and_has_no_none_in_it(matching_config):
-    rendered = run_match(matching_config, recount_all=True).render()
+    rendered = run_match(matching_config).render()
     assert "вся база" in rendered
     assert "None" not in rendered
 
@@ -339,7 +340,7 @@ def test_the_window_shows_every_active_request_when_none_is_named(tmp_path):
     config = cfg(tmp_path)
     fill(config, listings=[suitable("1")],
          requests=[make_request("R-1"), make_request("R-2", client_name="Ваган")])
-    run_match(config, recount_all=True)
+    run_match(config)
 
     printed = render_matches(collect_matches(config), limit=50)
 
@@ -643,7 +644,7 @@ def test_a_misspelled_weight_stops_the_match_before_it_touches_the_base(matching
                                                 "floor": 10, "seller_type": 5}
 
     with pytest.raises(ConfigError):
-        run_match(matching_config, recount_all=True)
+        run_match(matching_config)
 
     database = build_database(matching_config)
     database.connect()

@@ -545,7 +545,10 @@ class SqliteDatabase(Database):
         if status is not None:
             query += " WHERE status = ?"
             params = (status,)
-        query += " ORDER BY external_id"
+        # R-2 идёт перед R-10: человек читает «заявка 2» и «заявка 10», а
+        # не строки. Сортировка по (длина, значение) даёт числовой порядок
+        # для числовых хвостов и остаётся определённой для любых других.
+        query += " ORDER BY LENGTH(external_id), external_id"
         for row in self.conn.execute(query, params):
             yield _row_to_request(row)
 

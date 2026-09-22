@@ -11,15 +11,13 @@ from openpyxl.styles import Alignment, Font, PatternFill
 from openpyxl.utils import get_column_letter
 
 from listam.adapters.filenames import safe_filename
+# Подписи — общий словарь с витриной (`listam/domain/labels.py`): правило,
+# добытое F-12 в M1, — в выгрузке не бывает английских слов из схемы базы,
+# и слово в ней то же самое, что человек видел в `matches`.
+from listam.domain.labels import LISTING_STATUSES as STATUSES, MATCH_STATUSES, \
+    SELLER_TYPES
 from listam.domain.models import Listing, Match, Request
 from listam.ports.exporter import Exporter
-
-SELLER_TYPES = {"owner": "собственник", "agency": "агентство"}
-STATUSES = {"active": "на ленте", "gone": "снято"}
-# Статусы матча по-русски: правило, добытое F-12 в M1 — в витрине не бывает
-# английских слов из схемы базы.
-MATCH_STATUSES = {"new": "новый", "sent": "отправлен",
-                  "called": "звонили", "rejected": "отказ"}
 
 # заголовок, как достать значение, ширина колонки, формат числа
 COLUMNS: list[tuple[str, str, int, str | None]] = [
