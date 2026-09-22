@@ -11,6 +11,7 @@ from dataclasses import dataclass
 from datetime import datetime, timedelta, timezone
 
 from listam.config import Config, ConfigError, positive, threshold
+from listam.domain.events import RETIRED
 from listam.domain.models import Notification
 from listam.matches_view import collect_events, render_events
 from listam.matching import settings
@@ -181,13 +182,21 @@ def _match_text(page, config: Config, kind: str) -> str:
     wide = positive(config, "notify.digest.wide_request", 50)
     if wide is None:
         return text
+    # Широту мерят события, а закрытие событием не является (решение 1 спеки):
+    # сотни «отпало» — ответ на сужение заявки, и совет «сузь» был бы неправдой.
+    key_of = {request.id: key for key, request in page.requests.items()}
+    alive: dict[str, int] = {}
+    for event in page.events:
+        if event.kind != RETIRED:
+            key = key_of.get(event.match.request_id)
+            alive[key] = alive.get(key, 0) + 1
     # Пробел после ключа обязателен: `R-1` — начало `R-11`, и пометка без него
     # садилась на узкого соседа с чужим счётчиком. На боевой базе таких пометок
     # выходило 77 на 50 заявок.
     marked = []
     for line in text.splitlines():
         marked.append(line)
-        for key, total in page.totals.items():
+        for key, total in alive.items():
             if line.startswith(f"Заявка {key} ") and total > int(wide):
                 marked.append(
                     f"  ⚠ заявка слишком широкая: {total} событий за окно. "

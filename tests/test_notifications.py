@@ -162,6 +162,27 @@ def test_a_wide_request_is_marked(prepared):
     assert "…и ещё 1 из 2" in report.text
 
 
+def test_closures_do_not_make_a_request_wide(prepared):
+    """Закрытие — не событие (решение 1 спеки), и широту заявки оно не мерит.
+
+    Брокер сузил заявку, и сотни вариантов отпали: совет «сузь районы или
+    бюджет» в ответ на это — неправда. Фаза 6 получила его живьём: R-2
+    с бюджетом 150 000 $ и без Кентрона — «отпало 830» и пометка широкой.
+    """
+    prepared.data["notify"]["digest"]["wide_request"] = 1
+    database = build_database(prepared)
+    database.connect()
+    request = database.get_request("R-1")
+    database.retire_matches(request.id, keep=set(), now=datetime.now(timezone.utc),
+                            reasons={"0": "бюджет", "1": "район"}, default="бюджет")
+    database.close()
+
+    report = run_notify(prepared, kind="digest", dry_run=True)
+
+    assert "отпало 2 (бюджет 1, район 1)" in report.text
+    assert "слишком широкая" not in report.text
+
+
 def test_an_empty_window_still_moves_it(prepared):
     """Пустая отправка тоже пишется в журнал: иначе завтра придёт сегодняшняя
     пустота плюс завтрашние события — с окном в двое суток."""
