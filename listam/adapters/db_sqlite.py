@@ -568,13 +568,17 @@ class SqliteDatabase(Database):
             _normalize(values[name]) == _normalize(existing[name])
             for name in MATCH_COMPARED
         )
-        if same:
+        if same and existing["retired_at"] is None:
             # Балл и кластер те же — отметку пересчёта не двигаем: иначе
             # ночной пересчёт выглядел бы как обновление всех матчей разом.
             return "unchanged"
 
         updates = dict(values)
         updates["matched_at"] = to_iso(now)
+        # Подтвердился снова — значит, живой. Гасим закрытие вместе с причиной:
+        # причина без даты читалась бы как «закрыт неизвестно когда».
+        updates["retired_at"] = None
+        updates["retired_reason"] = None
         updates["id"] = existing["id"]
         assignments = ", ".join(f"{name} = :{name}" for name in updates if name != "id")
         with self.transaction():
@@ -583,8 +587,29 @@ class SqliteDatabase(Database):
             )
         return "updated"
 
+    def retire_matches(self, request_id: int, keep: set[str],
+                       now: datetime, reason: str) -> int:
+        """Закрывает всё, что этот проход не подтвердил. См. порт."""
+        closing = [
+            row["id"] for row in self.conn.execute(
+                "SELECT id, listing_id FROM matches "
+                "WHERE request_id = ? AND retired_at IS NULL",
+                (request_id,),
+            ) if row["listing_id"] not in keep
+        ]
+        if not closing:
+            return 0
+        stamp = to_iso(now)
+        with self.transaction():
+            self.conn.executemany(
+                "UPDATE matches SET retired_at = ?, retired_reason = ? WHERE id = ?",
+                [(stamp, reason, match_id) for match_id in closing],
+            )
+        return len(closing)
+
     def matches_for_request(self, request_id: int, min_score: float | None = None,
-                            limit: int | None = None) -> list[Match]:
+                            limit: int | None = None,
+                            include_retired: bool = False) -> list[Match]:
         """От лучшего к худшему; при равных баллах — по объявлению.
 
         Второй ключ сортировки не украшение: без него порядок выдачи зависит
@@ -593,6 +618,8 @@ class SqliteDatabase(Database):
         """
         query = "SELECT * FROM matches WHERE request_id = ?"
         params: list = [request_id]
+        if not include_retired:
+            query += " AND retired_at IS NULL"
         if min_score is not None:
             query += " AND score >= ?"
             params.append(float(min_score))
@@ -903,4 +930,6 @@ def _row_to_match(row: sqlite3.Row) -> Match:
         cluster_id=row["cluster_id"],
         cluster_size=row["cluster_size"] or 1,
         cluster_spread_usd=row["cluster_spread_usd"],
+        retired_at=from_iso(row["retired_at"]),
+        retired_reason=row["retired_reason"],
     )

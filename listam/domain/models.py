@@ -131,3 +131,5 @@ class Match:
     cluster_id: str | None = None
     cluster_size: int = 1
     cluster_spread_usd: float | None = None
+    retired_at: datetime | None = None      # когда проход перестал его подтверждать
+    retired_reason: str | None = None       # почему: «бюджет», «район», «не представитель»
