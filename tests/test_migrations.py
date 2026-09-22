@@ -241,7 +241,7 @@ def test_migration_007_adds_request_and_match_columns(tmp_path):
     db.connect()
     db.migrate()
 
-    assert db.schema_version() == 7
+    assert db.schema_version() >= 7     # дальше идут миграции QA-ужесточения
     requests_columns = {row["name"] for row in db.conn.execute("PRAGMA table_info(requests)")}
     assert {"districts_priority", "floor_min", "floor_max",
             "no_first_floor", "no_last_floor", "updated_at", "source_row"} <= requests_columns
@@ -250,4 +250,16 @@ def test_migration_007_adds_request_and_match_columns(tmp_path):
             "cluster_spread_usd", "first_matched_at"} <= matches_columns
     runs_columns = {row["name"] for row in db.conn.execute("PRAGMA table_info(runs)")}
     assert "new_matches" in runs_columns
+    db.close()
+
+
+def test_migration_008_adds_the_end_of_a_match_life(tmp_path):
+    """Схема 8: у матча появляется конец жизни, а след звонка остаётся жив."""
+    db = SqliteDatabase(tmp_path / "m8.sqlite")
+    db.connect()
+    db.migrate()
+
+    assert db.schema_version() == 8
+    columns = {row["name"] for row in db.conn.execute("PRAGMA table_info(matches)")}
+    assert {"retired_at", "retired_reason"} <= columns
     db.close()
