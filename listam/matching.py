@@ -25,7 +25,7 @@ from datetime import datetime, timezone
 
 from listam.changes import since_point
 from listam.clustering_run import area_tolerance, cluster_database
-from listam.config import Config, ConfigError, threshold
+from listam.config import Config, ConfigError, score_threshold, threshold
 from listam.domain.clustering import clusters
 from listam.domain.models import Match, Request
 from listam.domain.scoring import DEFAULT_STRETCH_PERCENT, DEFAULT_WEIGHTS, score
@@ -107,15 +107,15 @@ def settings(config: Config) -> Settings:
                 f"молча выпавший фактор меняет балл и не виден ничем."
             )
     stretch = threshold(config, "match.budget_stretch_percent", DEFAULT_STRETCH_PERCENT)
-    hot = threshold(config, "match.thresholds.hot", DEFAULT_HOT)
-    digest = threshold(config, "match.thresholds.digest", DEFAULT_DIGEST)
+    hot = score_threshold(config, "match.thresholds.hot", DEFAULT_HOT)
+    digest = score_threshold(config, "match.thresholds.digest", DEFAULT_DIGEST)
     return Settings(
         weights=dict(weights) if weights else dict(DEFAULT_WEIGHTS),
         # Растяжка выключена — значит не растягиваем вовсе, а не «берём
         # десять процентов по умолчанию»: человек сказал «нет», а не промолчал.
         stretch_percent=0.0 if stretch is None else float(stretch),
-        hot=None if hot is None else float(hot),
-        digest=None if digest is None else float(digest),
+        hot=hot,
+        digest=digest,
     )
 
 

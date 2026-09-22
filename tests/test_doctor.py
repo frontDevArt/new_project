@@ -309,6 +309,17 @@ def test_doctor_calls_a_weight_nobody_named_a_failure_too(tmp_path):
     assert "0" in check.details, "отказ обязан сказать, чем фактор выключают"
 
 
+def test_doctor_calls_a_threshold_outside_the_scale_a_failure(tmp_path):
+    """`hot: 170` — это не «строгий порог», а выключенные уведомления.
+    `settings` на таком конфиге не стартует, и `doctor` говорит то же."""
+    thresholds = dict(MATCH["thresholds"], hot=170)
+    check = match_check(cfg(tmp_path, match=dict(MATCH, thresholds=thresholds)))
+
+    assert check.ok is False
+    assert "match.thresholds.hot" in check.details
+    assert "от 0 до 100" in check.details
+
+
 # --- схема рабочей базы (фаза 5 QA) -----------------------------------
 # Пробник во временной папке отвечает на вопрос «накатываются ли миграции
 # этим кодом». Команда работает не с ним: рабочий файл может стоять на

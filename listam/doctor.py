@@ -10,7 +10,7 @@ import tempfile
 from dataclasses import dataclass, field
 from pathlib import Path
 
-from listam.config import Config, ConfigError, threshold
+from listam.config import Config, ConfigError, score_threshold, threshold
 from listam.crawler import DEFAULT_FRESH_MAX_PAGES, DEFAULT_FRESH_STOP_PAGES, \
     DEFAULT_MAX_GONE, DEFAULT_MAX_PAGES_DROP
 from listam.domain.clustering import DEFAULT_AREA_TOLERANCE
@@ -141,6 +141,14 @@ def match_check(config: Config) -> Check:
     """
     section = config.section("match")
     weights = config.section("match.weights") or dict(DEFAULT_WEIGHTS)
+    try:
+        for key in ("match.thresholds.hot", "match.thresholds.digest"):
+            score_threshold(config, key, None)
+    except ConfigError as exc:
+        # `doctor` обязан отвечать то же, что ответит команда: она на таком
+        # конфиге не стартует вовсе.
+        return Check(name="Матчинг", ok=False, details=str(exc))
+    # Печатается то, что написано в конфиге: «70», а не «70.0».
     hot = threshold(config, "match.thresholds.hot", None)
     digest = threshold(config, "match.thresholds.digest", None)
     stretch = threshold(config, "match.budget_stretch_percent", DEFAULT_STRETCH_PERCENT)

@@ -124,3 +124,24 @@ def positive(config: Config, key: str, default: Any) -> Any:
             f"ничего не показывает. Чтобы снять ограничение, ставят null."
         )
     return value
+
+
+def score_threshold(config: Config, key: str, default: Any) -> float | None:
+    """Порог балла. `null` — «порога нет», число — число, но только 0…100.
+
+    Балл по построению лежит в 0…100. Порог 170 не сработает никогда: он
+    молча выключает уведомления и отвечает «горячих 0» — то есть выглядит
+    как спокойный рынок. Бессмысленное значение в конфиге отклоняется так же,
+    как бессмысленный флаг: на входе и кодом 2.
+    """
+    value = threshold(config, key, default)
+    if value is None:
+        return None
+    number = float(value)
+    if not 0 <= number <= 100:
+        raise ConfigError(
+            f"{key} = {value} не годится: балл — это шкала от 0 до 100, "
+            f"и порог за её краем не сработает никогда. Выше ста нет ничего, "
+            f"ниже нуля — тоже; чтобы снять порог, ставят null."
+        )
+    return number

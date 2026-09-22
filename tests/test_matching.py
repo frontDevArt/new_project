@@ -636,6 +636,17 @@ def test_a_missing_weight_is_refused_too(tmp_path):
     assert "district" in str(exc.value)
 
 
+def test_match_refuses_a_threshold_outside_the_scale(tmp_path):
+    """Отказ приходит до работы: порог, прочитанный посреди прохода, прилетал
+    бы человеку поверх пересчитанных кластеров."""
+    config = cfg(tmp_path)
+    config.data["match"]["thresholds"]["hot"] = 170
+
+    with pytest.raises(ConfigError) as exc:
+        settings(config)
+    assert "match.thresholds.hot" in str(exc.value)
+
+
 def test_a_weight_of_zero_is_a_weight_and_not_an_absence(tmp_path):
     config = cfg(tmp_path, match={"weights": dict(DEFAULT_WEIGHTS, seller_type=0)})
     assert settings(config).weights["seller_type"] == 0

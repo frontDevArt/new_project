@@ -218,6 +218,46 @@ def test_a_missing_key_gets_the_default(tmp_path):
     assert positive(config, "match.limit", 50) == 50
 
 
+# --- балл 0…100: порог за краем шкалы не сработает никогда -------------
+# `hot: 170` принимался молча и давал «горячих 0» — то есть выключал
+# уведомления, не сказав ни слова, и выглядел как спокойный рынок.
+
+def test_a_score_threshold_above_the_scale_is_refused(tmp_path):
+    from listam.config import score_threshold
+
+    d = write_cfg(tmp_path, "dev", "match:\n  thresholds:\n    hot: 170\n")
+    config = load_config(env="dev", config_dir=d, dotenv_path=tmp_path / ".env")
+
+    with pytest.raises(ConfigError) as exc:
+        score_threshold(config, "match.thresholds.hot", 70)
+    assert "match.thresholds.hot" in str(exc.value)
+    assert "от 0 до 100" in str(exc.value)
+
+
+def test_a_negative_score_threshold_is_refused(tmp_path):
+    from listam.config import score_threshold
+
+    d = write_cfg(tmp_path, "dev", "match:\n  thresholds:\n    digest: -1\n")
+    config = load_config(env="dev", config_dir=d, dotenv_path=tmp_path / ".env")
+
+    with pytest.raises(ConfigError):
+        score_threshold(config, "match.thresholds.digest", 40)
+
+
+def test_a_score_threshold_of_zero_or_null_is_still_allowed(tmp_path):
+    """Ноль значит ноль (показывать всё), `null` — «порога нет»."""
+    from listam.config import score_threshold
+
+    d = write_cfg(tmp_path, "dev", "match:\n  thresholds:\n    hot: 100\n"
+                                   "    digest: 0\n")
+    config = load_config(env="dev", config_dir=d, dotenv_path=tmp_path / ".env")
+    assert score_threshold(config, "match.thresholds.digest", 40) == 0.0
+    assert score_threshold(config, "match.thresholds.hot", 70) == 100.0
+
+    d = write_cfg(tmp_path, "dev", "match:\n  thresholds:\n    digest: null\n")
+    config = load_config(env="dev", config_dir=d, dotenv_path=tmp_path / ".env")
+    assert score_threshold(config, "match.thresholds.digest", 40) is None
+
 
 def test_both_configs_declare_the_notification_knobs():
     """Ручка, которой нет в конфиге, не существует для человека: он не знает,
