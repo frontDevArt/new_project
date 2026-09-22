@@ -50,6 +50,7 @@ class MatchReport:
     new: int = 0
     updated: int = 0
     unchanged: int = 0
+    retired: int = 0            # матчей закрыто: проход их больше не подтверждает
     hot: int = 0                # score >= match.thresholds.hot
     digest: int = 0             # hot > score >= digest
     errors: int = 0
@@ -63,8 +64,10 @@ class MatchReport:
             f"из них представителей кластеров: {self.considered}",
             f"Матчи: новых {self.new}, обновлённых {self.updated}, "
             f"без изменений {self.unchanged}",
-            f"Из них горячих: {self.hot}, в дайджест: {self.digest}",
         ]
+        if self.retired:
+            lines.append(f"Закрыто матчей: {self.retired} — вариант больше не подходит")
+        lines.append(f"Из них горячих: {self.hot}, в дайджест: {self.digest}")
         if self.notes:
             lines.append(self.notes)
         return "\n".join(lines)
@@ -208,12 +211,17 @@ def run_match(config: Config, *, external_id: str | None = None,
         candidates = [item for item in selection if item.id in representatives]
         report.considered = len(candidates)
 
+        # Чего проход не видел: снятое с ленты и отложенное аномалией.
+        # Закрывать по такому нельзя — см. `_write_matches`.
+        off_the_feed = database.known_ids() - {item.id for item in everything}
+
         last_run = database.last_run()
         run_id = last_run.id if last_run else None
         _write_matches(database, report, requests, candidates, representatives,
-                       medians, run_id, settings(config))
+                       medians, run_id, settings(config),
+                       full_sweep=not only_new, off_the_feed=off_the_feed)
 
-        if report.new or report.updated:
+        if report.new or report.updated or report.retired:
             if _upload(config, database, storage, local_db, remote_name,
                        report, notes):
                 database = None    # заливка закрыла базу: снимок делается с живой
@@ -246,10 +254,22 @@ def _count_clusters_if_needed(database: Database, config: Config,
 
 def _write_matches(database: Database, report: MatchReport, requests, candidates,
                    representatives: dict, medians: dict[str, float],
-                   run_id: int | None, tuning: Settings) -> None:
-    """Пара «заявка × представитель» → балл → строка в `matches`."""
+                   run_id: int | None, tuning: Settings,
+                   full_sweep: bool, off_the_feed: set[str]) -> None:
+    """Пара «заявка × представитель» → балл → строка в `matches`.
+
+    `full_sweep` — прошли ли по всей базе. Только полный проход имеет право
+    закрывать матчи: по выборке `--new` «не подтвердился» значит «его не было
+    в выборке», и закрытие выкинуло бы из витрины всё, кроме свежего.
+
+    `off_the_feed` — объявления, которых проход не видел вовсе: снятые с
+    ленты и отложенные аномалией. Их матчи не закрываются даже полным
+    проходом: решение 8 спеки велит витрине снятое помечать, а не прятать,
+    и «мы звонили по этой квартире» уходу объявления не подчиняется.
+    """
     now = datetime.now(timezone.utc)
     for request in requests:
+        confirmed: set[str] = set()
         for listing in candidates:
             result = score(request, listing, median_by_district=medians,
                            weights=tuning.weights,
@@ -268,11 +288,17 @@ def _write_matches(database: Database, report: MatchReport, requests, candidates
                 cluster_size=cluster.size,
                 cluster_spread_usd=cluster.spread_usd,
             ), now)
+            confirmed.add(listing.id)
             setattr(report, outcome, getattr(report, outcome) + 1)
             if tuning.hot is not None and result.value >= tuning.hot:
                 report.hot += 1
             elif tuning.digest is not None and result.value >= tuning.digest:
                 report.digest += 1
+        if full_sweep:
+            report.retired += database.retire_matches(
+                request.id, keep=confirmed | off_the_feed, now=now,
+                reason="проход больше не подтверждает этот вариант",
+            )
 
 
 def _upload(config: Config, database: Database, storage, local_db: Path,

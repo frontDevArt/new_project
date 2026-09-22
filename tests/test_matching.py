@@ -8,6 +8,7 @@
 """
 from __future__ import annotations
 
+from dataclasses import replace
 from datetime import datetime, timedelta, timezone
 from pathlib import Path
 
@@ -381,3 +382,72 @@ def test_a_cluster_priced_the_same_says_the_spread_is_zero(tmp_path):
     printed = render_matches(collect_matches(config, external_id="R-1"), limit=50)
 
     assert "3 объявления, разброс $0" in printed
+
+
+# --- конец жизни матча (B-1, B-2) --------------------------------------
+
+def test_a_listing_that_left_the_budget_leaves_the_window(matching_config):
+    run_match(matching_config)
+    config = matching_config
+
+    database = build_database(config)
+    database.connect()
+    listing = database.get_listing("1")
+    database.upsert_listing(
+        replace(listing, price_usd=900_000.0, price_raw="900000 $"),
+        datetime(2026, 9, 23, tzinfo=timezone.utc),
+    )
+    database.close()
+
+    report = run_match(config)
+
+    assert report.retired == 1
+    rows = collect_matches(config)
+    assert "1" not in [listing.id for _, _, listing in rows]
+
+
+def test_a_cheaper_twin_replaces_the_old_representative_and_not_doubles_it(
+        matching_config_with_duplicates):
+    config = matching_config_with_duplicates
+    run_match(config)
+    before = {listing.id for _, _, listing in collect_matches(config)}
+
+    database = build_database(config)
+    database.connect()
+    twin = database.get_listing(sorted(before)[0])
+    database.upsert_listing(
+        replace(twin, id="L-cheap", url="https://www.list.am/ru/item/L-cheap",
+                price_usd=(twin.price_usd or 0) - 5_000),
+        datetime(2026, 9, 23, tzinfo=timezone.utc),
+    )
+    database.close()
+
+    run_match(config)
+
+    after = [listing for _, _, listing in collect_matches(config)]
+    clusters_shown = [match.cluster_id for _, match, _ in collect_matches(config)]
+    assert len(clusters_shown) == len(set(clusters_shown)), \
+        "одна квартира не может стоять в витрине дважды"
+    assert "L-cheap" in [listing.id for listing in after]
+
+
+def test_matching_only_the_new_ones_closes_nothing(matching_config_with_two_runs):
+    config = matching_config_with_two_runs
+    run_match(config)
+    report = run_match(config, only_new=True)
+    assert report.retired == 0, \
+        "выборка --new неполна: закрывать по ней — значит выкинуть всё, чего в ней нет"
+
+
+def test_a_match_whose_listing_left_the_feed_is_not_retired(matching_config_gone):
+    """Решение 8: снятое объявление витрина помечает, а не прячет.
+
+    Полный проход его не видит — `listings_for_matching` отдаёт только
+    активные. «Не подтвердился» для него значит «его не было в проходе»,
+    и закрывать по этому нельзя.
+    """
+    report = run_match(matching_config_gone)
+
+    assert report.retired == 0
+    rows = collect_matches(matching_config_gone, external_id="R-1")
+    assert [listing.id for _, _, listing in rows] == ["1"]
