@@ -214,21 +214,31 @@ def test_a_human_touched_match_keeps_its_status_through_a_recount(matching_confi
     assert after.reject_reason == "окна во двор"
 
 
-def test_clusters_are_counted_before_matching_if_the_base_has_none(
+def test_clusters_are_counted_before_every_matching(
         matching_config_with_duplicates):
-    """Спека: кластеры считаются автоматически перед матчингом.
+    """Спека: кластеры считаются автоматически перед матчингом — каждым.
 
     Иначе первый же `match` на свежей базе показал бы клиенту три карточки
-    одной квартиры — команду `cluster` никто не обязан помнить.
+    одной квартиры — команду `cluster` никто не обязан помнить. А проверка
+    «есть ли в базе непроставленные» ловила только появление: второй подбор
+    по той же базе пересчёта уже не делал, хотя состав кластеров меняет
+    и уход с ленты.
     """
-    run_match(matching_config_with_duplicates, external_id="R-1")
+    config = matching_config_with_duplicates
+    run_match(config, external_id="R-1")
 
-    database = build_database(matching_config_with_duplicates)
+    database = build_database(config)
     database.connect()
     stored = {item.id: item.cluster_id for item in database.iter_listings()}
     database.close()
     assert all(stored.values())
     assert stored["cheap"] == stored["mid"] == stored["dear"]
+
+    report = run_match(config, external_id="R-1")
+
+    assert "кластеры пересчитаны" in (report.notes or ""), (
+        "второй подбор по той же базе кластеры тоже считает"
+    )
 
 
 def test_an_empty_base_is_not_an_error(tmp_path):
@@ -437,6 +447,39 @@ def test_matching_only_the_new_ones_closes_nothing(matching_config_with_two_runs
     report = run_match(config, only_new=True)
     assert report.retired == 0, \
         "выборка --new неполна: закрывать по ней — значит выкинуть всё, чего в ней нет"
+
+
+def test_a_cluster_that_lost_a_member_is_the_same_in_the_base_and_in_the_match(
+        matching_config_with_duplicates):
+    """Ушедший с ленты член меняет кластер, колонок в базе не трогая.
+
+    Признак «есть объявление без cluster_id» ловит только появление, и после
+    ухода `listings.cluster_id` остаётся вчерашним — а снимок в матче
+    считается заново каждым подбором. База и матч начинают говорить разное
+    про один и тот же кластер.
+    """
+    config = matching_config_with_duplicates
+    run_match(config)
+
+    database = build_database(config)
+    database.connect()
+    # «mid» — якорь кластера: по нему кластер и назван. Его уход кластер
+    # переименовывает, ничего в колонках не обнуляя.
+    database.mark_gone(["mid"], datetime(2026, 9, 23, tzinfo=timezone.utc))
+    database.close()
+
+    run_match(config)
+
+    database = build_database(config)
+    database.connect()
+    stored = {item.id: item.cluster_id for item in database.iter_listings()}
+    shown = database.matches_for_request(database.get_request("R-1").id)[0]
+    database.close()
+
+    assert shown.cluster_id == stored[shown.listing_id], (
+        "объявление ушло с ленты — кластер стал другим; пока база его не "
+        "пересчитала, снимок в матче и колонка в listings говорят разное"
+    )
 
 
 def test_a_match_whose_listing_left_the_feed_is_not_retired(matching_config_gone):

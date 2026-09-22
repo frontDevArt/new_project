@@ -196,7 +196,7 @@ def run_match(config: Config, *, external_id: str | None = None,
             notes.append("подбирать не под что: нет активных заявок")
             return report
 
-        _count_clusters_if_needed(database, config, notes)
+        _count_clusters(database, config, notes)
 
         # Кластеры считаются по всей базе, а не по выборке: у свежего
         # объявления двойники могли появиться задолго до него.
@@ -234,17 +234,23 @@ def run_match(config: Config, *, external_id: str | None = None,
         report.finished_at = datetime.now(timezone.utc)
 
 
-def _count_clusters_if_needed(database: Database, config: Config,
-                              notes: list[str]) -> None:
-    """Кластеры перед подбором, если в базе есть непроставленные.
+def _count_clusters(database: Database, config: Config,
+                    notes: list[str]) -> None:
+    """Кластеры перед подбором — каждый раз, а не когда в базе есть пустые.
 
     Спека: пересчёт идёт автоматически перед матчингом. Команду `cluster`
     никто не обязан помнить, а без кластеров клиент получает одну квартиру
-    тридцать раз. Замка здесь второго нет: `cluster_database` работает по
-    уже открытой базе — ровно для этого он и отделён от команды.
+    тридцать раз.
+
+    Признак «есть объявление без cluster_id» ловит только появление. Уход
+    с ленты состав кластера тоже меняет, колонок не трогая: кластер из трёх
+    становится кластером из двух и получает другое имя, а `listings.cluster_id`
+    остаётся вчерашним — и база начинает спорить со снимком в матче, который
+    считается заново каждым подбором.
+
+    Замка здесь второго нет: `cluster_database` работает по уже открытой
+    базе — ровно для этого он и отделён от команды.
     """
-    if not any(item.cluster_id is None for item in database.listings_for_matching()):
-        return
     counted = cluster_database(database, area_tolerance(config))
     notes.append(
         f"кластеры пересчитаны: объявлений {counted.listings}, "
