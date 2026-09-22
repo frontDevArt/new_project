@@ -14,17 +14,11 @@ from __future__ import annotations
 
 from dataclasses import dataclass, field
 from datetime import datetime, timezone
-from pathlib import Path
 
-from listam.adapters.db_sqlite import latest_schema_version
-from listam.adapters.run_lock import LockBusy
 from listam.config import Config
-from listam.crawler import rotate_backups, take_the_fresher_copy
 from listam.domain.requests import RequestError
-from listam.wiring import build_database, build_requests_source, build_run_lock, \
-    build_storage, database_path
-
-DEFAULT_KEEP_BACKUPS = 5
+from listam.runner import SessionRefused, publish, working_session
+from listam.wiring import build_requests_source
 
 
 @dataclass
@@ -89,86 +83,42 @@ def run_requests_sync(config: Config) -> SyncReport:
         report.finished_at = datetime.now(timezone.utc)
         return report
 
-    lock = build_run_lock(config)
-    try:
-        lock.acquire()
-    except LockBusy as exc:
-        report.errors = 1
-        report.notes = str(exc)
-        report.finished_at = datetime.now(timezone.utc)
-        return report
-
-    database = None
+    # Замок, свежая копия, миграции и заливка — общий каркас
+    # (`listam/runner.py`): тот же порядок, что у прогона, пересчёта,
+    # кластеров и подбора.
     notes: list[str] = []
-    local_db = database_path(config)
-    remote_name = config.get("storage.db_filename", "listam.sqlite")
     try:
-        try:
-            storage = build_storage(config)
-            remote = take_the_fresher_copy(storage, remote_name, local_db)
-            if remote.note:
-                notes.append(remote.note)
-            database = build_database(config)
-            database.connect()
-            database.migrate()
-        except Exception as exc:       # OSError, sqlite3.Error — базы нет
-            report.errors = 1
-            notes.append(f"файл базы недоступен: {exc}")
-            return report
+        with working_session(config) as session:
+            notes.extend(session.notes)
+            session.notes = notes     # заливка пишет в тот же список
+            database = session.database
 
-        required = latest_schema_version()
-        version = database.schema_version()
-        if version < required:
-            report.errors = 1
-            notes.append(
-                f"Заявки не записаны: схема базы {version}, а код ждёт {required}. "
-                f"Накати миграции: python -m listam recheck"
-            )
-            return report
+            now = datetime.now(timezone.utc)
+            for request in parsed:
+                # Транзакцию на строку открывает сам `upsert_request`: обёртка
+                # снаружи означала бы вложенный BEGIN, а его sqlite не допускает.
+                outcome = database.upsert_request(request, now)
+                setattr(report, outcome, getattr(report, outcome) + 1)
 
-        now = datetime.now(timezone.utc)
-        for request in parsed:
-            # Транзакцию на строку открывает сам `upsert_request`: обёртка
-            # снаружи означала бы вложенный BEGIN, а его sqlite не допускает.
-            outcome = database.upsert_request(request, now)
-            setattr(report, outcome, getattr(report, outcome) + 1)
+            # Пустой источник — почти всегда сбой доступа, а не «все клиенты ушли».
+            # Закрыть по нему всю базу заявок означало бы потерять работу месяца
+            # из-за одной недоступной таблицы.
+            if parsed:
+                present = {request.external_id for request in parsed}
+                before = {item.external_id for item in database.iter_requests()}
+                report.closed = database.close_requests_missing_from(present, now)
+                report.closed_ids = sorted(before - present)
+            else:
+                notes.append("источник не отдал ни одной заявки — "
+                             "ничего не закрываем, это похоже на сбой доступа")
 
-        # Пустой источник — почти всегда сбой доступа, а не «все клиенты ушли».
-        # Закрыть по нему всю базу заявок означало бы потерять работу месяца
-        # из-за одной недоступной таблицы.
-        if parsed:
-            present = {request.external_id for request in parsed}
-            before = {item.external_id for item in database.iter_requests()}
-            report.closed = database.close_requests_missing_from(present, now)
-            report.closed_ids = sorted(before - present)
-        else:
-            notes.append("источник не отдал ни одной заявки — "
-                         "ничего не закрываем, это похоже на сбой доступа")
-
-        if report.new or report.updated or report.closed:
-            snapshot = local_db.with_name(local_db.name + ".snapshot")
-            try:
-                database.snapshot(snapshot)
-            except Exception as exc:    # sqlite3.Error, OSError — заливать нечего
-                report.errors += 1
-                notes.append(f"снимок базы не сделан: {exc}")
-                snapshot = None
-            database.close()
-            database = None
-            if snapshot is not None:
-                rotate_backups(
-                    storage,
-                    remote_name,
-                    int(config.get("storage.keep_backups", DEFAULT_KEEP_BACKUPS) or 0),
-                    Path(local_db).parent,
-                )
-                storage.upload(snapshot, remote_name)
-                snapshot.unlink(missing_ok=True)
-                notes.append("база с заявками залита в хранилище")
-        return report
+            if report.new or report.updated or report.closed:
+                publish(session, config, "база с заявками")
+                report.errors += session.failures
+    except SessionRefused as exc:
+        report.errors += 1
+        notes.append(str(exc))
     finally:
-        if database is not None:
-            database.close()
-        lock.release()
         report.notes = "; ".join(notes) or None
         report.finished_at = datetime.now(timezone.utc)
+    return report
