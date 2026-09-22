@@ -94,3 +94,20 @@ def test_readme_says_which_commands_migrate_the_base():
         assert f"`{command}`" in README.split("мигрируют базу сами")[1][:600], (
             f"абзац о самомиграции не называет `{command}`"
         )
+
+
+def test_the_schedule_sends_the_notifications():
+    """Уведомление, которое никто не запускает, брокеру не приходит.
+
+    Спека M3 («Команды») ставит `notify --hot` в часовой слой за `match --new`,
+    а `notify --digest` — раз в сутки. Раздел расписания и оба примера
+    (`schtasks` и `cron`) обязаны это называть: человек копирует их как есть.
+    """
+    schedule = README.split("## Как запускать по расписанию")[1].split("\n## ")[0]
+    lines = schedule.splitlines()
+    hourly = [line for line in lines if "match --new" in line and "scrape --fresh" in line]
+    daily = [line for line in lines if "notify --digest" in line]
+
+    assert hourly and all("notify --hot" in line for line in hourly), hourly
+    assert any("schtasks" in line or "/tr" in line for line in daily), daily
+    assert any(line.startswith("0 ") for line in daily), daily

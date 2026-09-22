@@ -583,14 +583,18 @@ Playwright (`requirements-dev.txt`); вход в Telegram Web делается �
 Планировщик живёт в системе, а не в инструменте: своего демона у `listam` нет
 и не будет. Расписание двухслойное.
 
-* **Инкрементальный обход — раз в час.** `scrape --fresh && match --new`
-  проходит единицы страниц, приносит то, что появилось за час, и сразу
-  примеряет новое к заявкам. Это дежурный режим.
+* **Инкрементальный обход — раз в час.**
+  `scrape --fresh && match --new && notify --hot` проходит единицы страниц,
+  приносит то, что появилось за час, примеряет новое к заявкам и шлёт брокеру
+  горячее. Это дежурный режим.
 * **Полный обход — раз в сутки.** `scrape && match --all`. Только полный обход
   проверяет ленту целиком и потому только он имеет право помечать снятые
   (пункт 8) и быть меркой полноты для проверки недобора страниц (пункты 4
   и 5). Час-полтора в сутки — его цена; ночной `match --all` за ним
   пересчитывает баллы по всей базе, не трогая след звонка.
+* **Дайджест — раз в сутки, вечером.** `notify --digest`: всё, что тронулось
+  с прошлой отправки дайджеста, плюс тихий раздел «отпало». Отдельной задачей,
+  а не хвостом обхода: отказ канала не должен ронять обход, и наоборот.
 
 Подбор вынесен в отдельную команду намеренно: краулер на 864 строки — не место
 для движка скоринга, а `scrape && match` даёт ровно то же поведение и
@@ -613,17 +617,20 @@ Windows, `schtasks` (обход идёт через браузер с окном
 
 ```bat
 schtasks /create /tn "listam-fresh" /sc hourly /ru "%USERNAME%" /it ^
-  /tr "cmd /c C:\Users\Admin\Downloads\list\.venv\Scripts\python.exe -m listam scrape --fresh && C:\Users\Admin\Downloads\list\.venv\Scripts\python.exe -m listam match --new"
+  /tr "cmd /c C:\Users\Admin\Downloads\list\.venv\Scripts\python.exe -m listam scrape --fresh && C:\Users\Admin\Downloads\list\.venv\Scripts\python.exe -m listam match --new && C:\Users\Admin\Downloads\list\.venv\Scripts\python.exe -m listam notify --hot"
 schtasks /create /tn "listam-full" /sc daily /st 04:00 /ru "%USERNAME%" /it ^
   /tr "cmd /c C:\Users\Admin\Downloads\list\.venv\Scripts\python.exe -m listam scrape && C:\Users\Admin\Downloads\list\.venv\Scripts\python.exe -m listam match --all"
+schtasks /create /tn "listam-digest" /sc daily /st 20:00 /ru "%USERNAME%" /it ^
+  /tr "cmd /c C:\Users\Admin\Downloads\list\.venv\Scripts\python.exe -m listam notify --digest"
 ```
 
 Сервер без экрана, `cron` — браузер заворачивается в виртуальный экран
 (`headless: false` трогать нельзя, см. «Как обходится Cloudflare»):
 
 ```cron
-0 * * * *  cd /srv/listam && xvfb-run -a .venv/bin/python -m listam scrape --fresh && .venv/bin/python -m listam match --new
+0 * * * *  cd /srv/listam && xvfb-run -a .venv/bin/python -m listam scrape --fresh && .venv/bin/python -m listam match --new && .venv/bin/python -m listam notify --hot
 0 4 * * *  cd /srv/listam && xvfb-run -a .venv/bin/python -m listam scrape && .venv/bin/python -m listam match --all
+0 20 * * * cd /srv/listam && .venv/bin/python -m listam notify --digest
 ```
 
 Ненулевой код возврата — повод посмотреть `runs.notes` за этот прогон:
