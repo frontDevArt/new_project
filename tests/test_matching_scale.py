@@ -84,10 +84,10 @@ def test_the_window_does_not_read_listings_one_by_one(matching_config, monkeypat
         return original(self, listing_id)
 
     monkeypatch.setattr(SqliteDatabase, "get_listing", counted)
-    rows = collect_matches(matching_config)
+    page = collect_matches(matching_config)
 
-    assert len(rows) > 1, "тест бессмыслен на одной строке"
+    assert len(page.rows) > 1, "тест бессмыслен на одной строке"
     assert calls == [], (
-        f"{len(calls)} отдельных get_listing на {len(rows)} матчей: "
+        f"{len(calls)} отдельных get_listing на {len(page.rows)} матчей: "
         f"на боевых числах это 66 910 запросов"
     )

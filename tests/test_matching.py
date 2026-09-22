@@ -330,10 +330,10 @@ def test_a_cluster_of_three_says_so_and_names_the_spread(matching_config_with_du
 
 
 def test_a_match_whose_listing_went_away_is_marked_and_not_hidden(matching_config_gone):
-    rows = collect_matches(matching_config_gone, external_id="R-1")
+    page = collect_matches(matching_config_gone, external_id="R-1")
 
-    assert [listing.id for _, _, listing in rows] == ["1"]
-    assert "снято" in render_matches(rows, limit=50)
+    assert [listing.id for _, _, listing in page.rows] == ["1"]
+    assert "снято" in render_matches(page, limit=50)
 
 
 def test_the_window_shows_every_active_request_when_none_is_named(tmp_path):
@@ -353,8 +353,8 @@ def test_a_match_below_the_digest_threshold_stays_out_of_the_window(matching_con
     everything = collect_matches(matching_config, external_id="R-1", min_score=0)
     strict = collect_matches(matching_config, external_id="R-1", min_score=99)
 
-    assert len(strict) < len(everything)
-    assert all(match.score >= 99 for _, match, _ in strict)
+    assert len(strict.rows) < len(everything.rows)
+    assert all(match.score >= 99 for _, match, _ in strict.rows)
 
 
 def test_the_limit_cuts_the_list_and_says_how_many_are_left(matching_config):
@@ -431,15 +431,15 @@ def test_a_listing_that_left_the_budget_leaves_the_window(matching_config):
     report = run_match(config)
 
     assert report.retired == 1
-    rows = collect_matches(config)
-    assert "1" not in [listing.id for _, _, listing in rows]
+    page = collect_matches(config)
+    assert "1" not in [listing.id for _, _, listing in page.rows]
 
 
 def test_a_cheaper_twin_replaces_the_old_representative_and_not_doubles_it(
         matching_config_with_duplicates):
     config = matching_config_with_duplicates
     run_match(config)
-    before = {listing.id for _, _, listing in collect_matches(config)}
+    before = {listing.id for _, _, listing in collect_matches(config).rows}
 
     database = build_database(config)
     database.connect()
@@ -453,8 +453,8 @@ def test_a_cheaper_twin_replaces_the_old_representative_and_not_doubles_it(
 
     run_match(config)
 
-    after = [listing for _, _, listing in collect_matches(config)]
-    clusters_shown = [match.cluster_id for _, match, _ in collect_matches(config)]
+    after = [listing for _, _, listing in collect_matches(config).rows]
+    clusters_shown = [match.cluster_id for _, match, _ in collect_matches(config).rows]
     assert len(clusters_shown) == len(set(clusters_shown)), \
         "одна квартира не может стоять в витрине дважды"
     assert "L-cheap" in [listing.id for listing in after]
@@ -472,7 +472,7 @@ def test_new_sees_the_one_that_got_cheaper(tmp_path):
          requests=[make_request("R-1")], seen_at=YESTERDAY)
 
     run_match(config)          # полный проход: матча нет, заявка отмечена
-    assert collect_matches(config) == []
+    assert collect_matches(config).rows == []
 
     database = build_database(config)
     database.connect()
@@ -486,7 +486,7 @@ def test_new_sees_the_one_that_got_cheaper(tmp_path):
     report = run_match(config, only_new=True)
 
     assert report.listings >= 1
-    assert "pricey" in [listing.id for _, _, listing in collect_matches(config)]
+    assert "pricey" in [listing.id for _, _, listing in collect_matches(config).rows]
 
 
 def test_a_request_edited_after_its_last_matching_is_swept_whole(matching_config):
@@ -562,8 +562,8 @@ def test_a_match_whose_listing_left_the_feed_is_not_retired(matching_config_gone
     report = run_match(matching_config_gone)
 
     assert report.retired == 0
-    rows = collect_matches(matching_config_gone, external_id="R-1")
-    assert [listing.id for _, _, listing in rows] == ["1"]
+    page = collect_matches(matching_config_gone, external_id="R-1")
+    assert [listing.id for _, _, listing in page.rows] == ["1"]
 
 
 # --- конфиг, который не врёт -------------------------------------------

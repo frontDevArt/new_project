@@ -11,6 +11,8 @@
 """
 from __future__ import annotations
 
+from dataclasses import dataclass, field
+
 from listam.adapters.db_sqlite import latest_schema_version
 from listam.changes import DASH, MINUS, money, per_sqm
 from listam.config import Config, positive
@@ -22,6 +24,30 @@ from listam.wiring import build_database, build_storage, database_path
 MatchRow = tuple[Request, Match, Listing]
 
 DEFAULT_LIMIT = 50
+
+
+@dataclass
+class MatchesPage:
+    """Что витрина прочитала и сколько всего есть.
+
+    Две величины, а не одна. Потолок теперь доходит до выборки: на боевых
+    числах `matches` без `--request` читала 50 633 строки за 4,0 с, а с
+    потолком в SQL — заметно меньше. Но «…и ещё 704» обязано остаться
+    правдой, а прочитанные строки про непрочитанные ничего не знают — их
+    считает отдельный запрос.
+    """
+
+    rows: list[MatchRow] = field(default_factory=list)
+    totals: dict[str, int] = field(default_factory=dict)   # ключ группы → всего
+
+
+def group_key(request: Request) -> str:
+    """Ключ раздела витрины: внешний идентификатор, а не `id`.
+
+    Заявка, не записанная в базу, имеет `id = None`, и все такие схлопнулись
+    бы в один раздел.
+    """
+    return request.external_id or f"#{request.id}"
 
 
 class MatchesError(Exception):
@@ -36,23 +62,17 @@ def display_limit(config: Config) -> int:
 
 def collect_matches(config: Config, *, external_id: str | None = None,
                     min_score: float | None = None,
-                    limit: int | None = None) -> list[MatchRow]:
+                    limit: int | None = None) -> MatchesPage:
     """Матчи для витрины: заявка, матч и объявление одной строкой.
 
     Объявление приходит вместе с матчем, одним запросом на заявку, и снятое
     из выдачи не выпадает (решение 8): витрина его помечает, а не прячет.
-    Читать карточки по одной нельзя: на 50 заявках это было 66 910 запросов.
     Матч, у которого объявления в базе нет вовсе, не показывается — `JOIN`
     его не отдаёт; это не «снято», снятое лежит на месте с пометкой.
-    `external_id` не задан — все активные заявки, по убыванию балла внутри
-    каждой.
 
-    `min_score` не задан — берётся порог дайджеста из конфига: витрина
-    показывает то, о чём есть смысл разговаривать. `limit` не задан —
-    не сужаем: сколько строк **показать**, решает `render_matches`,
-    и только так «…и ещё 12» может быть правдой.
-
-    Замка здесь нет и записи тоже: витрина читает базу, а не чинит её.
+    `min_score` не задан — берётся порог дайджеста из конфига. `limit` —
+    сколько строк **читать**: он доходит до SQL, а сколько их всего, отвечает
+    счётчик. Замка здесь нет и записи тоже: витрина читает базу, а не чинит её.
     """
     if min_score is None:
         min_score = settings(config).digest
@@ -87,12 +107,17 @@ def collect_matches(config: Config, *, external_id: str | None = None,
             # звонили по этой квартире» переживает и паузу заявки.
             requests = [one]
 
-        rows: list[MatchRow] = []
+        page = MatchesPage()
         for request in requests:
-            for match, listing in database.matches_with_listings(
-                    request.id, min_score=min_score, limit=limit):
-                rows.append((request, match, listing))
-        return rows
+            pairs = database.matches_with_listings(
+                request.id, min_score=min_score, limit=limit)
+            if not pairs:
+                continue
+            page.totals[group_key(request)] = database.count_matches_alive(
+                request.id, min_score=min_score)
+            for match, listing in pairs:
+                page.rows.append((request, match, listing))
+        return page
     finally:
         database.close()
 
@@ -155,34 +180,37 @@ def _note(match: Match, listing: Listing) -> str:
     return " · ".join(parts)
 
 
-def render_matches(rows: list[MatchRow], limit: int,
+def render_matches(page: MatchesPage, limit: int,
                    min_score: float | None = None) -> str:
     """Витрина: по разделу на заявку, по строке на кластер.
 
     `min_score` называется в шапке, чтобы пустой раздел читался как «выше
     порога ничего нет», а не как «матчинг не работает». Мерка приходит
     аргументом, а не вычитывается из конфига: печать конфига не читает.
+
+    Хвост «…и ещё N» считается от `page.totals`, а не от длины прочитанного:
+    потолок доходит до выборки, и прочитанные строки про остальные ничего
+    не знают.
     """
-    if not rows:
+    if not page.rows:
         return "Подобранных вариантов нет."
 
     by_request: dict[str, list[MatchRow]] = {}
     requests: dict[str, Request] = {}
-    for request, match, listing in rows:
-        # Ключ — внешний идентификатор, а не `id`: заявка, не записанная
-        # в базу, имеет `id = None`, и все такие схлопнулись бы в одну группу.
-        key = request.external_id or f"#{request.id}"
+    for request, match, listing in page.rows:
+        key = group_key(request)
         by_request.setdefault(key, []).append((request, match, listing))
         requests[key] = request
 
     lines: list[str] = []
     for key, group in by_request.items():
         request = requests[key]
+        total = page.totals.get(key, len(group))
         who = f" ({request.client_name})" if request.client_name else ""
         head = f"Заявка {request.external_id or key}{who}"
         if min_score is not None:
             head += f", порог дайджеста {min_score:g}"
-        head += f" — подобрано {len(group)}"
+        head += f" — подобрано {total}"
         if lines:
             lines.append("")
         lines.append(head)
@@ -198,7 +226,7 @@ def render_matches(rows: list[MatchRow], limit: int,
             note = _note(match, listing)
             if note:
                 lines.append(f"      {note}")
-        left = len(group) - len(group[:limit])
-        if left:
+        left = total - len(group[:limit])
+        if left > 0:
             lines.append(f"  …и ещё {left}")
     return "\n".join(lines)

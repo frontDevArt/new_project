@@ -320,11 +320,14 @@ def _matches(config, external_id: str | None, limit: int | None,
     if limit is None:
         limit = display_limit(config)
     try:
-        rows = collect_matches(config, external_id=external_id, min_score=min_score)
+        # Потолок уходит в выборку, а не только в печать: без него витрина
+        # читала 50 633 строки, чтобы показать 2 247.
+        page = collect_matches(config, external_id=external_id,
+                               min_score=min_score, limit=limit)
     except MatchesError as exc:
         print(exc, file=sys.stderr)
         return 1
-    print(render_matches(rows, limit=limit, min_score=min_score))
+    print(render_matches(page, limit=limit, min_score=min_score))
     return 0
 
 
@@ -377,7 +380,7 @@ def _export(config, name: str | None) -> int:
     # Ноль здесь бессмыслен — это счётчик строк, а не порог (`positive`).
     matches = collect_matches(
         config, limit=positive(config, "export.matches_limit", DEFAULT_MATCHES_LIMIT)
-    )
+    ).rows
     path = build_exporter(config).export(listings, name=name, matches=matches)
     print(f"Выгружено объявлений: {len(listings)}, матчей: {len(matches)} → {path}")
     return 0
