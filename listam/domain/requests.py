@@ -70,22 +70,32 @@ def _text(row: dict, column: str) -> str:
     return str(row.get(column, "") or "").strip()
 
 
-def _number(row: dict, column: str) -> float | None:
+def _number(row: dict, column: str, minimum: float | None = None) -> float | None:
+    """Число из человеческой записи. `minimum` — ниже чего значение бессмысленно.
+
+    Отрицательный бюджет не «очень маленький бюджет», а опечатка: `stretch`
+    от −5 000 даёт −5 500, каждое объявление получает отказ «бюджет»,
+    и брокер видит пустую витрину без единого объяснения.
+    """
     raw = _text(row, column)
     if not raw:
         return None
     cleaned = DECORATION.sub("", raw)
     if GROUPED.fullmatch(cleaned):
-        return float(re.sub(r"[.,]", "", cleaned))
-    if FRACTIONAL.fullmatch(cleaned):
-        return float(cleaned.replace(",", "."))
-    if PLAIN.fullmatch(cleaned):
-        return float(cleaned)
-    raise RequestParseError(column, raw, "не число")
+        value = float(re.sub(r"[.,]", "", cleaned))
+    elif FRACTIONAL.fullmatch(cleaned):
+        value = float(cleaned.replace(",", "."))
+    elif PLAIN.fullmatch(cleaned):
+        value = float(cleaned)
+    else:
+        raise RequestParseError(column, raw, "не число")
+    if minimum is not None and value < minimum:
+        raise RequestParseError(column, raw, f"должно быть не меньше {minimum:g}")
+    return value
 
 
-def _integer(row: dict, column: str) -> int | None:
-    value = _number(row, column)
+def _integer(row: dict, column: str, minimum: float | None = None) -> int | None:
+    value = _number(row, column, minimum=minimum)
     if value is None:
         return None
     if value != int(value):
@@ -121,10 +131,14 @@ def _rooms(row: dict) -> list[int]:
             low, high = int(span.group(1)), int(span.group(2))
             if low > high:
                 raise RequestParseError("rooms", part, "диапазон задом наперёд")
+            if low < 1:
+                raise RequestParseError("rooms", part, "квартир без комнат не бывает")
             values.update(range(low, high + 1))
             continue
         if not part.isdigit():
             raise RequestParseError("rooms", part, "не число комнат")
+        if int(part) < 1:
+            raise RequestParseError("rooms", part, "квартир без комнат не бывает")
         values.add(int(part))
     return sorted(values)
 
@@ -156,20 +170,20 @@ def parse_row(row: dict, row_number: int = 0) -> Request:
         raise RequestParseError("status", status,
                                 f"неизвестный статус; бывают: {', '.join(STATUSES)}")
 
-    budget_max = _number(row, "budget_max")
-    budget_stretch = _number(row, "budget_stretch")
+    budget_max = _number(row, "budget_max", minimum=1)
+    budget_stretch = _number(row, "budget_stretch", minimum=1)
     if budget_max is not None and budget_stretch is not None and budget_stretch < budget_max:
         raise RequestParseError("budget_stretch", _text(row, "budget_stretch"),
                                 "растянутый бюджет меньше основного")
 
-    area_min = _number(row, "area_min")
-    area_max = _number(row, "area_max")
+    area_min = _number(row, "area_min", minimum=1)
+    area_max = _number(row, "area_max", minimum=1)
     if area_min is not None and area_max is not None and area_max < area_min:
         raise RequestParseError("area_max", _text(row, "area_max"),
                                 "верхняя граница площади ниже нижней")
 
-    floor_min = _integer(row, "floor_min")
-    floor_max = _integer(row, "floor_max")
+    floor_min = _integer(row, "floor_min", minimum=1)
+    floor_max = _integer(row, "floor_max", minimum=1)
     if floor_min is not None and floor_max is not None and floor_max < floor_min:
         raise RequestParseError("floor_max", _text(row, "floor_max"),
                                 "верхний этаж ниже нижнего")
@@ -206,12 +220,25 @@ def parse_row(row: dict, row_number: int = 0) -> Request:
 
 
 def parse_rows(rows: Iterable[dict]) -> tuple[list[Request], list[RequestError]]:
-    """Разобранные заявки и отклонённые строки. Одна опечатка не стоит остальных."""
+    """Разобранные заявки и отклонённые строки. Одна опечатка не стоит остальных.
+
+    Второй `id` — отказ второй строке, а не замена первой: какая из двух
+    настоящая, знает человек, и молча взять последнюю значит однажды подобрать
+    не тому клиенту.
+    """
     parsed: list[Request] = []
     errors: list[RequestError] = []
+    seen: set[str] = set()
     for number, row in enumerate(rows, start=1):
         try:
-            parsed.append(parse_row(row, row_number=number))
+            request = parse_row(row, row_number=number)
+            if request.external_id in seen:
+                raise RequestParseError(
+                    "id", request.external_id,
+                    "такой идентификатор в таблице уже был — две строки на одну заявку",
+                )
+            seen.add(request.external_id)
+            parsed.append(request)
         except RequestParseError as exc:
             errors.append(RequestError(
                 row_number=number,

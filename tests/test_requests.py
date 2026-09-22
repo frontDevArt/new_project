@@ -141,3 +141,43 @@ def test_a_row_with_more_values_than_columns_is_a_refusal_and_not_a_crash():
     assert len(errors) == 1
     assert "смотрит с октября" in errors[0].render()
     assert "шапк" in errors[0].render()
+
+
+def test_a_negative_budget_is_a_refusal():
+    with pytest.raises(RequestParseError) as exc:
+        parse_row(row(budget_max="-5000"))
+    assert exc.value.column == "budget_max"
+
+
+def test_a_negative_area_is_a_refusal():
+    with pytest.raises(RequestParseError) as exc:
+        parse_row(row(area_min="-10"))
+    assert exc.value.column == "area_min"
+
+
+def test_a_floor_below_the_ground_is_a_refusal():
+    with pytest.raises(RequestParseError) as exc:
+        parse_row(row(floor_min="-3"))
+    assert exc.value.column == "floor_min"
+
+
+def test_a_flat_with_no_rooms_is_a_refusal():
+    with pytest.raises(RequestParseError) as exc:
+        parse_row(row(rooms="0"))
+    assert exc.value.column == "rooms"
+
+
+def test_zero_budget_is_a_refusal_and_not_read_as_no_budget():
+    with pytest.raises(RequestParseError) as exc:
+        parse_row(row(budget_max="0"))
+    assert exc.value.column == "budget_max"
+
+
+def test_two_rows_with_one_id_are_a_refusal_naming_the_double():
+    parsed, errors = parse_rows([row(id="R-5", budget_max="100000"),
+                                 row(id="R-5", budget_max="999999")])
+    assert [item.external_id for item in parsed] == ["R-5"]
+    assert parsed[0].budget_max == 100_000
+    assert len(errors) == 1
+    assert errors[0].column == "id"
+    assert "R-5" in errors[0].render()
