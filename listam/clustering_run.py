@@ -13,17 +13,12 @@ from __future__ import annotations
 
 from dataclasses import dataclass
 from datetime import datetime, timezone
-from pathlib import Path
 
-from listam.adapters.run_lock import LockBusy
 from listam.config import Config, threshold
-from listam.crawler import rotate_backups, take_the_fresher_copy
 from listam.domain.clustering import DEFAULT_AREA_TOLERANCE, assign, clusters, \
     normalize_street
 from listam.ports.database import Database
-from listam.wiring import build_database, build_run_lock, build_storage, database_path
-
-DEFAULT_KEEP_BACKUPS = 5
+from listam.runner import SessionRefused, publish, working_session
 
 
 @dataclass
@@ -87,67 +82,34 @@ def cluster_database(database: Database, tolerance: float,
 
 
 def run_clustering(config: Config) -> ClusterReport:
-    """Один проход по всей базе. Сводку печатает вызывающий."""
+    """Один проход по всей базе. Сводку печатает вызывающий.
+
+    Замок, свежая копия, миграции и заливка — общий каркас (`listam/runner.py`):
+    тот же порядок, что у прогона, пересчёта, заявок и подбора. Здесь остаётся
+    только то, что у команды своё: что считать и когда это заливать.
+    """
     report = ClusterReport()
-
-    # Тот же замок, что у прогона и пересчёта: команда переписывает общую
-    # базу, и делать это под идущим обходом — значит соревноваться за файл.
-    lock = build_run_lock(config)
-    try:
-        lock.acquire()
-    except LockBusy as exc:
-        report.errors = 1
-        report.notes = str(exc)
-        report.finished_at = datetime.now(timezone.utc)
-        return report
-
-    database = None
-    storage = None
-    local_db = database_path(config)
-    remote_name = config.get("storage.db_filename", "listam.sqlite")
     notes: list[str] = []
     try:
-        try:
-            storage = build_storage(config)
-            remote = take_the_fresher_copy(storage, remote_name, local_db)
-            if remote.note:
-                notes.append(remote.note)
-            database = build_database(config)
-            database.connect()
-            database.migrate()
-        except Exception as exc:       # OSError, sqlite3.Error — базы нет
-            report.errors = 1
-            notes.append(f"файл базы недоступен: {exc}")
-            return report
+        # Схема здесь не проверяется — и не проверялась: команда сама катит
+        # миграции, а пересчёт кластеров читает те колонки, что есть с M1.
+        with working_session(config, needs_schema=False) as session:
+            notes.extend(session.notes)
+            session.notes = notes     # заливка пишет в тот же список
 
-        counted = cluster_database(database, area_tolerance(config))
-        counted.errors, counted.notes = report.errors, report.notes
-        report = counted
+            counted = cluster_database(session.database, area_tolerance(config))
+            counted.errors, counted.notes = report.errors, report.notes
+            report = counted
 
-        if report.changed:
-            snapshot = local_db.with_name(local_db.name + ".snapshot")
-            try:
-                database.snapshot(snapshot)
-            except Exception as exc:   # sqlite3.Error, OSError — заливать нечего
-                report.errors += 1
-                notes.append(f"снимок базы не сделан: {exc}")
-                snapshot = None
-            database.close()
-            database = None
-            if snapshot is not None:
-                rotate_backups(
-                    storage,
-                    remote_name,
-                    int(config.get("storage.keep_backups", DEFAULT_KEEP_BACKUPS) or 0),
-                    Path(local_db).parent,
-                )
-                storage.upload(snapshot, remote_name)
-                snapshot.unlink(missing_ok=True)
-                notes.append("база с кластерами залита в хранилище")
-        return report
+            # Заливаем только когда что-то изменилось: подменять общую копию
+            # ради нулевой правки — значит зря гонять сеть и ротацию.
+            if report.changed:
+                publish(session, config, "база с кластерами")
+                report.errors += session.failures
+    except SessionRefused as exc:
+        report.errors += 1
+        notes.append(str(exc))
     finally:
-        if database is not None:
-            database.close()
-        lock.release()
         report.notes = "; ".join(note for note in notes if note)
         report.finished_at = datetime.now(timezone.utc)
+    return report
