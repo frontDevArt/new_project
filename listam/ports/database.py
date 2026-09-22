@@ -221,9 +221,14 @@ class Database(ABC):
         """
 
     @abstractmethod
-    def retire_matches(self, request_id: int, keep: set[str],
-                       now: datetime, reason: str) -> int:
+    def retire_matches(self, request_id: int, keep: set[str], now: datetime,
+                       reasons: dict[str, str], default: str) -> int:
         """Закрывает матчи заявки, которых нет в `keep`. Отдаёт, сколько закрыл.
+
+        `reasons` — причина на объявление: «бюджет», «район», «площадь»,
+        «комнаты», «не представитель кластера». Причины нет — берётся
+        `default`: объявление выпало из выборки, не получив отказа, и врать
+        про бюджет в этом случае хуже, чем сказать общее.
 
         Закрытие — не удаление: в строке лежит след звонка, и он переживает
         подорожавшее объявление. Уже закрытые повторно не трогаются, иначе

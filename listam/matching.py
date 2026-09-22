@@ -229,7 +229,8 @@ def run_match(config: Config, *, external_id: str | None = None,
 
             # Чего проход не видел: снятое с ленты и отложенное аномалией.
             # Закрывать по такому нельзя — см. `_write_matches`.
-            off_the_feed = database.known_ids() - {item.id for item in everything}
+            alive_ids = {item.id for item in everything}
+            off_the_feed = database.known_ids() - alive_ids
 
             last_run = database.last_run()
             run_id = last_run.id if last_run else None
@@ -245,11 +246,13 @@ def run_match(config: Config, *, external_id: str | None = None,
                 whole = [item for item in everything if item.id in representatives]
                 _write_matches(database, report, edited, whole, representatives,
                                medians, run_id, tuning,
-                               full_sweep=True, off_the_feed=off_the_feed)
+                               full_sweep=True, off_the_feed=off_the_feed,
+                               everything_by_id=alive_ids)
             if fresh:
                 _write_matches(database, report, fresh, candidates, representatives,
                                medians, run_id, tuning,
-                               full_sweep=not only_new, off_the_feed=off_the_feed)
+                               full_sweep=not only_new, off_the_feed=off_the_feed,
+                               everything_by_id=alive_ids)
             database.mark_requests_matched(
                 [request.id for request in requests if request.id is not None],
                 datetime.now(timezone.utc),
@@ -295,7 +298,8 @@ def _count_clusters(database: Database, config: Config, notes: list[str],
 def _write_matches(database: Database, report: MatchReport, requests, candidates,
                    representatives: dict, medians: dict[str, float],
                    run_id: int | None, tuning: Settings,
-                   full_sweep: bool, off_the_feed: set[str]) -> None:
+                   full_sweep: bool, off_the_feed: set[str],
+                   everything_by_id: set[str]) -> None:
     """Пара «заявка × представитель» → балл → строка в `matches`.
 
     `full_sweep` — прошли ли по всей базе. Только полный проход имеет право
@@ -306,10 +310,23 @@ def _write_matches(database: Database, report: MatchReport, requests, candidates
     ленты и отложенные аномалией. Их матчи не закрываются даже полным
     проходом: решение 8 спеки велит витрине снятое помечать, а не прятать,
     и «мы звонили по этой квартире» уходу объявления не подчиняется.
+
+    `everything_by_id` — все активные объявления прохода. Живое, но не
+    представитель кластера, закрывается со своей причиной: появился двойник
+    дешевле. Это не «бюджет» и не «район» — клиенту ту же квартиру покажут
+    по другой карточке.
     """
     now = datetime.now(timezone.utc)
+    not_representatives = everything_by_id - representatives.keys()
     for request in requests:
         confirmed: set[str] = set()
+        # Почему вариант не подтвердился — знает только этот цикл: жёсткий
+        # критерий назвал причину словом, а представительство в кластере
+        # видно по `representatives`. Дальше это слово читает человек в
+        # уведомлении «отпало: бюджет 3, район 1», и общая фраза ему
+        # не отвечает ни на что.
+        reasons: dict[str, str] = dict.fromkeys(not_representatives,
+                                                "не представитель кластера")
         # Матчи заявки копятся и пишутся одной транзакцией: по одной на строку
         # боевые 67 000 матчей стоили минуту фиксаций на диск.
         batch: list[Match] = []
@@ -319,6 +336,9 @@ def _write_matches(database: Database, report: MatchReport, requests, candidates
                            stretch_percent=tuning.stretch_percent)
             if result.rejected_by is not None:
                 # Отказ в базу не пишется: их миллионы, и звонить по ним некуда.
+                # Но причина запоминается: если на это объявление есть вчерашний
+                # матч, закрыть его надо со словом, а не с общей фразой.
+                reasons[listing.id] = result.rejected_by
                 continue
             cluster = representatives[listing.id]
             batch.append(Match(
@@ -341,5 +361,6 @@ def _write_matches(database: Database, report: MatchReport, requests, candidates
         if full_sweep:
             report.retired += database.retire_matches(
                 request.id, keep=confirmed | off_the_feed, now=now,
-                reason="проход больше не подтверждает этот вариант",
+                reasons=reasons,
+                default="проход больше не подтверждает этот вариант",
             )

@@ -552,6 +552,58 @@ def test_a_cluster_that_lost_a_member_is_the_same_in_the_base_and_in_the_match(
     )
 
 
+def retired_reasons(config: Config, external_id="R-1") -> dict[str, str | None]:
+    database = build_database(config)
+    database.connect()
+    try:
+        request = database.get_request(external_id)
+        return {match.listing_id: match.retired_reason
+                for match in database.matches_for_request(request.id,
+                                                          include_retired=True)
+                if match.retired_at is not None}
+    finally:
+        database.close()
+
+
+def test_a_match_closed_by_budget_says_budget(matching_config):
+    """Живьём: квартира подорожала — в базе должно лежать «бюджет», а не
+    общая фраза. Приёмка фазы 8 нашла именно это: причина была одна на всех."""
+    config = matching_config
+    run_match(config)
+    database = build_database(config)
+    database.connect()
+    listing = database.get_listing("1")
+    database.upsert_listing(
+        replace(listing, price_usd=900_000.0, price_raw="900000 $"),
+        datetime(2026, 9, 23, tzinfo=timezone.utc),
+    )
+    database.close()
+
+    run_match(config)
+
+    assert retired_reasons(config) == {"1": "бюджет"}
+
+
+def test_a_match_closed_by_a_cheaper_twin_says_so(matching_config_with_duplicates):
+    """Вторая живая причина: в кластере появился вариант дешевле, и матч
+    на прежнего представителя закрывается — но не «по бюджету»."""
+    config = matching_config_with_duplicates
+    run_match(config)
+    database = build_database(config)
+    database.connect()
+    twin = database.get_listing("cheap")
+    database.upsert_listing(
+        replace(twin, id="L-cheap", url="https://www.list.am/ru/item/L-cheap",
+                price_usd=(twin.price_usd or 0) - 5_000),
+        datetime(2026, 9, 23, tzinfo=timezone.utc),
+    )
+    database.close()
+
+    run_match(config)
+
+    assert retired_reasons(config) == {"cheap": "не представитель кластера"}
+
+
 def test_a_match_whose_listing_left_the_feed_is_not_retired(matching_config_gone):
     """Решение 8: снятое объявление витрина помечает, а не прячет.
 

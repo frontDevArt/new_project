@@ -901,7 +901,7 @@ def test_a_match_that_stopped_matching_is_retired_and_leaves_the_window(db):
     db.upsert_match(Match(request_id=request.id, listing_id="L-1", score=80.0), NOW)
     db.upsert_match(Match(request_id=request.id, listing_id="L-2", score=70.0), NOW)
 
-    closed = db.retire_matches(request.id, keep={"L-1"}, now=LATER, reason="бюджет")
+    closed = db.retire_matches(request.id, keep={"L-1"}, now=LATER, reasons={}, default="бюджет")
 
     assert closed == 1
     alive = [item.listing_id for item in db.matches_for_request(request.id)]
@@ -917,7 +917,7 @@ def test_retiring_a_match_does_not_touch_the_call_trace(db):
     stored = db.matches_for_request(request.id)[0]
     db.set_match_status(stored.id, "called", "дорого")
 
-    db.retire_matches(request.id, keep=set(), now=LATER, reason="бюджет")
+    db.retire_matches(request.id, keep=set(), now=LATER, reasons={}, default="бюджет")
 
     closed = db.matches_for_request(request.id, include_retired=True)[0]
     assert closed.status == "called"
@@ -930,7 +930,7 @@ def test_a_match_that_matches_again_comes_back_to_the_window(db):
     request = stored_request(db)
     db.upsert_listing(make_listing("L-1"), NOW)
     db.upsert_match(Match(request_id=request.id, listing_id="L-1", score=80.0), NOW)
-    db.retire_matches(request.id, keep=set(), now=LATER, reason="бюджет")
+    db.retire_matches(request.id, keep=set(), now=LATER, reasons={}, default="бюджет")
 
     db.upsert_match(Match(request_id=request.id, listing_id="L-1", score=75.0), LATER)
 
@@ -944,7 +944,7 @@ def test_a_match_confirmed_with_the_very_same_score_comes_back_too(db):
     request = stored_request(db)
     db.upsert_listing(make_listing("L-1"), NOW)
     db.upsert_match(Match(request_id=request.id, listing_id="L-1", score=80.0), NOW)
-    db.retire_matches(request.id, keep=set(), now=LATER, reason="бюджет")
+    db.retire_matches(request.id, keep=set(), now=LATER, reasons={}, default="бюджет")
 
     db.upsert_match(Match(request_id=request.id, listing_id="L-1", score=80.0), LATER)
 
@@ -957,8 +957,45 @@ def test_retiring_twice_closes_nothing_the_second_time(db):
     request = stored_request(db)
     db.upsert_listing(make_listing("L-1"), NOW)
     db.upsert_match(Match(request_id=request.id, listing_id="L-1", score=80.0), NOW)
-    assert db.retire_matches(request.id, keep=set(), now=LATER, reason="бюджет") == 1
-    assert db.retire_matches(request.id, keep=set(), now=LATER, reason="бюджет") == 0
+    assert db.retire_matches(request.id, keep=set(), now=LATER, reasons={}, default="бюджет") == 1
+    assert db.retire_matches(request.id, keep=set(), now=LATER, reasons={}, default="бюджет") == 0
+
+
+def test_each_retired_match_gets_its_own_reason(db):
+    """«Бюджет» и «не представитель кластера» — разные ответы на вопрос
+    «почему пропала вчерашняя карточка». Одна фраза на всех не отвечает."""
+    request = stored_request(db)
+    for listing_id in ("1", "2"):
+        db.upsert_listing(make_listing(listing_id), NOW)
+    db.upsert_matches([
+        Match(request_id=request.id, listing_id="1", score=80.0),
+        Match(request_id=request.id, listing_id="2", score=70.0),
+    ], NOW)
+
+    closed = db.retire_matches(
+        request.id, keep=set(), now=LATER,
+        reasons={"1": "бюджет", "2": "не представитель кластера"},
+        default="проход больше не подтверждает этот вариант",
+    )
+
+    assert closed == 2
+    reasons = {match.listing_id: match.retired_reason
+               for match in db.matches_for_request(request.id, include_retired=True)}
+    assert reasons == {"1": "бюджет", "2": "не представитель кластера"}
+
+
+def test_a_match_without_a_known_reason_gets_the_general_one(db):
+    """Причины нет — значит объявление выпало из выборки, не получив отказа.
+    Врать про «бюджет» в этом случае хуже, чем сказать общее."""
+    request = stored_request(db)
+    db.upsert_listing(make_listing("1"), NOW)
+    db.upsert_match(Match(request_id=request.id, listing_id="1", score=80.0), NOW)
+
+    db.retire_matches(request.id, keep=set(), now=LATER, reasons={},
+                      default="проход больше не подтверждает этот вариант")
+
+    match = db.matches_for_request(request.id, include_retired=True)[0]
+    assert match.retired_reason == "проход больше не подтверждает этот вариант"
 
 
 def test_retiring_one_request_does_not_touch_another(db):
@@ -968,7 +1005,7 @@ def test_retiring_one_request_does_not_touch_another(db):
     db.upsert_match(Match(request_id=first.id, listing_id="L-1", score=80.0), NOW)
     db.upsert_match(Match(request_id=second.id, listing_id="L-1", score=80.0), NOW)
 
-    db.retire_matches(first.id, keep=set(), now=LATER, reason="бюджет")
+    db.retire_matches(first.id, keep=set(), now=LATER, reasons={}, default="бюджет")
 
     assert len(db.matches_for_request(second.id)) == 1
 
@@ -1026,7 +1063,7 @@ def test_a_batch_brings_a_retired_match_back(db):
     request = stored_request(db)
     db.upsert_listing(make_listing("L-1"), NOW)
     db.upsert_matches([Match(request_id=request.id, listing_id="L-1", score=80.0)], NOW)
-    db.retire_matches(request.id, keep=set(), now=LATER, reason="бюджет")
+    db.retire_matches(request.id, keep=set(), now=LATER, reasons={}, default="бюджет")
 
     assert db.upsert_matches(
         [Match(request_id=request.id, listing_id="L-1", score=80.0)], EVEN_LATER
@@ -1088,7 +1125,7 @@ def test_a_retired_match_does_not_come_to_the_window(db):
     db.upsert_listing(make_listing("L-2"), NOW)
     db.upsert_match(Match(request_id=request.id, listing_id="L-1", score=80.0), NOW)
     db.upsert_match(Match(request_id=request.id, listing_id="L-2", score=70.0), NOW)
-    db.retire_matches(request.id, keep={"L-1"}, now=LATER, reason="бюджет")
+    db.retire_matches(request.id, keep={"L-1"}, now=LATER, reasons={}, default="бюджет")
 
     rows = db.matches_with_listings(request.id)
 
@@ -1119,7 +1156,7 @@ def test_a_revived_match_remembers_when_it_came_back(db):
     db.upsert_request(Request(external_id="R-1"), now=NOW)
     request = db.get_request("R-1")
     db.upsert_match(Match(request_id=request.id, listing_id="24254997", score=80.0), NOW)
-    db.retire_matches(request.id, keep=set(), now=LATER, reason="бюджет")
+    db.retire_matches(request.id, keep=set(), now=LATER, reasons={}, default="бюджет")
 
     db.upsert_match(
         Match(request_id=request.id, listing_id="24254997", score=80.0), EVEN_LATER
@@ -1154,7 +1191,7 @@ def test_a_batch_revival_is_marked_too(db):
     db.upsert_matches(
         [Match(request_id=request.id, listing_id="24254997", score=80.0)], NOW
     )
-    db.retire_matches(request.id, keep=set(), now=LATER, reason="бюджет")
+    db.retire_matches(request.id, keep=set(), now=LATER, reasons={}, default="бюджет")
 
     counts = db.upsert_matches(
         [Match(request_id=request.id, listing_id="24254997", score=80.0)], EVEN_LATER
@@ -1198,7 +1235,7 @@ def test_match_events_include_the_retired_ones(db):
     db.upsert_request(Request(external_id="R-1"), now=NOW)
     request = db.get_request("R-1")
     db.upsert_match(Match(request_id=request.id, listing_id="24254997", score=80.0), NOW)
-    db.retire_matches(request.id, keep=set(), now=LATER, reason="бюджет")
+    db.retire_matches(request.id, keep=set(), now=LATER, reasons={}, default="бюджет")
 
     rows = db.match_events_since(NOW, EVEN_LATER)
 
@@ -1288,7 +1325,7 @@ def test_a_retired_match_is_not_counted(db):
     db.upsert_request(Request(external_id="R-1"), now=NOW)
     request = db.get_request("R-1")
     db.upsert_match(Match(request_id=request.id, listing_id="1", score=80.0), NOW)
-    db.retire_matches(request.id, keep=set(), now=LATER, reason="бюджет")
+    db.retire_matches(request.id, keep=set(), now=LATER, reasons={}, default="бюджет")
 
     assert db.count_matches_alive(request.id) == 0
 

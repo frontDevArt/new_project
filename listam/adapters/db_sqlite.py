@@ -719,11 +719,12 @@ class SqliteDatabase(Database):
                 )
         return counts
 
-    def retire_matches(self, request_id: int, keep: set[str],
-                       now: datetime, reason: str) -> int:
+    def retire_matches(self, request_id: int, keep: set[str], now: datetime,
+                       reasons: dict[str, str], default: str) -> int:
         """Закрывает всё, что этот проход не подтвердил. См. порт."""
         closing = [
-            row["id"] for row in self.conn.execute(
+            (row["id"], reasons.get(row["listing_id"], default))
+            for row in self.conn.execute(
                 "SELECT id, listing_id FROM matches "
                 "WHERE request_id = ? AND retired_at IS NULL",
                 (request_id,),
@@ -735,7 +736,7 @@ class SqliteDatabase(Database):
         with self.transaction():
             self.conn.executemany(
                 "UPDATE matches SET retired_at = ?, retired_reason = ? WHERE id = ?",
-                [(stamp, reason, match_id) for match_id in closing],
+                [(stamp, reason, match_id) for match_id, reason in closing],
             )
         return len(closing)
 

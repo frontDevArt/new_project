@@ -129,7 +129,7 @@ def test_closings_are_counted_at_the_bottom_and_not_among_the_options(prepared):
     database.connect()
     request = database.get_request("R-1")
     database.retire_matches(request.id, keep={"1", "2"},
-                            now=NOW + timedelta(hours=2), reason="бюджет")
+                            now=NOW + timedelta(hours=2), reasons={}, default="бюджет")
     database.close()
 
     page = collect_events(prepared, since=NOW + timedelta(hours=1),
