@@ -356,3 +356,33 @@ def test_the_digest_leaves_closures_out_when_told_so(prepared):
     report = run_notify(prepared, kind="digest", dry_run=True)
 
     assert "отпало" not in report.text
+
+
+def test_closures_are_not_counted_as_events(prepared):
+    """«Событий: 67» на приёмке M3 было 13 новых и 54 закрытия. Счётчик
+    отвечает на вопрос «сколько звонков», и закрытия в него не входят —
+    ни в отчёте, ни в журнале."""
+    retire_everything(prepared)
+
+    report = run_notify(prepared, kind="digest")
+
+    assert report.events == 0
+    assert report.retired == 2
+    assert report.requests == 0
+    assert "отпало 2" in report.render()
+    database = build_database(prepared)
+    database.connect()
+    assert database.last_notification("digest").events == 0
+    database.close()
+
+
+def test_the_slice_follows_the_digest_about_closures(prepared, capsys):
+    """`matches --new` — это текст дайджеста в терминале (решение 10): раз
+    дайджест закрытий не показывает, не показывает и срез."""
+    from listam.cli import _matches_new
+
+    retire_everything(prepared)
+    prepared.data["notify"]["digest"]["include_retired"] = False
+
+    assert _matches_new(prepared, None, None, None, None) == 0
+    assert "отпало" not in capsys.readouterr().out

@@ -62,6 +62,7 @@ class NotifyReport:
     kind: str = ""
     scope: str = ""             # человеческое объяснение окна
     events: int = 0
+    retired: int = 0            # закрытий в тексте: они не события и не звонки
     requests: int = 0
     sent: bool = False
     dry_run: bool = False
@@ -73,8 +74,9 @@ class NotifyReport:
         lines = [f"Уведомление ({self.kind}): {self.scope}"]
         if self.text:
             lines.append(self.text)
+        closed = f" (и отпало {self.retired})" if self.retired else ""
         lines.append(
-            f"Событий: {self.events}, заявок: {self.requests}, "
+            f"Событий: {self.events}{closed}, заявок: {self.requests}, "
             + ("отправлено" if self.sent else
                "не отправлено (пробный прогон)" if self.dry_run else "не отправлено")
         )
@@ -148,8 +150,12 @@ def run_notify(config: Config, *, kind: str, dry_run: bool = False) -> NotifyRep
                 page = collect_events(config, since=since, until=until,
                                       min_score=min_score, note=scope,
                                       include_retired=shows_closures(config, kind))
-                report.events = len(page.events)
-                report.requests = len(page.totals)
+                calls = page.calls()
+                report.events = len(calls)
+                report.retired = len(page.events) - len(calls)
+                # Заявка, у которой только закрытия, звонка не требует и
+                # в счёт заявок не входит.
+                report.requests = len({event.match.request_id for event in calls})
                 report.text = _match_text(page, config, kind)
 
             if dry_run:

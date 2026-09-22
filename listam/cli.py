@@ -394,7 +394,7 @@ def _matches_new(config, external_id: str | None, limit: int | None,
     from listam.matches_view import (MatchesError, collect_events, display_limit,
                                      render_events)
     from listam.matching import settings
-    from listam.notifications import window_for
+    from listam.notifications import shows_closures, window_for
 
     if min_score is None:
         min_score = settings(config).digest
@@ -412,7 +412,8 @@ def _matches_new(config, external_id: str | None, limit: int | None,
         database.close()
     try:
         page = collect_events(config, since=since, until=until,
-                              external_id=external_id, min_score=min_score, note=note)
+                              external_id=external_id, min_score=min_score, note=note,
+                              include_retired=shows_closures(config, "digest"))
     except MatchesError as exc:
         print(exc, file=sys.stderr)
         return 1
