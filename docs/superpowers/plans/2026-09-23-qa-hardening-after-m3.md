@@ -3330,7 +3330,7 @@ matches.reject_reason) не трогает ничто, MATCH_COMPARED не ра�
 - Изменить: `listam/runner.py`, `listam/recheck.py:57`,
   `listam/clustering_run.py:96`, `tests/test_runner.py:76`
 
-- [ ] **Шаг 1: убедиться, что ветка мертва**
+- [x] **Шаг 1: убедиться, что ветка мертва**
 
 Запуск: `grep -n "needs_schema" -r listam tests`
 Ожидается: `runner.py` (подпись, docstring, `if needs_schema:`), `recheck.py:57`,
@@ -3340,7 +3340,7 @@ matches.reject_reason) не трогает ничто, MATCH_COMPARED не ра�
 никогда. Это записано фазой 6 M3 («отказ „схема старая“ в каркасе не
 срабатывает никогда»).
 
-- [ ] **Шаг 2: удалить ветку**
+- [x] **Шаг 2: удалить ветку**
 
 ```python
 # listam/runner.py
@@ -3363,7 +3363,7 @@ docstring модуля «проверить, что схема не старше
 В `recheck.py`, `clustering_run.py` и `tests/test_runner.py` —
 `working_session(config, needs_schema=False)` → `working_session(config)`.
 
-- [ ] **Шаг 3: батарея и коммит**
+- [x] **Шаг 3: батарея и коммит**
 
 Запуск: `.venv/Scripts/python.exe -m pytest -q` → 817 passed, 25 skipped.
 
@@ -3384,7 +3384,7 @@ collect_events(config, *, since, until, external_id=None, min_score=None,
                note="", include_retired=True, database: Database | None = None)
 ```
 
-- [ ] **Шаг 1: падающий тест**
+- [x] **Шаг 1: падающий тест**
 
 ```python
 def test_the_notification_reads_through_its_own_session(prepared, monkeypatch):
@@ -3402,12 +3402,12 @@ def test_the_notification_reads_through_its_own_session(prepared, monkeypatch):
     assert opened == []
 ```
 
-- [ ] **Шаг 2: убедиться, что тест падает**
+- [x] **Шаг 2: убедиться, что тест падает**
 
 Запуск: `.venv/Scripts/python.exe -m pytest -q tests/test_notifications.py -k own_session`
 Ожидается: FAIL — `assert [(…)] == []`.
 
-- [ ] **Шаг 3: база приходит аргументом**
+- [x] **Шаг 3: база приходит аргументом**
 
 ```python
 # listam/matches_view.py — collect_events
@@ -3441,7 +3441,7 @@ Docstring дополнить: «`database` — открытая база сес�
                                       database=database)
 ```
 
-- [ ] **Шаг 4: батарея и коммит**
+- [x] **Шаг 4: батарея и коммит**
 
 Запуск: `.venv/Scripts/python.exe -m pytest -q` → 818 passed, 25 skipped.
 
@@ -3462,7 +3462,7 @@ git commit -m "refactor(notify): события читаются соедине�
 render_events(page, per_request, head="Что нового", wide: int | None = None) -> str
 ```
 
-- [ ] **Шаг 1: падающий тест**
+- [x] **Шаг 1: падающий тест**
 
 ```python
 # tests/test_matches_view.py — в конец
@@ -3487,12 +3487,12 @@ def test_the_view_marks_a_wide_request_by_itself():
     assert render_events(page, per_request=10, wide=3).count("слишком широкая") == 0
 ```
 
-- [ ] **Шаг 2: убедиться, что тест падает**
+- [x] **Шаг 2: убедиться, что тест падает**
 
 Запуск: `.venv/Scripts/python.exe -m pytest -q tests/test_matches_view.py -k wide_request_by_itself`
 Ожидается: FAIL — `TypeError: render_events() got an unexpected keyword argument 'wide'`.
 
-- [ ] **Шаг 3: пометка в самой витрине**
+- [x] **Шаг 3: пометка в самой витрине**
 
 ```python
 # listam/matches_view.py — render_events: подпись
@@ -3530,7 +3530,7 @@ def _match_text(page, knobs: NotifyTuning, kind: str) -> str:
 
 Импорт `RETIRED` в `notifications.py` удалить, если больше не нужен.
 
-- [ ] **Шаг 4: батарея и коммит**
+- [x] **Шаг 4: батарея и коммит**
 
 Запуск: `.venv/Scripts/python.exe -m pytest -q` → 819 passed, 25 skipped.
 Обязаны остаться зелёными `test_a_wide_request_is_marked`,
@@ -3548,7 +3548,7 @@ git commit -m "refactor(notify): широкую заявку помечает в
 - Изменить: `listam/adapters/notify_telegram.py` (`split_message`)
 - Тест: `tests/test_notify_telegram.py`
 
-- [ ] **Шаг 1: падающий тест**
+- [x] **Шаг 1: падающий тест**
 
 ```python
 def test_a_section_cut_in_parts_keeps_its_title_on_every_part():
@@ -3566,12 +3566,12 @@ def test_a_section_cut_in_parts_keeps_its_title_on_every_part():
     assert "\n".join(parts).count("• 039") == 1
 ```
 
-- [ ] **Шаг 2: убедиться, что тест падает**
+- [x] **Шаг 2: убедиться, что тест падает**
 
 Запуск: `.venv/Scripts/python.exe -m pytest -q tests/test_notify_telegram.py -k keeps_its_title`
 Ожидается: FAIL — `parts[0] == 'Что нового'`.
 
-- [ ] **Шаг 3: шапка к первой части, заголовок — к продолжениям**
+- [x] **Шаг 3: шапка к первой части, заголовок — к продолжениям**
 
 ```python
 # listam/adapters/notify_telegram.py — split_message целиком
@@ -3614,7 +3614,7 @@ def _split_section(block: str, limit: int) -> list[str]:
 под `limit − len(title) − 1`, то есть с запасом в длину заголовка. Если не
 влезла — уходит отдельно, как раньше; это не ошибка, а длинная шапка.
 
-- [ ] **Шаг 4: тесты адаптера, батарея, коммит**
+- [x] **Шаг 4: тесты адаптера, батарея, коммит**
 
 Запуск: `.venv/Scripts/python.exe -m pytest -q tests/test_notify_telegram.py`,
 затем `.venv/Scripts/python.exe -m pytest -q` → 820 passed, 25 skipped.
@@ -3629,10 +3629,162 @@ git commit -m "fix(telegram): у каждой части длинного раз
 
 ### Конец фазы 7
 
-- [ ] `notify --digest --dry-run` на копии базы приёмки: число частей
+- [x] `notify --digest --dry-run` на копии базы приёмки: число частей
       (`split_message` на тексте отчёта) и первая строка каждой — сравни
       с «41 часть» приёмки M3.
-- [ ] «Результат фазы 7», стартовый промпт фазы 8, чисто, коммит.
+- [x] «Результат фазы 7», стартовый промпт фазы 8, чисто, коммит.
+
+## Результат фазы 7
+
+**Сделано.** Четыре коммита, по задаче на коммит:
+
+- `ae7c2b7` — задача 7.1. Из `working_session` ушли аргумент `needs_schema`,
+  блок отказа «схема старая» и импорт `latest_schema_version`; docstring
+  функции — из плана, в docstring модуля «проверить, что схема не старше
+  кода» убрано, из `SessionRefused` — «или схема старая». `recheck.py`,
+  `clustering_run.py` зовут `working_session(config)`. Тесты каркаса
+  поправлены (см. «Что разошлось»). `grep -rn needs_schema listam tests
+  --include=*.py` — одна строка: docstring нового теста каркаса, который
+  называет удалённую ветку.
+- `3124934` — задача 7.2. `collect_events(…, database=None)`: своя база
+  открывается и закрывается, только если чужой не дали; `run_notify` передаёт
+  `session.database`. Тест до правки: `AssertionError: assert [(Config(env=...),
+  'События')] == []` — как в плане.
+- `5a670c3` — задача 7.3. `render_events(…, wide=None)` ставит пометку сразу
+  под заголовком раздела по `len(alive)`; `_match_text` — из плана (docstring
+  сохранил строку про 10 250 матчей), импорт `RETIRED` из
+  `notifications.py` удалён. Тест до правки: `TypeError: render_events() got
+  an unexpected keyword argument 'wide'` — как в плане.
+  `test_a_wide_request_is_marked`, `test_closures_do_not_make_a_request_wide`,
+  `test_a_wide_mark_does_not_stick_to_a_neighbour` — зелёные.
+- `31c5b1a` — задача 7.4. `CONTINUED`, `split_message`, `_split_section`;
+  `_split_lines` и `_deliver` не тронуты — `send` по-прежнему шлёт каждую часть
+  через `_deliver`, все тесты 429 и обрыва соединения фазы 6 зелёные. Тест до
+  правки упал на `parts[0].startswith("Что нового\n\nЗаявка R-7")` (первая
+  часть — одна шапка) — как в плане.
+- `matches.status`/`reject_reason` не тронуты, `MATCH_COMPARED` не расширен,
+  пороги те же, `listam/crawler.py` не тронут, схема та же (11), миграций нет,
+  в Telegram не ушло ничего. Портов фаза не меняла: `collect_events` и
+  `render_events` — витрина, не порт, — контрактных тестов не прибавилось.
+
+**Батарея.** `.venv/Scripts/python.exe -m pytest -q`:
+после `ae7c2b7` — **821 passed, 25 skipped** (96,80 с) = 822 − 1;
+после `3124934` — **822 passed, 25 skipped** (105,47 с) = 821 + 1;
+после `5a670c3` — **823 passed, 25 skipped** (103,14 с) = 822 + 1;
+после `31c5b1a` — **824 passed, 25 skipped** (95,96 с) = 823 + 1.
+Схема базы — **11**.
+
+**Замер конца фазы.** Папка `p7` в scratchpad: конфиг — копия `config/dev.yaml`
+с `storage.work_dir`/`directory` в scratchpad, `db_filename: qa7.sqlite`,
+`requests.kind: none`, `rate.kind: fixed` (390). Перед каждым прогоном копия
+`data/listam-m3.sqlite` (оригинал не тронут: те же 36 225 024 байт, mtime
+01:05) кладётся и в `work_dir`, и в хранилище. «До» — `git worktree` на
+`767435c` в scratchpad, потом удалён; «после» — `31c5b1a`. Скрипты
+`measure.py`, `measure2.py`, `plan_vs_mine.py` — с `PYTHONPATH=.` и
+`PYTHONIOENCODING=utf-8`, настоящие `run_notify`, `collect_events`,
+`_match_text`, `split_message`.
+
+`notify --digest --dry-run` (`run_notify(config, kind="digest",
+dry_run=True)`) на копии даёт «событий 0» и до, и после: последний дайджест
+копии (строка журнала `id 14`) закрыл окно. Сравнение с «41 частью» поэтому
+сделано на сохранённых текстах журнала и на пересобранном окне:
+
+| Текст | Длина | Частей до | Частей после | Самая длинная | Части совпали |
+| --- | --- | --- | --- | --- | --- |
+| журнал `id 1` (`hot`) | 46 136 | 50 | 50 | 1 006 | да |
+| журнал `id 3` (`digest`) | 91 526 | 50 | 50 | 1 989 | да |
+| журнал `id 7` (`hot`) | 24 736 | 40 | 40 | 986 | да |
+| журнал `id 8` (`digest`, «41 часть» приёмки M3) | 37 608 | 41 | 41 | 1 908 | да |
+| журнал `id 12` (`digest`) | 4 555 | 25 | 25 | 860 | да |
+
+«Совпали» — `cmp` JSON-списков частей до и после. В `id 8` первая часть
+начинается `Что нового со вчера: с прошлой отправки (22.09 20:30 UTC)`, затем
+пустая строка и `Заявка R-2 (Клиент 2) — новый: 4`; остальные 40 из 41
+начинаются с `Заявка` (последняя — `Заявка R-51 (Клиент 51) — новый: 66,
+подешевел: 1`). Продолжений (`(продолжение)`) — 0 во всех пяти: ни один
+раздел боевого текста не длиннее 4 096 символов (`per_request` режет раздел
+до 10 строк), и L-1 на боевых данных не срабатывает ни до, ни после.
+
+Пересборка окна строки 3 (`collect_events` + `_match_text` на `window_from`/
+`window_to` этой строки) в обоих деревьях: длина 91 477, событий 51 872,
+пометок «слишком широкая» 46, частей 50; тексты до и после совпали (`cmp`).
+Длина не равна сохранённой 91 526: после той отправки на копии прошли
+подборы, и выборка окна уже другая, — сравнивается «до» с «после», а не
+с журналом.
+
+**Что разошлось с планом.**
+
+- **7.1: два теста каркаса держали мёртвую ветку.** План не назвал их.
+  `test_a_schema_older_than_the_code_is_a_refusal_naming_both_versions`
+  подменял `runner.latest_schema_version` и проверял сам отказ — вызвать его
+  без подмены нельзя, тест удалён. `test_a_migrating_command_works_on_an_old_schema`
+  подменял то же имя; переписан в
+  `test_a_base_behind_the_code_is_caught_up_by_the_session` без подмены:
+  настоящая база на миграциях по `latest − 1` (`upto` из
+  `tests/test_migrations.py`) → сессия отдаёт схему `latest`. Отсюда −1 и
+  821 вместо 822.
+- **Сдвиг от исходных чисел плана — +4, а не +5:** 821 → 822 → 823 → **824**
+  вместо 822 → 823 → 824 → 825.
+- **7.4: место под шапку.** Код плана резал первый раздел под
+  `limit − len(title) − 1` и надеялся, что шапка влезет в этот запас. Боевая
+  шапка дайджеста — 57 символов, заголовок продолжения короче, и на плотных
+  строках шапка снова уходила отдельным сообщением — L-1 наполовину.
+  `plan_vs_mine.py`: шапка `id 8`, раздел в 60 строк шириной от 60 до 399 —
+  из 340 ширин у кода плана шапка ушла одна в **21**, у сделанного — в **0**;
+  ни одна часть не длиннее 4 096 ни там, ни там. Теперь первый раздел режется
+  под `limit − len(head) − 2`, если шапка к нему пристёгивается; шапка
+  длиннее четверти лимита уходит отдельно, как раньше. Следствие: раздел,
+  который влезал целиком только без шапки, режется на две части с
+  заголовком, а не шлёт шапку отдельным сообщением, — число сообщений то же.
+- **`test_a_section_longer_than_the_limit_is_cut_between_lines`** сверял
+  `"\n".join(parts) == text` — упал, как план и предупреждал. Ожидание теперь:
+  каждая часть со второй начинается с `Заявка R-1 — новый: 300 (продолжение)`,
+  и без этих строк части склеиваются в исходный текст.
+- **Живой Telegram — нет,** как и должно. Замер «41 часть» — на сохранённом
+  тексте, а не на `notify --digest --dry-run`: окно на копии пустое.
+
+## Стартовый промпт для фазы 8
+
+```
+Ты продолжаешь работу над инструментом мониторинга list.am
+в C:\Users\Admin\Downloads\list.
+
+Прочитай docs/superpowers/plans/2026-09-23-qa-hardening-after-m3.md:
+разделы «Что нашёл аудит», «Global Constraints», «Карта файлов»,
+«Результат фазы 7» и свою «Фазу 8». Чужие фазы не трогай. Рядом
+лежат спеки M2 и M3 — их решения в силе:
+docs/superpowers/specs/2026-09-22-m3-notifications-design.md (решения 1–12),
+docs/superpowers/specs/2026-09-22-m2-requests-and-matching-design.md
+(решения 1–11). Фаза 8 ни одно из них не уточняет.
+
+Исходное состояние: HEAD — коммит «docs: результат фазы 7 QA после M3»
+(следующий за 31c5b1a), дерево чистое, батарея 824 passed, 25 skipped,
+схема базы 11. База для замеров — копия data/listam-m3.sqlite в scratchpad,
+не оригинал; клади её и в work_dir, и в storage.directory.
+
+Твоя задача — фаза 8: боевая приёмка и разбор. Ни одной новой возможности:
+каждая находка аудита (B-1…B-3, H-1…H-5, M-1…M-6, L-1) проверяется командой
+на копии базы приёмки, README догоняет план, и пишется стартовый промпт M4.
+Одна живая отправка в Telegram — задача 8.3, одним явным шагом; каждое живое
+сообщение приходит брокеру в личку, посчитай их.
+L-1 на боевом тексте не срабатывает (фаза 7: ни один раздел не длиннее
+4 096, продолжений 0) — если живьём не показать, пиши «закрыто тестом,
+живьём не проверено», а не подгоняй данные.
+
+Тесты гоняй только .venv/Scripts/python.exe -m pytest -q, любой прогон CLI
+из скрипта — только с PYTHONIOENCODING=utf-8. Пороги в конфиге не поднимай.
+Новый метод порта — это новый контрактный тест в tests/contracts/.
+Схему не меняй: миграция 011 была последней. listam/crawler.py не правится.
+След звонка (matches.status, matches.reject_reason) не трогает ничто,
+MATCH_COMPARED не расширяется.
+Батарея в плане фазы 8 — «~820»; фактическая исходная — 824, и фаза её
+не меняет.
+Ни одного числа в отчёте без команды, которая его напечатала.
+
+В конце сессии допиши в план раздел «Результат фазы 8»: таблица «находка →
+как проверена → что увидели», числа батареи, что разошлось с планом и почему,
+«Что осталось открытым» и стартовый промпт плана M4. Сделай коммит.
+```
 
 ---
 
