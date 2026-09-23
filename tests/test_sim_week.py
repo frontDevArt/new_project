@@ -21,3 +21,16 @@ def test_one_day_is_twenty_four_hourly_one_nightly_one_evening(tmp_path):
              if name != "hourly"}
     assert local == {"nightly": "04:30", "evening": "20:30"}
     assert all(START <= at < START + timedelta(days=1) for at, _ in times)
+
+
+def test_a_folder_with_a_previous_run_is_refused(tmp_path):
+    """База прошлого прогона в `--out` смешала бы две недели в одном отчёте."""
+    import pytest
+
+    from tests.sim.sandbox import SimRefused
+    from tests.sim.week import simulate
+
+    (tmp_path / "work").mkdir()
+    (tmp_path / "work" / "listam-sim.sqlite").write_bytes(b"")
+    with pytest.raises(SimRefused, match="прошлого прогона"):
+        simulate(tmp_path, days=1, synthetic=20, say=lambda _: None)

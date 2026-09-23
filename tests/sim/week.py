@@ -21,7 +21,7 @@ from zoneinfo import ZoneInfo
 from listam.config import Config, score_threshold
 from tests.sim.clock import SimClock, sim_clock
 from tests.sim.market import Market, MarketParams
-from tests.sim.sandbox import build_config, patched_fetcher, refuse
+from tests.sim.sandbox import SimRefused, build_config, patched_fetcher, refuse
 from tests.sim.site import SimFetcher
 
 START = datetime(2026, 9, 24, 0, 0, tzinfo=ZoneInfo("Asia/Yerevan"))  # календарь: не сравнивается с часами
@@ -136,6 +136,10 @@ def simulate(out: str | Path, *, days: int = 7, seed: int = 1,
     from listam.schedule import run_cycle
 
     out = Path(out).resolve()
+    for leftover in (out / "work", out / "store"):
+        if leftover.is_dir() and any(leftover.iterdir()):
+            raise SimRefused(f"в {out} база прошлого прогона ({leftover.name}/) — "
+                             "две недели смешались бы в одном отчёте; нужна пустая папка")
     config = build_config(out)
     refuse(config)
     boot = start.astimezone(timezone.utc) - timedelta(hours=1)
