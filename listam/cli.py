@@ -10,6 +10,7 @@
     python -m listam matches         показать подобранное по заявкам
     python -m listam changes         что принёс последний прогон
     python -m listam notify          послать уведомление брокеру
+    python -m listam find            быстрый поиск по базе без заявки
 
 Окружение выбирается переменной APP_ENV или флагом --env.
 """
@@ -85,6 +86,27 @@ def build_parser() -> argparse.ArgumentParser:
                        help="показать, чьи страницы открылись бы; сайт не трогается")
     pages.add_argument("--keep-html", action="store_true",
                        help="сохранить сырой HTML открытых страниц в scrape.pages_dir")
+
+    find = commands.add_parser(
+        "find", help="быстрый поиск по базе: заявка из флагов, которую не записывают")
+    find.add_argument("--district", action="append", default=[], dest="districts",
+                      help="район; флаг повторяется: --district Арабкир --district Кентрон")
+    find.add_argument("--rooms", help="комнаты: 3, 2-3 или 2,4")
+    find.add_argument("--max-price", help="бюджет в долларах: 120000 или «120 000»")
+    find.add_argument("--area", help="площадь, м²: 60-90, 60- или -90")
+    # Написание спеки и написание плана — оба: брокер наберёт любое.
+    find.add_argument("--not-first-floor", "--floor-not-first", action="store_true",
+                      dest="not_first", help="не первый этаж")
+    find.add_argument("--not-last-floor", "--floor-not-last", action="store_true",
+                      dest="not_last", help="не последний этаж")
+    find.add_argument("--wish", help="пожелания из funnel.wishes через запятую: "
+                                     "«евроремонт, лифт»")
+    find.add_argument("--owner", action="store_true", help="только собственники")
+    find.add_argument("--limit", type=int,
+                      help="сколько строк показать (по умолчанию — match.limit)")
+    find.add_argument("--open", type=int, dest="open_pages",
+                      help="открыть страницы N лучших найденных "
+                           "(не выше funnel.find_max_opens)")
 
     matches = commands.add_parser(
         "matches", help="ранжированный список подобранных вариантов")
@@ -249,6 +271,9 @@ def _dispatch(args, config) -> int:
             return 2
         return _match(config, external_id=args.request, only_new=args.new)
 
+    if args.command == "find":
+        return _find(config, args)
+
     if args.command == "matches":
         # Бессмысленный ввод отклоняется на входе: ноль строк — это пустая
         # витрина вместо списка, а балл вне шкалы 0…100 — либо все матчи,
@@ -407,6 +432,22 @@ def _match(config, external_id: str | None, only_new: bool) -> int:
     from listam.matching import run_match
 
     report = run_match(config, external_id=external_id, only_new=only_new)
+    print(report.render())
+    return 1 if report.errors else 0
+
+
+def _find(config, args) -> int:
+    from listam.find import FindError, Query, run_find
+
+    query = Query(districts=args.districts, rooms=args.rooms, max_price=args.max_price,
+                  area=args.area, not_first=args.not_first, not_last=args.not_last,
+                  wish=args.wish, owner=args.owner, limit=args.limit,
+                  open=args.open_pages)
+    try:
+        report = run_find(config, query)
+    except FindError as exc:
+        print(exc, file=sys.stderr)
+        return 2
     print(report.render())
     return 1 if report.errors else 0
 

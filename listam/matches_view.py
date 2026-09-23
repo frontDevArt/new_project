@@ -198,6 +198,23 @@ def _note(match: Match, listing: Listing) -> str:
     return " · ".join(parts)
 
 
+def match_lines(match: Match, listing: Listing) -> list[str]:
+    """Строка витрины и её пояснение. Той же строкой печатает `find`:
+    две таблицы одного и того же разошлись бы через месяц."""
+    # Снятое видно с первого взгляда, а не из второй строки: минус
+    # в начале строки — та же пометка, что в разделе «Снято» у `changes`.
+    mark = MINUS if listing.status == "gone" else "•"
+    lines = [
+        f"  {mark} {_score(match.score):>10}  {money(listing.price_usd):>10}  "
+        f"{per_sqm(listing):>12}  {_place(listing):<26}  {_what(listing):<40}  "
+        f"{listing.url}"
+    ]
+    note = _note(match, listing)
+    if note:
+        lines.append(f"      {note}")
+    return lines
+
+
 def render_matches(page: MatchesPage, limit: int,
                    min_score: float | None = None) -> str:
     """Витрина: по разделу на заявку, по строке на кластер.
@@ -233,17 +250,7 @@ def render_matches(page: MatchesPage, limit: int,
             lines.append("")
         lines.append(head)
         for _, match, listing in group[:limit]:
-            # Снятое видно с первого взгляда, а не из второй строки: минус
-            # в начале строки — та же пометка, что в разделе «Снято» у `changes`.
-            mark = MINUS if listing.status == "gone" else "•"
-            lines.append(
-                f"  {mark} {_score(match.score):>10}  {money(listing.price_usd):>10}  "
-                f"{per_sqm(listing):>12}  {_place(listing):<26}  {_what(listing):<40}  "
-                f"{listing.url}"
-            )
-            note = _note(match, listing)
-            if note:
-                lines.append(f"      {note}")
+            lines.extend(match_lines(match, listing))
         left = total - len(group[:limit])
         if left > 0:
             lines.append(f"  …и ещё {left}")

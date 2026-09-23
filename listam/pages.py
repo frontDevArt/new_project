@@ -147,7 +147,7 @@ class PagesReport:
         return "\n".join(lines)
 
 
-def _is_fresh(page: ListingPage, listing: Listing) -> bool:
+def is_fresh(page: ListingPage, listing: Listing) -> bool:
     """Решение 13: открывать снова, только когда объявление изменилось."""
     if page.price_raw != listing.price_raw:
         return False
@@ -212,7 +212,7 @@ def plan_pages(database: Database, config: Config, funnel: Funnel,
                 plan.closed += 1
             else:
                 plan.queue.append(candidate)
-        elif _is_fresh(page, candidate.listing):
+        elif is_fresh(page, candidate.listing):
             plan.from_cache += 1
         else:
             plan.queue.append(candidate)
@@ -224,7 +224,7 @@ def plan_pages(database: Database, config: Config, funnel: Funnel,
     return plan
 
 
-def _open(fetcher, candidate: Candidate, previous: ListingPage | None,
+def open_page(fetcher, candidate: Candidate, previous: ListingPage | None,
           keep_html: Path | None, report: PagesReport) -> ListingPage:
     """Одна страница: открыть, разобрать, сказать, что вышло."""
     listing = candidate.listing
@@ -304,8 +304,9 @@ def run_pages(config: Config, *, max_opens: int | None = None, dry_run: bool = F
             fetcher = build_fetcher(config, delay_seconds=funnel.delay_seconds)
             try:
                 for candidate in chosen:
-                    page = _open(fetcher, candidate, plan.pages.get(candidate.listing.id),
-                                 keep, report)
+                    page = open_page(fetcher, candidate,
+                                     plan.pages.get(candidate.listing.id),
+                                     keep, report)
                     database.save_page(page)
                     report.opened += 1
             finally:
