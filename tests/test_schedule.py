@@ -237,6 +237,20 @@ def test_the_cycle_writes_its_log(tmp_path):
     assert "код 3" in text
 
 
+def test_a_cycle_without_a_console_still_logs(tmp_path, monkeypatch):
+    """Под планировщиком консоли может не быть вовсе (`sys.stdout is None`):
+    лог — единственный свидетель, и он пишется."""
+    config = make_config(tmp_path)
+    monkeypatch.setattr(sys, "stdout", None)
+    monkeypatch.setattr(sys, "stderr", None)
+
+    code = run_cycle(config, "hourly", dispatch=dispatcher({}, []), notifier=Recorder(),
+                     now=NOW)
+
+    assert code == 0
+    assert "вывод шага notify --hot" in log_text(config)
+
+
 def test_the_log_day_is_local(tmp_path):
     """22:30 UTC — уже 02:30 следующего дня в Ереване."""
     config = make_config(tmp_path)

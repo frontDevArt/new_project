@@ -156,7 +156,8 @@ class _Tee(io.TextIOBase):
     """Вывод шага — и в консоль, и в лог: человеку у экрана и планировщику."""
 
     def __init__(self, *streams):
-        self.streams = streams
+        # Под планировщиком консоли может не быть (`sys.stdout is None`).
+        self.streams = [stream for stream in streams if stream is not None]
 
     def write(self, text: str) -> int:
         for stream in self.streams:
