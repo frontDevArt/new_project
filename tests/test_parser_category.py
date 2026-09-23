@@ -183,3 +183,18 @@ def test_a_page_without_the_feed_container_is_refused():
 def test_the_feed_container_is_enough_to_parse(html):
     """Контейнер на месте — разбор идёт как обычно."""
     assert len(parse_listing_cards(html)) == 6
+
+
+def test_the_agency_badge_is_found_by_its_word_not_by_its_class(html, cards):
+    """23.09.2026 сайт переименовал обфусцированный класс значка `ge3` → `ge4`,
+    и первый боевой обход записал всех 20 672 продавцов собственниками:
+    проверка доли агентств (coverage) остановила заливку. Класс — случайная
+    строка сборщика вёрстки, а слово «Агентство» — то, что видит человек."""
+    renamed = html.replace('class="ge3"', 'class="ge4"')
+    assert renamed != html
+
+    again = {c.id: c for c in parse_listing_cards(renamed)}
+
+    assert {i: c.seller_type for i, c in again.items()} == \
+        {i: c.seller_type for i, c in cards.items()}
+    assert "agency" in {c.seller_type for c in again.values()}

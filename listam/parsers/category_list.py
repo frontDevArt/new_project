@@ -115,9 +115,15 @@ def _attributes(card: Tag) -> tuple[int | None, float | None, int | None, int | 
 
 
 def _seller_type(card: Tag) -> str | None:
-    """Агентские объявления сайт помечает значком, частные — ничем."""
-    for node in card.select("span.ge3"):
-        if AGENCY_BADGE in (_text(node) or "").lower():
+    """Агентские объявления сайт помечает значком, частные — ничем.
+
+    Значок ищется по слову, а не по классу: класс — случайная строка сборщика
+    вёрстки (23.09.2026 `ge3` стал `ge4`, и весь обход записался в
+    собственники). Слово значка целиком — чтобы «агентство» в заголовке или
+    адресе значком не считалось.
+    """
+    for node in card.find_all("span"):
+        if (_text(node) or "").strip().lower() == AGENCY_BADGE:
             return "agency"
     return "owner"
 
