@@ -927,3 +927,80 @@ def test_a_crooked_vocabulary_stops_the_match_before_the_base(tmp_path):
 
     with pytest.raises(ConfigError):
         run_match(config)
+
+
+def test_the_secondary_district_share_comes_from_the_config(tmp_path):
+    config = cfg(tmp_path, match={"secondary_district": 0.25})
+    assert settings(config).secondary_district == 0.25
+
+
+def test_the_secondary_district_share_defaults_to_the_measured_zero(tmp_path):
+    """Фаза 4 M3.5: замер «до» → «после», см. план. Ключа нет — тот же ноль."""
+    assert settings(cfg(tmp_path)).secondary_district == 0.0
+
+
+@pytest.mark.parametrize("value", [1.5, -0.1, None, "половина", True])
+def test_a_senseless_secondary_district_share_is_refused(tmp_path, value):
+    config = cfg(tmp_path, match={"secondary_district": value})
+    with pytest.raises(ConfigError) as exc:
+        settings(config)
+    assert "match.secondary_district" in str(exc.value)
+
+
+# --- рычаги фазы 4 M3.5 на боевом и рабочем конфиге ------------------------
+#
+# Балл был сжат вверху: бюджет, район и площадь уже отсеяны грубым ситом и
+# почти всем дают полную долю. Горячим выходило ~80 % подходящего (замер
+# «до» в плане). Эти тесты держат разброс, ради которого числа менялись.
+
+def _tuned(env: str, tmp_path: Path):
+    from listam.config import load_config
+    return settings(load_config(env, Path(__file__).parent.parent / "config",
+                                dotenv_path=tmp_path / ".env"))
+
+
+def _typical(tuning, per_sqm: float):
+    """Широкая заявка, приоритетный район, агентство, в бюджете, без этажей."""
+    from listam.domain.models import Request
+    from listam.domain.scoring import score
+    request = Request(external_id="R-3", budget_max=250_000.0,
+                      districts=["Кентрон", "Арабкир"], districts_priority=["Кентрон"],
+                      rooms=[2, 3, 4], area_min=60.0)
+    listing = make_listing(district="Кентрон", price_usd=150_000.0, area=100.0,
+                           rooms=3, price_per_sqm=per_sqm, seller_type="agency",
+                           floor=None)
+    return score(request, listing, median_by_district={"Кентрон": 1_500.0},
+                 weights=tuning.weights, stretch_percent=tuning.stretch_percent,
+                 secondary_district=tuning.secondary_district).value
+
+
+@pytest.mark.parametrize("env", ["prod", "dev"])
+def test_the_price_per_sqm_spreads_the_score(env, tmp_path):
+    """Рычаг «веса»: выгодность против медианы района разводит баллы хотя бы
+    на 20. На весах до фазы 4 (бюджет 30, цена/м² 20) — на 11: 94 против 83."""
+    tuning = _tuned(env, tmp_path)
+    bargain, ordinary = _typical(tuning, 1_125.0), _typical(tuning, 1_500.0)
+    assert bargain - ordinary >= 20
+
+
+@pytest.mark.parametrize("env", ["prod", "dev"])
+def test_an_ordinary_flat_is_not_hot_and_a_bargain_is(env, tmp_path):
+    """Рычаг «порог hot»: квартира по медиане района в приоритетном районе —
+    не повод звонить сейчас (её место в дайджесте), на 25 % дешевле — повод."""
+    tuning = _tuned(env, tmp_path)
+    assert _typical(tuning, 1_500.0) < tuning.hot
+    assert _typical(tuning, 1_125.0) >= tuning.hot
+    assert _typical(tuning, 1_500.0) >= tuning.digest
+
+
+@pytest.mark.parametrize("env", ["prod", "dev"])
+def test_the_yellow_circle_still_exists_above_the_hot_threshold(env, tmp_path):
+    """🟡 — от порога hot до 🟢. Поднятый до 80 hot при 🟢 от 80 съел бы 🟡
+    целиком: у горячего не осталось бы «сильный» и «просто горячий»."""
+    from listam.config import load_config
+    from listam.layout import circles
+    config = load_config(env, Path(__file__).parent.parent / "config",
+                         dotenv_path=tmp_path / ".env")
+    green, yellow = circles(config)
+    assert yellow == settings(config).hot
+    assert green > yellow

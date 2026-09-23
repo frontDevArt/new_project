@@ -20,12 +20,14 @@ from dataclasses import dataclass, field
 from datetime import datetime
 
 from listam.config import Config, score_threshold
-from listam.domain.events import CHEAPER, NEW, RETIRED, REVIVED, MatchEvent, limited
+from listam.domain.events import (CHEAPER, NEW, RETIRED, REVIVED, MatchEvent, is_initial,
+                                  limited)
 from listam.domain.models import Listing, Request
+from listam.domain.scoring import DEFAULT_HOT
 
 MINUS = "−"          # настоящий минус U+2212: дефис в числе теряется
 RULE = "━" * 15       # черта под шапкой заявки
-DEFAULT_SCORE_GREEN = 80.0
+DEFAULT_SCORE_GREEN = 90.0     # фаза 4 M3.5: было 80 — выше поднятого hot
 DEFAULT_GEM_PERCENT = 15.0
 
 ICONS = {NEW: "🆕", CHEAPER: "📉", REVIVED: "♻️", RETIRED: "❌"}
@@ -162,7 +164,7 @@ def _joined(parts: list[str | None]) -> str:
 def circles(config: Config) -> tuple[float | None, float | None]:
     """Мерки кружка балла: 🟢 от `notify.layout.score_green`, 🟡 от порога hot."""
     green = score_threshold(config, "notify.layout.score_green", DEFAULT_SCORE_GREEN)
-    yellow = score_threshold(config, "match.thresholds.hot", 70)
+    yellow = score_threshold(config, "match.thresholds.hot", DEFAULT_HOT)
     return green, yellow
 
 
@@ -326,34 +328,44 @@ def _counts(events: list[MatchEvent]) -> dict[str, int]:
 
 def digest_message(page, medians: dict[str, float], config: Config,
                    per_request: int | None, wide: int | None, active: int,
-                   at: datetime) -> Message:
+                   at: datetime, initial_top: int | None = None) -> Message:
     """Дайджест: сначала сводка, затем сообщение на каждую заявку со звонками.
 
     Заявка только с закрытиями сообщения не получает — строка в сводке
     (решение 8 спеки M3.5). `active` — сколько заявок в работе, `at` —
     момент отправки; время в сводке — в `locale.timezone`.
+
+    Первичная подборка новой заявки (решение 14) — отдельный раздел
+    «первичная подборка: N лучших из M» после рыночного. Широту она не мерит:
+    сотни матчей у только что пришедшей заявки — её природа, а не ошибка.
     """
     from listam.schedule import local_zone    # schedule шлёт тревогу через layout
 
     local = at.astimezone(local_zone(config))
     grouped = _by_request(page)
-    total = _counts(page.events)
+    total = _counts([event for event in page.events if not is_initial(event)])
+    initial_total = sum(1 for event in page.events if is_initial(event))
     with_calls = sum(1 for _, events in grouped
                      if any(event.kind != RETIRED for event in events))
 
     summary_tail: list[Line] = [
         [Span(f"🆕 новых — {total[NEW]}   📉 подешевело — {total[CHEAPER]}   "
-              f"♻️ вернулось — {total[REVIVED]}")],
+              f"♻️ вернулось — {total[REVIVED]}"
+              + (f"   📋 первичная подборка — {initial_total}" if initial_total else ""))],
         [Span(f"👥 заявок с находками — {with_calls} из {active}")],
     ]
     rows: list[Line] = []
     sections: list[Section] = []
     for request, events in grouped:
-        alive = [event for event in events if event.kind != RETIRED]
+        initial = [event for event in events if is_initial(event)]
+        alive = [event for event in events
+                 if event.kind != RETIRED and not is_initial(event)]
         gone = [event for event in events if event.kind == RETIRED]
         counts = _counts(alive)
         marks = [f"{ICONS[kind]} {counts[kind]}" for kind in (NEW, CHEAPER, REVIVED)
                  if counts[kind]]
+        if initial:
+            marks.append(f"📋 первичная подборка {len(initial)}")
         too_wide = wide is not None and len(alive) > wide
         if too_wide:
             marks.append("⚠️ слишком широкая")
@@ -367,26 +379,40 @@ def digest_message(page, medians: dict[str, float], config: Config,
                                      for reason, count in reasons.items()) + ")")
         rows.append([Span(f"{request_title('', request)} — "
                           + "  ".join(marks))])
-        if not alive:
-            continue
-        shown, count = limited(alive, per_request)
-        head = request_head(DIGEST, request)
-        if too_wide:
-            # Широту мерят события, а закрытие событием не является (решение 1
-            # спеки M3): сотни «отпало» — ответ на сужение заявки.
-            events_word = _plural(len(alive), "событие", "события", "событий")
-            head.insert(-1, [Span(f"⚠️ слишком широкая: {len(alive)} {events_word} за окно — "
-                                  f"сузь районы или бюджет")])
-        tail = ([[Span(f"➕ ещё {_variants(count - len(shown))} ниже по баллу")]]
-                if count > len(shown) else [])
-        sections.append(Section(head=head, cards=_cards(shown, medians, config),
-                                tail=tail))
+        sections.extend(_market_section(request, alive, medians, config,
+                                        per_request, too_wide))
+        if initial:
+            best, count = limited(initial, initial_top)
+            head = request_head(DIGEST, request)
+            head[0][0].text += (f" — первичная подборка: {len(best)} "
+                                f"{_plural(len(best), 'лучший', 'лучших', 'лучших')} "
+                                f"из {count}")
+            sections.append(Section(head=head, cards=_cards(best, medians, config)))
     if rows:
         summary_tail.append([])
         summary_tail.extend(rows)
     summary = Section(head=[[Span(f"{DIGEST} · {local:%d.%m · %H:%M}", bold=True)]],
                       cards=[], tail=summary_tail)
     return Message([summary] + sections)
+
+
+def _market_section(request: Request, alive: list[MatchEvent],
+                    medians: dict[str, float], config: Config,
+                    per_request: int | None, too_wide: bool) -> list[Section]:
+    """Раздел рыночных событий заявки; нет событий — нет раздела."""
+    if not alive:
+        return []
+    shown, count = limited(alive, per_request)
+    head = request_head(DIGEST, request)
+    if too_wide:
+        # Широту мерят события, а закрытие событием не является (решение 1
+        # спеки M3): сотни «отпало» — ответ на сужение заявки.
+        events_word = _plural(len(alive), "событие", "события", "событий")
+        head.insert(-1, [Span(f"⚠️ слишком широкая: {len(alive)} {events_word} за окно — "
+                              f"сузь районы или бюджет")])
+    tail = ([[Span(f"➕ ещё {_variants(count - len(shown))} ниже по баллу")]]
+            if count > len(shown) else [])
+    return [Section(head=head, cards=_cards(shown, medians, config), tail=tail)]
 
 
 # ---------------------------------------------------------------- лента

@@ -371,3 +371,35 @@ def test_a_senseless_funnel_setting_is_refused(tmp_path, key, value):
     with pytest.raises(ConfigError) as error:
         run_pages(config)
     assert f"funnel.{key}" in str(error.value)
+
+
+def test_a_candidate_is_one_that_could_become_hot(tmp_path):
+    """Фаза 4 M3.5: порог грубого сита — hot, а не digest. На боевой копии
+    очередь кандидатов была 3 275 при потолке 30 за прогон — сто с лишним
+    часов на то, что горячим не станет и при всех выполненных пожеланиях.
+
+    «weak»: непервоочередной район, агентство, цена по медиане — грубый балл
+    55 (выше digest 40), а лучший возможный — тот же 55: горячим ему не быть.
+    """
+    config = cfg(tmp_path)
+    fill(config,
+         listings=[suitable("good"),
+                   suitable("weak", district="Арабкир", seller_type="agency")],
+         requests=[make_request("R-1", must_have="ремонт")])
+
+    report = run_pages(config, dry_run=True)
+
+    assert report.candidates == 1
+    assert report.would_open == ["good"]
+
+
+def test_a_wish_can_lift_a_candidate_over_the_hot_threshold(tmp_path):
+    """Лучший возможный балл считает пожелания выполненными: страница, которая
+    может сделать вариант горячим, открывается."""
+    config = cfg(tmp_path)
+    config.data["match"]["thresholds"]["hot"] = 60
+    fill(config,
+         listings=[suitable("weak", district="Арабкир", seller_type="agency")],
+         requests=[make_request("R-1", nice_to_have="лифт")])
+
+    assert run_pages(config, dry_run=True).would_open == ["weak"]

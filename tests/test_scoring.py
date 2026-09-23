@@ -268,3 +268,25 @@ def test_met_wishes_raise_the_score_and_missed_ones_lower_it():
 def test_score_refuses_on_must_have_like_rejection():
     result = score(a_request(), make_listing(), page=None, must=[RENOVATION])
     assert result.rejected_by == "страница не открыта"
+
+
+# --- рычаги фазы 4 M3.5 ---------------------------------------------------
+
+def test_a_secondary_district_scores_what_it_is_told():
+    """Непервоочередной район — доля фактора `district` из конфига. Фаза 4:
+    0,5 давала широкой заявке 1 974 горячих из 2 849 только за «район назван»."""
+    request = a_request(districts=["Центр", "Арабкир"], districts_priority=["Центр"])
+    listing = make_listing(district="Арабкир")
+
+    assert score(request, listing, secondary_district=0.0).breakdown["district"] == (0.0, 20.0)
+    assert score(request, listing, secondary_district=0.5).breakdown["district"] == (10.0, 20.0)
+
+
+def test_without_a_priority_every_named_district_is_full():
+    """Приоритета нет — районы клиенту равны, и «непервоочередного» среди них нет.
+    Иначе доля 0 обнулила бы район у всей заявки и утопила её балл целиком."""
+    request = a_request(districts=["Центр", "Арабкир"], districts_priority=[])
+
+    result = score(request, make_listing(district="Арабкир"), secondary_district=0.0)
+
+    assert result.breakdown["district"] == (20.0, 20.0)

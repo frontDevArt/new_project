@@ -29,13 +29,14 @@ from listam.config import Config, ConfigError, score_threshold, threshold
 from listam.domain.clustering import clusters
 from listam.domain.events import NOT_REPRESENTATIVE
 from listam.domain.models import ListingPage, Match, PageFields, Request
-from listam.domain.scoring import DEFAULT_STRETCH_PERCENT, DEFAULT_WEIGHTS, NOT_OPENED, score
+from listam.domain.scoring import (DEFAULT_HOT, DEFAULT_SECONDARY_DISTRICT,
+                                   DEFAULT_STRETCH_PERCENT, DEFAULT_WEIGHTS, NOT_OPENED,
+                                   score)
 from listam.domain.wishes import request_wishes
 from listam.domain.stats import median_price_per_sqm_by_district
 from listam.ports.database import Database
 from listam.runner import SessionRefused, publish, working_session
 
-DEFAULT_HOT = 70.0
 DEFAULT_DIGEST = 40.0
 
 
@@ -81,6 +82,17 @@ class Settings:
     stretch_percent: float
     hot: float | None
     digest: float | None
+    secondary_district: float = DEFAULT_SECONDARY_DISTRICT
+
+
+def _share(config: Config, key: str, default: float) -> float:
+    """Доля 0…1. `null` здесь не «выключено»: доле нечего выключать."""
+    value = threshold(config, key, default)
+    if isinstance(value, bool) or not isinstance(value, (int, float))             or not 0 <= value <= 1:
+        raise ConfigError(
+            f"{key} = {value!r} не годится: это доля от 0 до 1, числом без кавычек."
+        )
+    return float(value)
 
 
 def settings(config: Config) -> Settings:
@@ -111,6 +123,7 @@ def settings(config: Config) -> Settings:
     stretch = threshold(config, "match.budget_stretch_percent", DEFAULT_STRETCH_PERCENT)
     hot = score_threshold(config, "match.thresholds.hot", DEFAULT_HOT)
     digest = score_threshold(config, "match.thresholds.digest", DEFAULT_DIGEST)
+    secondary = _share(config, "match.secondary_district", DEFAULT_SECONDARY_DISTRICT)
     return Settings(
         weights=dict(weights) if weights else dict(DEFAULT_WEIGHTS),
         # Растяжка выключена — значит не растягиваем вовсе, а не «берём
@@ -118,6 +131,7 @@ def settings(config: Config) -> Settings:
         stretch_percent=0.0 if stretch is None else float(stretch),
         hot=hot,
         digest=digest,
+        secondary_district=secondary,
     )
 
 
@@ -388,7 +402,8 @@ def _write_matches(database: Database, report: MatchReport, requests, candidates
             result = score(request, listing, median_by_district=medians,
                            weights=tuning.weights,
                            stretch_percent=tuning.stretch_percent,
-                           page=page, must=must, nice=nice)
+                           page=page, must=must, nice=nice,
+                           secondary_district=tuning.secondary_district)
             if result.rejected_by == NOT_OPENED:
                 unseen.add(listing.id)
                 continue

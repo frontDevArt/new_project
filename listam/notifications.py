@@ -27,6 +27,7 @@ from listam.wiring import build_notifier, notify_channel
 KINDS = ("hot", "digest", "feed")
 
 DEFAULT_FALLBACK_HOURS = {"hot": 2.0, "digest": 24.0, "feed": 24.0}
+DEFAULT_INITIAL_TOP = 15      # сколько лучших из первичной подборки показывает дайджест
 
 
 def window_for(config: Config, kind: str, hours: float | None = None,
@@ -102,6 +103,7 @@ class NotifyTuning:
     fallback_hours: float        # окно, когда отправок этого вида ещё не было
     wide_request: int | None = None
     include_retired: bool = False
+    initial_top: int | None = None   # дайджест: лучших из первичной подборки
 
 
 def tuning_for(config: Config, kind: str) -> NotifyTuning:
@@ -127,6 +129,8 @@ def tuning_for(config: Config, kind: str) -> NotifyTuning:
         wide = positive(config, f"{base}.wide_request", 50)
         tuning.wide_request = None if wide is None else int(wide)
         tuning.include_retired = switch(config, f"{base}.include_retired", True)
+        top = positive(config, f"{base}.initial_top", DEFAULT_INITIAL_TOP)
+        tuning.initial_top = None if top is None else int(top)
     # Пороги вёрстки — тоже на входе: 🟢 от балла 170 не загорится никогда.
     if kind == "feed":
         gem_percent(config)
@@ -201,6 +205,10 @@ def run_notify(config: Config, *, kind: str, dry_run: bool = False) -> NotifyRep
                                       min_score=min_score, note=scope,
                                       include_retired=knobs.include_retired,
                                       database=database)
+                if kind == "hot":
+                    # Решение 14: первичная подборка новой заявки — в дайджест,
+                    # звонить по ней в этот час незачем.
+                    page = page.market()
                 calls = page.calls()
                 report.events = len(calls)
                 report.retired = len(page.events) - len(calls)
@@ -270,7 +278,8 @@ def _match_message(config: Config, database, page, knobs: NotifyTuning, kind: st
         return hot_message(page, medians, config, per_request=knobs.per_request)
     active = sum(1 for _ in database.iter_requests())
     return digest_message(page, medians, config, per_request=knobs.per_request,
-                          wide=knobs.wide_request, active=active, at=until)
+                          wide=knobs.wide_request, active=active, at=until,
+                          initial_top=knobs.initial_top)
 
 
 def _feed_message(config: Config, database, knobs: NotifyTuning,

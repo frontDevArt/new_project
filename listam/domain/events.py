@@ -49,6 +49,17 @@ class MatchEvent:
     price_before: float | None = None
 
 
+def is_initial(event: MatchEvent) -> bool:
+    """Первичная подборка: матч родила заявка, а не рынок (решение 14 спеки M3.5).
+
+    Новая или правленая заявка прошла по всей базе и принесла сотни матчей —
+    звонить по ним в этот час незачем, их место в дайджесте отдельным
+    разделом. `origin` пуст у матчей до миграции 012 — это рынок. Подешевевший
+    или вернувшийся матч заявки — уже событие рынка, каким бы ни было рождение.
+    """
+    return event.kind == NEW and event.match.origin == "request"
+
+
 def _inside(when: datetime | None, since: datetime, until: datetime) -> bool:
     """Отметка попала в окно `(since, until]`.
 

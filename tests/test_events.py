@@ -155,3 +155,21 @@ def test_a_price_drop_is_an_event_even_when_the_recount_did_not_move():
 
     assert event.kind == CHEAPER
     assert event.price_before == 60000.0
+
+
+def test_only_a_birth_by_the_request_is_the_initial_selection():
+    """Решение 14: подборку делает рождение по заявке. Подешевел матч
+    заявки — это уже рынок; `origin` пуст (до миграции 012) — тоже рынок."""
+    from listam.domain.events import CHEAPER, NEW, MatchEvent, is_initial
+    from listam.domain.models import Listing, Match
+
+    listing = Listing(id="1", url="u")
+
+    def event(kind, origin):
+        return MatchEvent(kind=kind, match=Match(request_id=1, listing_id="1",
+                                                 origin=origin), listing=listing)
+
+    assert is_initial(event(NEW, "request")) is True
+    assert is_initial(event(NEW, "market")) is False
+    assert is_initial(event(NEW, None)) is False
+    assert is_initial(event(CHEAPER, "request")) is False

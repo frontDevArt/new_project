@@ -1,9 +1,9 @@
 """Шаг воронки `pages`: страницы объявлений открываются только кандидатам.
 
 Решения 9, 12, 13 спеки M3.5. Кандидат — представитель кластера, который
-прошёл грубое сито живой заявки (район, комнаты, бюджет, площадь) с баллом
-не ниже `match.thresholds.digest`, **и** у этой заявки есть пожелания из
-словаря `funnel.wishes`. Заявке без таких слов страницы не нужны вовсе, и
+прошёл грубое сито живой заявки (район, комнаты, бюджет, площадь) с лучшим
+возможным баллом не ниже `match.thresholds.hot` (фаза 4 M3.5; был грубый балл
+от `digest`), **и** у этой заявки есть пожелания из словаря `funnel.wishes`. Заявке без таких слов страницы не нужны вовсе, и
 запросов к сайту ради неё нет.
 
 Никакого массового обхода: открывается не больше `funnel.max_opens_per_run`
@@ -26,7 +26,7 @@ from listam.clustering_run import area_tolerance
 from listam.config import Config, ConfigError, positive, threshold
 from listam.domain.clustering import clusters
 from listam.domain.models import Listing, ListingPage
-from listam.domain.scoring import rejection, score
+from listam.domain.scoring import best_case, rejection, score
 from listam.domain.stats import median_price_per_sqm_by_district
 from listam.domain.wishes import Wish, request_wishes, vocabulary
 from listam.matching import Settings, settings
@@ -175,6 +175,11 @@ def plan_pages(database: Database, config: Config, funnel: Funnel,
                        for cluster in clusters(everything, area_tolerance(config))}
     medians = median_price_per_sqm_by_district(everything)
 
+    # Страница нужна тому, кто может стать горячим (фаза 4 M3.5): порог
+    # digest пускал в очередь 3 275 кандидатов при потолке 30 за прогон.
+    # Лучший случай — все пожелания выполнены. Порог hot выключен — digest.
+    bar = tuning.hot if tuning.hot is not None else tuning.digest
+    wishes = {request.id: request_wishes(request, funnel.wishes)[1] for request in needing}
     best: dict[str, Candidate] = {}
     for listing in everything:
         if listing.id not in representatives:
@@ -182,10 +187,13 @@ def plan_pages(database: Database, config: Config, funnel: Funnel,
         for request in needing:
             if rejection(request, listing, tuning.stretch_percent) is not None:
                 continue
-            coarse = score(request, listing, median_by_district=medians,
+            result = score(request, listing, median_by_district=medians,
                            weights=tuning.weights,
-                           stretch_percent=tuning.stretch_percent).value
-            if tuning.digest is not None and coarse < tuning.digest:
+                           stretch_percent=tuning.stretch_percent,
+                           secondary_district=tuning.secondary_district)
+            coarse = result.value
+            if bar is not None and best_case(result, tuning.weights,
+                                             wishes[request.id]) < bar:
                 continue
             known = best.get(listing.id)
             if known is None or coarse > known.coarse:

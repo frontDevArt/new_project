@@ -29,12 +29,16 @@ from listam.domain.models import Listing, PageFields, Request
 from listam.domain.wishes import Wish, field_label
 
 DEFAULT_WEIGHTS: dict[str, float] = {
-    "budget": 30, "district": 20, "price_per_sqm": 20,
+    "budget": 10, "district": 20, "price_per_sqm": 40,     # фаза 4: было 30 и 20
     "area_rooms": 15, "floor": 10, "seller_type": 5,
-    "wishes": 15,       # предварительно: фаза 4 уточняет по замеру
+    "wishes": 15,       # предварительно: фаза 4 не мерила — в кэше 5 страниц (Д-1)
 }
 NOT_OPENED = "страница не открыта"
 DEFAULT_STRETCH_PERCENT = 10.0
+DEFAULT_HOT = 80.0             # порог «звони сейчас»; фаза 4 M3.5: было 70, замер в плане
+# Доля фактора `district` у непервоочередного района. Была 0,5: широкая заявка
+# получала горячим почти всё, что лежит в названных районах (замер фазы 4 M3.5).
+DEFAULT_SECONDARY_DISTRICT = 0.0
 CHEAP_SATURATION = 0.25        # −25% к медиане района — полный балл за выгодность
 
 
@@ -106,14 +110,18 @@ def _budget(request: Request, listing: Listing, stretch_percent: float) -> float
     return max(0.0, min(1.0, over))
 
 
-def _district(request: Request, listing: Listing) -> float | None:
+def _district(request: Request, listing: Listing, secondary: float) -> float | None:
     if listing.district is None:
         return None
     if request.districts_priority and listing.district in request.districts_priority:
         return 1.0
     if not request.districts and not request.districts_priority:
         return None                            # клиент район не назвал — нечего сравнивать
-    return 0.5 if listing.district in request.districts else 0.0
+    if listing.district not in request.districts:
+        return 0.0
+    # Приоритета нет — названные районы клиенту равны, «второго сорта» среди
+    # них нет. Доля непервоочередного здесь обнулила бы район всей заявке.
+    return secondary if request.districts_priority else 1.0
 
 
 def _price_per_sqm(listing: Listing, median_by_district: dict[str, float] | None) -> float | None:
@@ -178,14 +186,36 @@ def _wishes(nice: Sequence[Wish], page: PageFields | None) -> float | None:
     return sum(1.0 for answer in known if answer) / len(known)
 
 
+def best_case(result: Score, weights: dict[str, float] | None,
+              nice: Sequence[Wish]) -> int:
+    """Лучший балл, до которого вариант дорастёт, когда откроется страница.
+
+    Грубый балл считается без страницы: фактор `wishes` из знаменателя
+    ушёл. Лучший случай — все пожелания `nice` выполнены (доля 1). Так
+    воронка решает, стоит ли тратить на страницу одно из немногих открытий.
+    """
+    weights = DEFAULT_WEIGHTS if weights is None else weights
+    got = sum(points for points, _ in result.breakdown.values())
+    total = sum(weight for _, weight in result.breakdown.values())
+    extra = float(weights.get("wishes", 0)) if nice else 0.0
+    if not total + extra:
+        return result.value
+    return round(100 * (got + extra) / (total + extra))
+
+
 def score(request: Request, listing: Listing, *,
           median_by_district: dict[str, float] | None = None,
           weights: dict[str, float] | None = None,
           stretch_percent: float = DEFAULT_STRETCH_PERCENT,
           page: PageFields | None = None,
           must: Sequence[Wish] = (),
-          nice: Sequence[Wish] = ()) -> Score:
-    """Балл объявления по заявке: 0–100 и разбор, из чего он сложился."""
+          nice: Sequence[Wish] = (),
+          secondary_district: float = DEFAULT_SECONDARY_DISTRICT) -> Score:
+    """Балл объявления по заявке: 0–100 и разбор, из чего он сложился.
+
+    `secondary_district` — доля фактора `district` у района из списка заявки,
+    но не из приоритетных (`match.secondary_district`).
+    """
     refused = rejection(request, listing, stretch_percent, page=page, must=must)
     if refused is not None:
         return Score(value=0, breakdown={}, rejected_by=refused)
@@ -193,7 +223,7 @@ def score(request: Request, listing: Listing, *,
     weights = DEFAULT_WEIGHTS if weights is None else weights
     shares = {
         "budget": lambda: _budget(request, listing, stretch_percent),
-        "district": lambda: _district(request, listing),
+        "district": lambda: _district(request, listing, secondary_district),
         "price_per_sqm": lambda: _price_per_sqm(listing, median_by_district),
         "area_rooms": lambda: _area_rooms(request, listing),
         "floor": lambda: _floor(request, listing),

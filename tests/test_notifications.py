@@ -660,3 +660,60 @@ def test_no_cli_hints_in_the_sent_text(prepared):
 
     for kind in ("hot", "digest", "feed"):
         assert "python -m listam" not in run_notify(prepared, kind=kind, dry_run=True).text
+
+
+# ---------------------------------------------------------------- первичная подборка
+
+def born_by_the_request(config, count: int, *, request_id: str = "R-2",
+                        start: int = 100) -> None:
+    """Новая заявка прошла по всей базе: `count` матчей с `origin = request`."""
+    database = build_database(config)
+    database.connect()
+    database.upsert_request(Request(external_id=request_id, client_name="Карен"), now=NOW)
+    request = database.get_request(request_id)
+    matches = []
+    for index in range(start, start + count):
+        database.upsert_listing(
+            Listing(id=str(index), url=f"https://www.list.am/ru/item/{index}",
+                    district="Арабкир", price_usd=90000.0 + index, area=70.0, rooms=3),
+            seen_at=NOW,
+        )
+        matches.append(Match(request_id=request.id, listing_id=str(index),
+                             score=float(95 - index % 20), origin="request"))
+    database.upsert_matches(matches, datetime.now(timezone.utc))
+    database.close()
+
+
+def test_request_born_matches_skip_hot(prepared):
+    """Решение 14: сотни матчей новой заявки — первичная подборка, а не повод
+    звонить в этот час. Матчи без `origin` (до миграции 012) — рынок."""
+    born_by_the_request(prepared, 30)
+
+    report = run_notify(prepared, kind="hot", dry_run=True)
+
+    assert report.events == 2               # два рыночных матча R-1 (origin NULL)
+    assert report.requests == 1
+    assert "R-1 · Ани" in report.text
+    assert "R-2" not in report.text
+
+
+def test_initial_selection_is_a_digest_section(prepared):
+    """Первичная подборка уходит в дайджест своим разделом: лучшие N из M."""
+    born_by_the_request(prepared, 30)
+    prepared.data["notify"]["digest"]["initial_top"] = 4
+
+    report = run_notify(prepared, kind="digest", dry_run=True)
+
+    assert "📋 ДАЙДЖЕСТ · R-2 · Карен — первичная подборка: 4 лучших из 30" in report.text
+    section = report.text.split("первичная подборка: 4 лучших из 30", 1)[1]
+    assert section.count("🆕") == 4
+    assert "95" in section.split("🆕")[1]           # лучшие сверху
+    # Широкой её не называют: первичная подборка большая по своей природе.
+    assert "слишком широкая" not in report.text
+
+
+def test_initial_top_is_read_before_the_work(prepared):
+    prepared.data["notify"]["digest"]["initial_top"] = 0
+
+    with pytest.raises(ConfigError, match="notify.digest.initial_top"):
+        run_notify(prepared, kind="digest", dry_run=True)

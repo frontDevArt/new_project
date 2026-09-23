@@ -17,7 +17,7 @@ from listam.adapters.db_sqlite import latest_schema_version
 from listam.changes import DASH, MINUS, money, per_sqm
 from listam.config import Config, positive
 from listam.domain.events import (CHEAPER, EVENT_LABELS, NEW, RETIRED, REVIVED,
-                                  events_for, limited)
+                                  events_for, is_initial, limited)
 from listam.domain.labels import MATCH_STATUSES, SELLER_TYPES
 from listam.domain.models import Listing, Match, Request
 from listam.matching import settings
@@ -267,6 +267,27 @@ class EventsPage:
         брокеру «Событий: 2» там, где звонить некому.
         """
         return [event for event in self.events if event.kind != RETIRED]
+
+    def market(self) -> "EventsPage":
+        """Те же события без первичной подборки — выборка «звони сейчас».
+
+        Решение 14 спеки M3.5: сотни матчей новой заявки — не повод звонить
+        в этот час. Заявка, у которой осталась только подборка, раздела
+        не получает.
+        """
+        page = EventsPage(note=self.note)
+        for event in self.events:
+            if is_initial(event):
+                continue
+            page.events.append(event)
+        owners = {request.id: key for key, request in self.requests.items()}
+        for event in page.events:
+            key = owners.get(event.match.request_id)
+            if key is None:
+                continue
+            page.totals[key] = page.totals.get(key, 0) + 1
+            page.requests[key] = self.requests[key]
+        return page
 
 
 def collect_events(config: Config, *, since, until,
