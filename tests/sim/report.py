@@ -99,6 +99,18 @@ def _fits(facts: dict, request, percent: float, amd_per_usd: float) -> bool:
                  or facts["area"] >= request.area_min - AREA_SLACK))
 
 
+def unseen_drops(drops, delivered, end: datetime):
+    """С-8: подешевевшие без карточки за 24 ч — и те, чьи 24 ч к концу прогона
+    не истекли: про них «не дошло» ещё не известно, они не промах."""
+    missed, pending = [], []
+    for event in drops:
+        if any(event.at <= sent <= event.at + timedelta(hours=24) and event.flat_id in section.ids
+               for sent, section in delivered):
+            continue
+        (pending if event.at + timedelta(hours=24) > end else missed).append(event)
+    return missed, pending
+
+
 def compute(result) -> list[Metric]:
     config = result.config
     requests = _requests(result)
@@ -205,12 +217,14 @@ def compute(result) -> list[Metric]:
 
     # С-8 — подешевевшее подходящее (Д-10)
     drops = [e for e in result.market.truth if e.kind == "cheaper" and e.flat_id in digest_ids]
-    missed = [e for e in drops if not any(
-        e.at <= sent <= e.at + timedelta(hours=24) and e.flat_id in section.ids
-        for sent, section in delivered)]
-    metrics.append(Metric("С-8", "подешевевшие с матчем ≥ digest: не дошли за 24 ч / всего (Д-10)",
-                          f"{len(missed)} / {len(drops)}", "— (число в отчёт)", None,
-                          "правда рынка (cheaper) против «звони сейчас» и дайджеста за 24 ч"))
+    end = result.cycles[-1].at if result.cycles else result.start
+    missed, pending = unseen_drops(drops, delivered, end)
+    metrics.append(Metric("С-8", "подешевевшие с матчем ≥ digest: не дошли за 24 ч / всего "
+                          "(ещё в окне на конец прогона) (Д-10)",
+                          f"{len(missed)} / {len(drops) - len(pending)} ({len(pending)})",
+                          "— (число в отчёт)", None,
+                          "правда рынка (cheaper) против «звони сейчас» и дайджеста за 24 ч; "
+                          "окно, не закрытое к последнему циклу, — в скобках, не в счёте"))
 
     # С-9 — вернувшийся отказ (Д-12)
     key_of = {flat.id: flat.flat_key for flat in result.market.flats.values()}

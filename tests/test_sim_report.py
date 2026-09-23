@@ -67,3 +67,20 @@ def test_fits_uses_the_system_hard_criteria_more_rooms_and_area_are_fine():
     assert not _fits({**big, "area": 70.0}, r2, 10.0, 363.25)
     assert not _fits({**big, "district": "Ачапняк"}, r2, 10.0, 363.25)
     assert not _fits({**big, "price": 250000}, r2, 10.0, 363.25)
+
+
+def test_a_drop_whose_day_has_not_ended_is_pending_not_missed():
+    """С-8: «не дошло за 24 ч» знает только закрытое окно. Подешевевшее за
+    сутки до конца прогона ещё может дойти — оно не промах, а «ждёт»."""
+    from datetime import datetime, timedelta, timezone
+
+    from tests.sim.market import TruthEvent
+    from tests.sim.report import unseen_drops
+
+    t0 = datetime(2026, 9, 24, 0, 0, tzinfo=timezone.utc)  # календарь: не сравнивается с часами
+    end = t0 + timedelta(days=7)
+    shown = TruthEvent("cheaper", "1", t0)
+    lost = TruthEvent("cheaper", "2", t0)
+    late = TruthEvent("cheaper", "3", end - timedelta(hours=5))
+    delivered = [(t0 + timedelta(hours=2), CardSection("hot", "R-1", ["1"], 0))]
+    assert unseen_drops([shown, lost, late], delivered, end) == ([lost], [late])
