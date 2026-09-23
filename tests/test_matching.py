@@ -38,7 +38,7 @@ def cfg(tmp_path: Path, **over) -> Config:
         },
         "match": {
             "weights": {"budget": 30, "district": 20, "price_per_sqm": 20,
-                        "area_rooms": 15, "floor": 10, "seller_type": 5},
+                        "area_rooms": 15, "floor": 10, "seller_type": 5, "wishes": 15},
             "thresholds": {"hot": 70, "digest": 40},
             "budget_stretch_percent": 10,
             "cluster": {"area_tolerance": 2},
@@ -720,3 +720,210 @@ def test_a_misspelled_weight_stops_the_match_before_it_touches_the_base(matching
             "кластеры пересчитаны — значит, проход успел тронуть базу"
     finally:
         database.close()
+
+
+# --- подбор со страницами (фаза 3 M3.5, решения 9, 12, 14) ------------------
+
+from listam.domain.models import ListingPage, PageFields  # noqa: E402
+
+FUNNEL = {"max_attempts": 2, "wishes": {
+    "ремонт": {"field": "renovation", "any_of": ["косметический", "евроремонт", "дизайнерский"]},
+    "не панель": {"field": "building_type", "none_of": ["панельное"]},
+    "лифт": {"field": "elevator", "is": True},
+}}
+
+
+def funnel_config(tmp_path, listings, requests) -> Config:
+    config = cfg(tmp_path, funnel=FUNNEL)
+    fill(config, listings=listings, requests=requests)
+    return config
+
+
+def save_page(config, listing_id, *, status="ok", attempts=1, **values):
+    database = build_database(config)
+    database.connect()
+    try:
+        database.save_page(ListingPage(
+            listing_id=listing_id, status=status, attempts=attempts,
+            fetched_at=datetime.now(timezone.utc) if status == "ok" else None,
+            price_raw="$132,000",
+            fields=PageFields(values=values) if status == "ok" else None))
+    finally:
+        database.close()
+
+
+def live(config, external_id="R-1"):
+    return [match for match in matches_of(config, external_id) if match.retired_at is None]
+
+
+def test_a_candidate_without_its_page_is_not_a_match(tmp_path):
+    """Решение 9: заявке нужны поля страницы — без открытой страницы
+    объявление кандидат, а не матч."""
+    config = funnel_config(tmp_path, [suitable("1")],
+                           [make_request("R-1", must_have="ремонт")])
+
+    report = run_match(config)
+
+    assert report.new == 0
+    assert matches_of(config) == []
+
+
+def test_a_candidate_becomes_a_match_once_its_page_opens(tmp_path):
+    config = funnel_config(tmp_path, [suitable("1")],
+                           [make_request("R-1", must_have="ремонт")])
+    run_match(config)
+    save_page(config, "1", renovation="косметический")
+
+    report = run_match(config)
+
+    assert report.new == 1
+    assert [match.listing_id for match in live(config)] == ["1"]
+
+
+def test_match_new_sees_a_page_that_opened_after_the_last_run(tmp_path):
+    """Страница открылась после прогона — `--new` обязан увидеть кандидата,
+    хотя на ленте с ним ничего не случилось."""
+    config = funnel_config(tmp_path, [suitable("1")],
+                           [make_request("R-1", must_have="ремонт")])
+    run_match(config)                                   # заявка подобрана: не правленая
+    database = build_database(config)
+    database.connect()
+    try:
+        run_id = database.start_run(datetime.now(timezone.utc) - timedelta(minutes=5),
+                                    rate_amd_per_usd=385.0, mode="fresh")
+        database.finish_run(run_id, datetime.now(timezone.utc))
+    finally:
+        database.close()
+    save_page(config, "1", renovation="косметический")
+
+    report = run_match(config, only_new=True)
+
+    assert report.new == 1
+
+
+def test_a_known_wrong_field_is_not_a_match(tmp_path):
+    config = funnel_config(tmp_path, [suitable("1")],
+                           [make_request("R-1", must_have="не панель")])
+    save_page(config, "1", building_type="панельное")
+
+    assert run_match(config).new == 0
+
+
+def test_a_field_missing_from_the_page_does_not_refuse(tmp_path):
+    config = funnel_config(tmp_path, [suitable("1")],
+                           [make_request("R-1", must_have="не панель")])
+    save_page(config, "1", renovation="косметический")
+
+    assert run_match(config).new == 1
+
+
+def test_a_page_that_ran_out_of_attempts_counts_as_unknown(tmp_path):
+    """Решение 13: неудачное открытие повторяется до `max_attempts`, дальше
+    поле неизвестно — а неизвестное не отказ."""
+    config = funnel_config(tmp_path, [suitable("1"), suitable("2")],
+                           [make_request("R-1", must_have="ремонт")])
+    save_page(config, "1", status="failed", attempts=2)
+    save_page(config, "2", status="failed", attempts=1)
+
+    run_match(config)
+
+    assert [match.listing_id for match in live(config)] == ["1"]
+
+
+def test_unopened_page_does_not_retire(tmp_path):
+    """Решение 12: «страница не открыта» — это «проход не видел», а не
+    «видел и не подтвердил». Вчерашний матч живёт."""
+    config = funnel_config(tmp_path, [suitable("1")], [make_request("R-1")])
+    run_match(config)
+    assert len(live(config)) == 1
+    fill(config, requests=[make_request("R-1", must_have="ремонт")],
+         seen_at=datetime.now(timezone.utc))
+
+    report = run_match(config)
+
+    assert report.retired == 0
+    assert len(live(config)) == 1
+
+
+def test_a_known_wrong_field_retires_the_old_match_with_its_word(tmp_path):
+    config = funnel_config(tmp_path, [suitable("1")], [make_request("R-1")])
+    run_match(config)
+    save_page(config, "1", building_type="панельное")
+    fill(config, requests=[make_request("R-1", must_have="не панель")],
+         seen_at=datetime.now(timezone.utc))
+
+    run_match(config)
+
+    database = build_database(config)
+    database.connect()
+    try:
+        request = database.get_request("R-1")
+        [match] = database.matches_for_request(request.id, include_retired=True)
+    finally:
+        database.close()
+    assert match.retired_at is not None
+    assert match.retired_reason == "тип дома"
+
+
+def test_nice_to_have_is_the_wishes_factor(tmp_path):
+    config = funnel_config(tmp_path, [suitable("1")],
+                           [make_request("R-1", nice_to_have="лифт")])
+    save_page(config, "1", elevator=True)
+
+    run_match(config)
+
+    assert live(config)[0].breakdown["wishes"] == [15.0, 15.0]
+
+
+def test_nice_to_have_alone_does_not_need_the_page(tmp_path):
+    """Мягкое пожелание матч не отменяет: без страницы фактора просто нет."""
+    config = funnel_config(tmp_path, [suitable("1")],
+                           [make_request("R-1", nice_to_have="лифт")])
+
+    run_match(config)
+
+    match = live(config)[0]
+    assert "wishes" not in match.breakdown
+
+
+def test_new_request_matches_are_born_as_request(tmp_path):
+    """Решение 14: сотни матчей новой заявки — первичная подборка, а не повод
+    звонить в этот час. То, что принёс рынок потом, — market."""
+    config = funnel_config(tmp_path, [suitable("1")], [make_request("R-1")])
+    run_match(config)
+    assert [match.origin for match in live(config)] == ["request"]
+
+    database = build_database(config)
+    database.connect()
+    try:
+        run_id = database.start_run(datetime.now(timezone.utc) - timedelta(minutes=5),
+                                    rate_amd_per_usd=385.0, mode="fresh")
+        database.upsert_listing(suitable("2"), seen_at=datetime.now(timezone.utc))
+        database.finish_run(run_id, datetime.now(timezone.utc))
+    finally:
+        database.close()
+    run_match(config, only_new=True)
+
+    origins = {match.listing_id: match.origin for match in live(config)}
+    assert origins == {"1": "request", "2": "market"}
+
+
+def test_an_edited_request_gives_its_new_matches_the_request_origin(tmp_path):
+    config = funnel_config(tmp_path, [suitable("1"), suitable("2", rooms=4)],
+                           [make_request("R-1", rooms=[3])])
+    run_match(config, only_new=True)
+    fill(config, requests=[make_request("R-1", rooms=[3, 4])],
+         seen_at=datetime.now(timezone.utc))
+
+    run_match(config, only_new=True)
+
+    origins = {match.listing_id: match.origin for match in live(config)}
+    assert origins["2"] == "request"
+
+
+def test_a_crooked_vocabulary_stops_the_match_before_the_base(tmp_path):
+    config = funnel_config(tmp_path, [suitable("1")], [make_request("R-1")])
+    config.data["funnel"] = {"wishes": {"лифт": {"field": "elevator"}}}
+
+    with pytest.raises(ConfigError):
+        run_match(config)

@@ -220,3 +220,63 @@ def test_a_broken_database_is_a_message_and_not_a_traceback(tmp_path):
     assert "файл базы недоступен" in (report.notes or ""), \
         "человек должен прочитать, что случилось, а не разбирать трейсбек"
     assert "file is not a database" in report.notes, "и что именно сломалось"
+
+
+# --- пожелания из словаря funnel.wishes (фаза 3 M3.5) --------------------
+
+WISHES = {"ремонт": {"field": "renovation", "any_of": ["косметический"]},
+          "лифт": {"field": "elevator", "is": True}}
+
+
+def wished_config(tmp_path: Path, rows: list[dict]) -> Config:
+    config = cfg(tmp_path, write_csv(tmp_path / "requests.csv", rows))
+    config.data["funnel"] = {"wishes": WISHES}
+    return config
+
+
+def test_known_wishes_are_read(tmp_path):
+    config = wished_config(tmp_path, [dict(GOOD, must_have="Ремонт", nice_to_have="лифт")])
+
+    report = run_requests_sync(config)
+
+    assert (report.new, report.rejected, report.warnings) == (1, [], [])
+
+
+def test_an_unknown_must_have_word_rejects_the_row(tmp_path):
+    """Жёсткий критерий наугад не истолковывается (решение 10): строка
+    отклоняется с колонкой и словом, остальные читаются."""
+    config = wished_config(tmp_path, [dict(GOOD, must_have="ремонт, бассейн"), OTHER])
+
+    report = run_requests_sync(config)
+
+    assert report.new == 1
+    assert len(report.rejected) == 1
+    rendered = report.render()
+    assert "must_have" in rendered
+    assert "бассейн" in rendered
+    assert "R-1" in rendered
+    assert stored(config) == ["R-2"]
+
+
+def test_an_unknown_nice_to_have_word_is_a_warning(tmp_path):
+    config = wished_config(tmp_path, [dict(GOOD, nice_to_have="лифт, бассейн")])
+
+    report = run_requests_sync(config)
+
+    assert report.new == 1
+    assert report.rejected == []
+    assert report.errors == 0
+    assert ("⚠ R-1 · nice_to_have: слово «бассейн» не из словаря funnel.wishes — "
+            "не учитывается") in report.render()
+    assert stored(config) == ["R-1"]
+
+
+def test_a_crooked_vocabulary_stops_before_the_base(tmp_path):
+    config = wished_config(tmp_path, [GOOD])
+    config.data["funnel"] = {"wishes": {"лифт": {"field": "elevator"}}}
+
+    report = run_requests_sync(config)
+
+    assert report.errors == 1
+    assert "funnel.wishes" in report.render()
+    assert not database_path(config).exists()

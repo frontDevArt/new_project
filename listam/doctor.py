@@ -339,6 +339,63 @@ def schedule_check(config: Config, now: datetime | None = None) -> Check:
     return Check(name=name, ok=True, warn=bool(problems), details=details)
 
 
+# Доля сбоев в кэше страниц, с которой строка «Воронка» просит посмотреть:
+# каждая пятая страница не открылась — это уже не «сеть моргнула».
+FUNNEL_FAILED_WARN = 0.2
+
+
+def funnel_check(config: Config) -> Check:
+    """Воронка без сети: кандидатов в очереди, страниц в кэше, доля сбоев.
+
+    Очередь считается тем же `plan_pages`, что и у шага `pages`, — по
+    рабочему файлу, только чтением.
+    """
+    from listam.matching import settings
+    from listam.pages import funnel_settings, plan_pages
+
+    name = "Воронка"
+    try:
+        funnel = funnel_settings(config)
+        tuning = settings(config)
+    except ConfigError as exc:
+        return Check(name=name, ok=False, details=str(exc))
+
+    head = (f"потолок {funnel.max_opens} за прогон, пауза {funnel.delay_seconds:g} с, "
+            f"слов в словаре {len(funnel.wishes)}")
+    working = database_path(config)
+    if not working.exists():
+        return Check(name=name, ok=True,
+                     details=f"{head}; рабочего файла {working} ещё нет")
+    try:
+        from listam.adapters.db_sqlite import SqliteDatabase
+
+        database = SqliteDatabase(working)
+        database.connect()
+        try:
+            if "listing_pages" not in database.table_names():
+                return Check(name=name, ok=True, warn=True,
+                             details=f"{head}; кэша страниц в базе ещё нет — его заведёт "
+                                     f"миграция 012, её накатит первая пишущая команда")
+            plan = plan_pages(database, config, funnel, tuning)
+            counts = database.page_counts()
+        finally:
+            database.close()
+    except Exception as exc:        # sqlite3.Error, OSError — база не прочитана
+        return Check(name=name, ok=True, warn=True, details=f"база не прочитана: {exc}")
+
+    cached = sum(counts.values())
+    failed = counts.get("failed", 0)
+    share = failed / cached if cached else 0.0
+    facts = [head, f"заявок с пожеланиями {plan.requests}",
+             f"кандидатов {len(plan.candidates)}, в очереди {len(plan.queue)}",
+             f"страниц в кэше {cached} (разобрано {counts.get('ok', 0)}, "
+             f"снято {counts.get('gone', 0)}, сбоев {failed} ({share:.0%}))"]
+    warn = cached > 0 and share >= FUNNEL_FAILED_WARN
+    if warn:
+        facts.append("сбоев много — посмотри отчёт pages: Cloudflare или вёрстка")
+    return Check(name=name, ok=True, warn=warn, details="; ".join(facts))
+
+
 def run_doctor(config: Config, check_network: bool = True) -> DoctorReport:
     report = DoctorReport()
     report.add("Конфиг", True, f"{config.path} (APP_ENV={config.env})")
@@ -347,6 +404,7 @@ def run_doctor(config: Config, check_network: bool = True) -> DoctorReport:
     report.checks.append(match_check(config))
     report.checks.append(notify_check(config))
     report.checks.append(schedule_check(config))
+    report.checks.append(funnel_check(config))
 
     # --- хранилище ----------------------------------------------------
     try:

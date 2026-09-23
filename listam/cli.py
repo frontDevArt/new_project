@@ -77,6 +77,15 @@ def build_parser() -> argparse.ArgumentParser:
     match.add_argument("--all", action="store_true",
                        help="пересчитать все активные заявки по всей базе")
 
+    pages = commands.add_parser(
+        "pages", help="открыть страницы кандидатов под живые заявки (воронка)")
+    pages.add_argument("--max", type=int, dest="max_opens",
+                       help="открыть не больше N страниц (не выше funnel.max_opens_per_run)")
+    pages.add_argument("--dry-run", action="store_true",
+                       help="показать, чьи страницы открылись бы; сайт не трогается")
+    pages.add_argument("--keep-html", action="store_true",
+                       help="сохранить сырой HTML открытых страниц в scrape.pages_dir")
+
     matches = commands.add_parser(
         "matches", help="ранжированный список подобранных вариантов")
     matches.add_argument("--request", help="внешний идентификатор заявки")
@@ -206,6 +215,14 @@ def _dispatch(args, config) -> int:
 
     if args.command == "cluster":
         return _cluster(config)
+
+    if args.command == "pages":
+        if args.max_opens is not None and args.max_opens < 1:
+            print(f"--max {args.max_opens} не годится: меньше одной страницы открывать "
+                  f"нечего. Потолок из конфига — это команда без --max.", file=sys.stderr)
+            return 2
+        return _pages(config, max_opens=args.max_opens, dry_run=args.dry_run,
+                      keep_html=args.keep_html)
 
     if args.command == "match":
         # Три флага — три разные выборки, и «оба сразу» не значит ничего.
@@ -374,6 +391,14 @@ def _cluster(config) -> int:
     from listam.clustering_run import run_clustering
 
     report = run_clustering(config)
+    print(report.render())
+    return 1 if report.errors else 0
+
+
+def _pages(config, max_opens: int | None, dry_run: bool, keep_html: bool) -> int:
+    from listam.pages import run_pages
+
+    report = run_pages(config, max_opens=max_opens, dry_run=dry_run, keep_html=keep_html)
     print(report.render())
     return 1 if report.errors else 0
 

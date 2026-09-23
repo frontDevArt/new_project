@@ -636,3 +636,31 @@ def test_notify_dry_run_prints_the_message(project, capsys):
     assert run(project, "notify", "--digest", "--dry-run") == 0
     printed = capsys.readouterr().out
     assert "Уведомление (digest)" in printed
+
+
+# --- шаг воронки `pages` (фаза 3 M3.5) --------------------------------------
+
+def test_pages_without_wishes_touches_nothing(project, capsys):
+    run(project, "scrape")
+    capsys.readouterr()
+
+    assert run(project, "pages") == 0
+    assert "страницы не нужны" in capsys.readouterr().out
+
+
+def test_pages_dry_run_is_accepted(project, capsys):
+    run(project, "scrape")
+    capsys.readouterr()
+
+    assert run(project, "pages", "--dry-run") == 0
+
+
+@pytest.mark.parametrize("value", ["0", "-3"])
+def test_pages_max_below_one_is_refused(project, capsys, value):
+    assert run(project, "pages", "--max", value) == 2
+    assert "--max" in capsys.readouterr().err
+
+
+def test_pages_max_above_the_ceiling_is_refused_with_the_key(project, capsys):
+    assert run(project, "pages", "--max", "999") == 2
+    assert "funnel.max_opens_per_run" in capsys.readouterr().err

@@ -68,8 +68,10 @@ class HttpFetcher(Fetcher):
                     response.encoding = response.encoding or "utf-8"
                     return response.text
                 if 400 <= response.status_code < 500 and response.status_code != 429:
-                    raise FetchError(f"{target} → HTTP {response.status_code}")
-                last_error = FetchError(f"{target} → HTTP {response.status_code}")
+                    raise FetchError(f"{target} → HTTP {response.status_code}",
+                                     status=response.status_code)
+                last_error = FetchError(f"{target} → HTTP {response.status_code}",
+                                        status=response.status_code)
             self._last_request_at = time.monotonic()
             if attempt < self.retries:
                 time.sleep(min(30.0, self.delay_seconds * 2 * attempt) or 1.0)

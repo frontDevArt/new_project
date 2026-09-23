@@ -127,3 +127,13 @@ def test_telegram_without_a_token_is_a_config_error_naming_the_variable():
     """Отправлять в никуда мы не будем: пустой секрет — код 2 на входе."""
     with pytest.raises(ConfigError, match="TELEGRAM_BOT_TOKEN"):
         build_notifier(cfg({"notify": {"kind": "telegram", "token": "", "chat_id": "1"}}))
+
+
+@pytest.mark.parametrize("kind", ["http", "playwright"])
+def test_the_funnel_may_ask_the_fetcher_for_its_own_pause(kind, tmp_path):
+    """Страницы объявлений открываются с паузой `funnel.delay_seconds`,
+    длиннее ленточной: `build_fetcher` берёт её аргументом вместо конфига."""
+    config = cfg({"scrape": {"kind": kind, "base_url": "http://x", "delay_seconds": 1.5,
+                             "profile_dir": str(tmp_path / "browser")}})
+    assert build_fetcher(config).delay_seconds == 1.5
+    assert build_fetcher(config, delay_seconds=5).delay_seconds == 5

@@ -9,22 +9,31 @@
 * `rejection` — жёсткий критерий. Район не тот, комнат меньше, цена выше
   растянутого бюджета, площадь ниже минимума — звонка не будет, и причина
   ложится в `matches.reject_reason` словом, которое читает человек.
-* `score` — балл прошедшего. Шесть факторов, у каждого свой вес; фактор,
+* `score` — балл прошедшего. Семь факторов, у каждого свой вес; фактор,
   для которого не хватает данных, **из знаменателя исключается**. Иначе
   заявка без диапазона площади получала бы систематически меньший балл,
   чем заявка с диапазоном, — не потому что варианты хуже, а потому что
   клиент меньше рассказал о себе.
+
+Пожелания со страницы объявления (фаза 3 M3.5, решения 9 и 11): `must` —
+жёсткие, проверяются в `rejection`, и без открытой страницы объявление не
+матч, а кандидат («страница не открыта»); `nice` — седьмой фактор `wishes`.
+Поле страницы, которого нет, — не отказ и не ноль: оно неизвестно.
 """
 from __future__ import annotations
 
 from dataclasses import dataclass, field
+from typing import Sequence
 
-from listam.domain.models import Listing, Request
+from listam.domain.models import Listing, PageFields, Request
+from listam.domain.wishes import Wish, field_label
 
 DEFAULT_WEIGHTS: dict[str, float] = {
     "budget": 30, "district": 20, "price_per_sqm": 20,
     "area_rooms": 15, "floor": 10, "seller_type": 5,
+    "wishes": 15,       # предварительно: фаза 4 уточняет по замеру
 }
+NOT_OPENED = "страница не открыта"
 DEFAULT_STRETCH_PERCENT = 10.0
 CHEAP_SATURATION = 0.25        # −25% к медиане района — полный балл за выгодность
 
@@ -42,7 +51,8 @@ class Score:
         return self.rejected_by is None
 
 
-def rejection(request: Request, listing: Listing, stretch_percent: float) -> str | None:
+def rejection(request: Request, listing: Listing, stretch_percent: float, *,
+              page: PageFields | None = None, must: Sequence[Wish] = ()) -> str | None:
     """Почему объявление не годится вовсе, или `None`, если годится.
 
     Причина — одно слово: она попадает в отчёт и в базу, и её читает человек,
@@ -67,6 +77,15 @@ def rejection(request: Request, listing: Listing, stretch_percent: float) -> str
     if request.area_min is not None and listing.area is not None \
             and listing.area < request.area_min:
         return "площадь"
+
+    # Страничные условия — последними: отказ грубого сита честнее, чем
+    # «страница не открыта», и ради такого объявления страницу не откроют.
+    if must:
+        if page is None:
+            return NOT_OPENED
+        for wish in must:
+            if wish.check(page) is False:
+                return field_label(wish.field)
 
     return None
 
@@ -150,12 +169,24 @@ def _seller_type(listing: Listing) -> float | None:
     return 1.0 if listing.seller_type == "owner" else 0.0
 
 
+def _wishes(nice: Sequence[Wish], page: PageFields | None) -> float | None:
+    """Доля выполненных пожеланий среди тех, чьё поле известно."""
+    known = [answer for answer in (wish.check(page) for wish in nice)
+             if answer is not None]
+    if not known:
+        return None
+    return sum(1.0 for answer in known if answer) / len(known)
+
+
 def score(request: Request, listing: Listing, *,
           median_by_district: dict[str, float] | None = None,
           weights: dict[str, float] | None = None,
-          stretch_percent: float = DEFAULT_STRETCH_PERCENT) -> Score:
+          stretch_percent: float = DEFAULT_STRETCH_PERCENT,
+          page: PageFields | None = None,
+          must: Sequence[Wish] = (),
+          nice: Sequence[Wish] = ()) -> Score:
     """Балл объявления по заявке: 0–100 и разбор, из чего он сложился."""
-    refused = rejection(request, listing, stretch_percent)
+    refused = rejection(request, listing, stretch_percent, page=page, must=must)
     if refused is not None:
         return Score(value=0, breakdown={}, rejected_by=refused)
 
@@ -167,6 +198,7 @@ def score(request: Request, listing: Listing, *,
         "area_rooms": lambda: _area_rooms(request, listing),
         "floor": lambda: _floor(request, listing),
         "seller_type": lambda: _seller_type(listing),
+        "wishes": lambda: _wishes(nice, page),
     }
 
     breakdown: dict[str, tuple[float, float]] = {}

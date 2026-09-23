@@ -231,7 +231,7 @@ def test_a_source_without_active_requests_is_a_warning(tmp_path):
 
 MATCH = {
     "weights": {"budget": 30, "district": 20, "price_per_sqm": 20,
-                "area_rooms": 15, "floor": 10, "seller_type": 5},
+                "area_rooms": 15, "floor": 10, "seller_type": 5, "wishes": 15},
     "thresholds": {"hot": 70, "digest": 40},
     "budget_stretch_percent": 10,
     "cluster": {"area_tolerance": 2},
@@ -494,3 +494,101 @@ def test_the_doctor_names_the_schedule(tmp_path):
     report = run_doctor(scheduled_cfg(tmp_path), check_network=False)
     assert "Расписание" in [check.name for check in report.checks]
     assert report.ok is True
+
+
+# --- воронка (фаза 3 M3.5) ------------------------------------------------
+
+from listam.doctor import funnel_check  # noqa: E402
+from listam.domain.models import ListingPage, PageFields  # noqa: E402
+
+from tests.contracts.test_database_contract import make_listing, make_request  # noqa: E402
+
+FUNNEL = {"max_opens_per_run": 30, "max_attempts": 3,
+          "wishes": {"ремонт": {"field": "renovation", "any_of": ["косметический"]}}}
+
+
+def funnel_cfg(tmp_path):
+    return cfg(tmp_path, funnel=FUNNEL)
+
+
+def fill_funnel(config, pages=()):
+    path = database_path(config)
+    path.parent.mkdir(parents=True, exist_ok=True)
+    database = SqliteDatabase(path)
+    database.connect()
+    database.migrate()
+    now = datetime.now(timezone.utc)
+    for number in ("1", "2", "3"):
+        database.upsert_listing(make_listing(
+            number, district="Кентрон", street=f"улица {number}", rooms=3, area=85.0,
+            floor=4, price_usd=110_000.0, price_raw="$110,000"), seen_at=now)
+    database.upsert_request(make_request("R-1", must_have="ремонт"), now)
+    for page in pages:
+        database.save_page(page)
+    database.close()
+
+
+def test_the_funnel_without_a_base_is_ok(tmp_path):
+    check = funnel_check(funnel_cfg(tmp_path))
+    assert check.name == "Воронка"
+    assert check.ok is True
+    assert "рабочего файла" in check.details
+
+
+def test_the_funnel_counts_the_queue_and_the_cache(tmp_path):
+    """Кандидатов три: у одного страница свежая, у одного сбой (ждёт повтора),
+    третий не открывался — в очереди два. Сеть не нужна."""
+    config = funnel_cfg(tmp_path)
+    fill_funnel(config, pages=[
+        ListingPage(listing_id="1", status="ok", attempts=1, price_raw="$110,000",
+                    fetched_at=datetime.now(timezone.utc),
+                    fields=PageFields(values={"renovation": "косметический"})),
+        ListingPage(listing_id="2", status="failed", attempts=1, error="таймаут"),
+    ])
+
+    check = funnel_check(config)
+
+    assert check.ok is True
+    assert "кандидатов 3" in check.details
+    assert "в очереди 2" in check.details
+    assert "страниц в кэше 2" in check.details
+    assert "сбоев 1 (50%)" in check.details
+    assert check.warn is True           # половина кэша — сбои: пора смотреть
+
+
+def test_a_healthy_funnel_is_not_a_warning(tmp_path):
+    config = funnel_cfg(tmp_path)
+    fill_funnel(config)
+
+    check = funnel_check(config)
+
+    assert check.warn is False, check.details
+    assert "в очереди 3" in check.details
+
+
+def test_a_base_before_migration_012_is_said_in_words(tmp_path):
+    config = funnel_cfg(tmp_path)
+    path = database_path(config)
+    path.parent.mkdir(parents=True, exist_ok=True)
+    from tests.test_migrations import upto
+    database = SqliteDatabase(path, migrations_dir=upto(tmp_path, 11))
+    database.connect()
+    database.migrate()
+    database.close()
+
+    check = funnel_check(config)
+
+    assert check.ok is True and check.warn is True
+    assert "миграц" in check.details
+
+
+def test_a_crooked_funnel_fails(tmp_path):
+    config = cfg(tmp_path, funnel={"max_opens_per_run": 0})
+    check = funnel_check(config)
+    assert check.ok is False
+    assert "funnel.max_opens_per_run" in check.details
+
+
+def test_the_doctor_names_the_funnel(tmp_path):
+    report = run_doctor(funnel_cfg(tmp_path), check_network=False)
+    assert "Воронка" in [check.name for check in report.checks]

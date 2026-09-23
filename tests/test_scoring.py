@@ -176,3 +176,95 @@ def test_a_zero_weight_keeps_the_factor_out_of_the_score_without_dividing_by_zer
     result = score(a_request(), make_listing(), weights={"budget": 0, "district": 0})
     assert result.value == 0
     assert result.matched
+
+
+# --- пожелания со страницы (фаза 3 M3.5, решения 9 и 11) ------------------
+
+from listam.domain.models import PageFields  # noqa: E402
+from listam.domain.scoring import DEFAULT_WEIGHTS  # noqa: E402
+from listam.domain.wishes import Wish  # noqa: E402
+
+RENOVATION = Wish(word="ремонт", field="renovation", any_of=["косметический", "дизайнерский"])
+NOT_PANEL = Wish(word="не панель", field="building_type", none_of=["панельное"])
+BALCONY = Wish(word="балкон", field="balcony", is_=True)
+ELEVATOR = Wish(word="лифт", field="elevator", is_=True)
+
+
+def test_must_have_without_an_opened_page_is_refused():
+    """Жёсткое пожелание не проверить без страницы: объявление — кандидат,
+    а не матч (решение 9)."""
+    assert rejection(a_request(), make_listing(), 10, page=None,
+                     must=[RENOVATION]) == "страница не открыта"
+
+
+def test_must_have_that_is_known_and_wrong_is_refused_by_the_field():
+    page = PageFields(values={"building_type": "панельное", "renovation": "косметический"})
+    assert rejection(a_request(), make_listing(), 10, page=page,
+                     must=[RENOVATION, NOT_PANEL]) == "тип дома"
+
+
+def test_must_have_whose_field_is_not_on_the_page_is_not_refused():
+    """Страница открыта, поля нет — узнать больше нечем, брокер уточнит."""
+    page = PageFields(values={"renovation": "косметический"})
+    assert rejection(a_request(), make_listing(), 10, page=page,
+                     must=[RENOVATION, NOT_PANEL]) is None
+
+
+def test_a_listing_refused_by_the_feed_is_refused_before_the_page():
+    """Грубое сито первым: «район» честнее, чем «страница не открыта»."""
+    assert rejection(a_request(), make_listing(district="Давташен"), 10, page=None,
+                     must=[RENOVATION]) == "район"
+
+
+def test_no_must_have_needs_no_page():
+    assert rejection(a_request(), make_listing(), 10, page=None, must=[]) is None
+
+
+def test_wishes_is_the_seventh_factor():
+    assert set(DEFAULT_WEIGHTS) == {"budget", "district", "price_per_sqm", "area_rooms",
+                                    "floor", "seller_type", "wishes"}
+    assert DEFAULT_WEIGHTS["wishes"] == 15
+
+
+def test_wishes_factor_counts_only_known_fields():
+    """Доля выполненных среди тех, чьё поле известно: лифт есть, балкона
+    нет, про ремонт страница молчит — половина."""
+    page = PageFields(values={"elevator": True, "balcony": False})
+
+    result = score(a_request(), make_listing(), page=page,
+                   nice=[ELEVATOR, BALCONY, RENOVATION])
+
+    assert result.breakdown["wishes"] == (7.5, 15.0)
+
+
+def test_no_wishes_no_factor():
+    """Пожеланий нет — фактор уходит из знаменателя, как остальные шесть."""
+    result = score(a_request(), make_listing(), page=PageFields(values={"elevator": True}))
+
+    assert "wishes" not in result.breakdown
+
+
+def test_wishes_with_no_known_field_leave_the_denominator():
+    without = score(a_request(), make_listing())
+    unknown = score(a_request(), make_listing(), page=PageFields(values={}),
+                    nice=[ELEVATOR])
+    unopened = score(a_request(), make_listing(), page=None, nice=[ELEVATOR])
+
+    assert "wishes" not in unknown.breakdown
+    assert unknown.value == without.value == unopened.value
+
+
+def test_met_wishes_raise_the_score_and_missed_ones_lower_it():
+    request = a_request(budget_max=130_000.0)      # не идеал: баллу есть куда расти
+    met = score(request, make_listing(), page=PageFields(values={"elevator": True}),
+                nice=[ELEVATOR])
+    missed = score(request, make_listing(), page=PageFields(values={"elevator": False}),
+                   nice=[ELEVATOR])
+    without = score(request, make_listing())
+
+    assert met.value > without.value > missed.value
+
+
+def test_score_refuses_on_must_have_like_rejection():
+    result = score(a_request(), make_listing(), page=None, must=[RENOVATION])
+    assert result.rejected_by == "страница не открыта"

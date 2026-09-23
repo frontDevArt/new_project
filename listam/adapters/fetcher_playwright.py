@@ -198,7 +198,7 @@ class PlaywrightFetcher(Fetcher):
         if self._is_challenge(page, html, status):
             raise self._challenge_error(target)
         if status is not None and status >= 400 and status != 429:
-            error = FetchError(f"{target} → HTTP {status}")
+            error = FetchError(f"{target} → HTTP {status}", status=status)
             error.fatal = True
             raise error
         return html

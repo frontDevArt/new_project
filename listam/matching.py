@@ -28,8 +28,9 @@ from listam.clustering_run import area_tolerance, cluster_database
 from listam.config import Config, ConfigError, score_threshold, threshold
 from listam.domain.clustering import clusters
 from listam.domain.events import NOT_REPRESENTATIVE
-from listam.domain.models import Match, Request
-from listam.domain.scoring import DEFAULT_STRETCH_PERCENT, DEFAULT_WEIGHTS, score
+from listam.domain.models import ListingPage, Match, PageFields, Request
+from listam.domain.scoring import DEFAULT_STRETCH_PERCENT, DEFAULT_WEIGHTS, NOT_OPENED, score
+from listam.domain.wishes import request_wishes
 from listam.domain.stats import median_price_per_sqm_by_district
 from listam.ports.database import Database
 from listam.runner import SessionRefused, publish, working_session
@@ -171,6 +172,24 @@ def _is_edited(request: Request) -> bool:
         > request.matched_at
 
 
+def known_fields(page: ListingPage | None, max_attempts: int) -> PageFields | None:
+    """Что подбор знает о странице объявления.
+
+    Открыта — её поля. Не открывалась или ждёт повтора — `None`: объявление
+    с жёсткими пожеланиями остаётся кандидатом (решение 9). Исчерпала
+    попытки — пустые поля: узнать больше нечем, всё неизвестно, а неизвестное
+    не отказ (решение 13). Снятая — тоже `None`: матч по ней не рождается,
+    а ленту догонит ночной обход.
+    """
+    if page is None:
+        return None
+    if page.status == "ok":
+        return page.fields or PageFields()
+    if page.status == "failed" and page.attempts >= max_attempts:
+        return PageFields()
+    return None
+
+
 def run_match(config: Config, *, external_id: str | None = None,
               only_new: bool = False) -> MatchReport:
     """Один проход подбора. Сводку печатает вызывающий.
@@ -188,6 +207,11 @@ def run_match(config: Config, *, external_id: str | None = None,
     # на входе» значит «до работы». Опечатка в имени веса, прочитанная посреди
     # прохода, прилетала бы человеку уже поверх пересчитанных кластеров.
     tuning = settings(config)
+    # Воронка — там же, до замка: кривой словарь пожеланий отклоняется на
+    # входе, а не посреди прохода. Импорт здесь: шаг `pages` сам берёт
+    # у подбора `settings`, и сверху получился бы круг.
+    from listam.pages import funnel_settings
+    funnel = funnel_settings(config)
 
     # Замок, свежая копия, миграции и заливка — общий каркас
     # (`listam/runner.py`): тот же порядок, что у прогона, пересчёта,
@@ -236,6 +260,14 @@ def run_match(config: Config, *, external_id: str | None = None,
             last_run = database.last_run()
             run_id = last_run.id if last_run else None
 
+            # Страницы кандидатов — одним запросом на прогон (решение 9).
+            pages = database.pages_for(representatives)
+            # Решение 14: матч новой или правленой заявки — первичная
+            # подборка (`request`), остальное принёс рынок (`market`).
+            born = {request.id for request in requests if _is_edited(request)}
+            context = _Context(pages=pages, max_attempts=funnel.max_attempts,
+                               wishes=funnel.wishes, born=born)
+
             # Заявка, которую тронули после её последнего подбора, выборкой
             # объявлений не покрывается: изменился не рынок, а условия. Такую
             # ведём по всей базе — иначе поднятый бюджет заработает только ночью.
@@ -248,12 +280,12 @@ def run_match(config: Config, *, external_id: str | None = None,
                 _write_matches(database, report, edited, whole, representatives,
                                medians, run_id, tuning,
                                full_sweep=True, off_the_feed=off_the_feed,
-                               everything_by_id=alive_ids)
+                               everything_by_id=alive_ids, context=context)
             if fresh:
                 _write_matches(database, report, fresh, candidates, representatives,
                                medians, run_id, tuning,
                                full_sweep=not only_new, off_the_feed=off_the_feed,
-                               everything_by_id=alive_ids)
+                               everything_by_id=alive_ids, context=context)
             database.mark_requests_matched(
                 [request.id for request in requests if request.id is not None],
                 datetime.now(timezone.utc),
@@ -296,11 +328,21 @@ def _count_clusters(database: Database, config: Config, notes: list[str],
     )
 
 
+@dataclass
+class _Context:
+    """Что подбору нужно от воронки: страницы, словарь и кто родил матч."""
+
+    pages: dict[str, ListingPage]
+    max_attempts: int
+    wishes: dict
+    born: set[int]
+
+
 def _write_matches(database: Database, report: MatchReport, requests, candidates,
                    representatives: dict, medians: dict[str, float],
                    run_id: int | None, tuning: Settings,
                    full_sweep: bool, off_the_feed: set[str],
-                   everything_by_id: set[str]) -> None:
+                   everything_by_id: set[str], context: _Context) -> None:
     """Пара «заявка × представитель» → балл → строка в `matches`.
 
     `full_sweep` — прошли ли по всей базе. Только полный проход имеет право
@@ -318,6 +360,10 @@ def _write_matches(database: Database, report: MatchReport, requests, candidates
     представитель кластера, закрывается со своей причиной: появился двойник
     дешевле. Это не «бюджет» и не «район» — клиенту ту же квартиру покажут
     по другой карточке.
+
+    `context` — страницы и пожелания (фаза 3 M3.5). Отказ «страница не
+    открыта» не пишется и не закрывает старый матч (решение 12): проход
+    это объявление не видел, а не видел и не подтвердил.
     """
     now = datetime.now(timezone.utc)
     not_representatives = everything_by_id - representatives.keys()
@@ -333,10 +379,19 @@ def _write_matches(database: Database, report: MatchReport, requests, candidates
         # Матчи заявки копятся и пишутся одной транзакцией: по одной на строку
         # боевые 67 000 матчей стоили минуту фиксаций на диск.
         batch: list[Match] = []
+        must, nice = request_wishes(request, context.wishes)
+        origin = "request" if request.id in context.born else "market"
+        unseen: set[str] = set()
         for listing in candidates:
+            page = (known_fields(context.pages.get(listing.id), context.max_attempts)
+                    if must or nice else None)
             result = score(request, listing, median_by_district=medians,
                            weights=tuning.weights,
-                           stretch_percent=tuning.stretch_percent)
+                           stretch_percent=tuning.stretch_percent,
+                           page=page, must=must, nice=nice)
+            if result.rejected_by == NOT_OPENED:
+                unseen.add(listing.id)
+                continue
             if result.rejected_by is not None:
                 # Отказ в базу не пишется: их миллионы, и звонить по ним некуда.
                 # Но причина запоминается: если на это объявление есть вчерашний
@@ -353,6 +408,7 @@ def _write_matches(database: Database, report: MatchReport, requests, candidates
                 cluster_id=cluster.cluster_id,
                 cluster_size=cluster.size,
                 cluster_spread_usd=cluster.spread_usd,
+                origin=origin,
             ))
             confirmed.add(listing.id)
             if tuning.hot is not None and result.value >= tuning.hot:
@@ -363,7 +419,7 @@ def _write_matches(database: Database, report: MatchReport, requests, candidates
             setattr(report, outcome, getattr(report, outcome) + count)
         if full_sweep:
             report.retired += database.retire_matches(
-                request.id, keep=confirmed | off_the_feed, now=now,
+                request.id, keep=confirmed | off_the_feed | unseen, now=now,
                 reasons=reasons,
                 default="проход больше не подтверждает этот вариант",
             )

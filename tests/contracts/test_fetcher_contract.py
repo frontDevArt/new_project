@@ -135,6 +135,22 @@ def test_sends_configured_user_agent(http_site):
     assert headers["user-agent"] == "listam-broker/0.1"
 
 
+def test_a_page_the_site_does_not_have_carries_its_status(http_site):
+    """Снятое объявление list.am отдаёт кодом 404: шаг `pages` обязан
+    отличить «страницы нет» от «сеть моргнула», и различает он по коду."""
+    http_site.route("/gone", "нет такого", status=404)
+    with pytest.raises(FetchError) as error:
+        HttpFetcher(base_url=http_site.base_url, delay_seconds=0, retries=1).get("/gone")
+    assert error.value.status == 404
+
+
+def test_a_network_failure_has_no_status():
+    with pytest.raises(FetchError) as error:
+        HttpFetcher(base_url="http://127.0.0.1:9", delay_seconds=0, retries=1,
+                    timeout=1).get("/x")
+    assert error.value.status is None
+
+
 # --- поведение, которое есть только у files ------------------------------
 
 
@@ -184,6 +200,18 @@ def test_playwright_reports_cloudflare_challenge(http_site):
         with pytest.raises(FetchError) as error:
             fetcher.get("/guard")
         assert "Cloudflare" in str(error.value)
+    finally:
+        fetcher.close()
+
+
+@pytest.mark.skipif(not HAS_PLAYWRIGHT, reason="playwright не установлен")
+def test_playwright_reports_the_status_of_a_missing_page(http_site):
+    http_site.route("/gone", "<html><body>нет такого</body></html>", status=404)
+    fetcher = PlaywrightFetcher(base_url=http_site.base_url, delay_seconds=0, retries=1)
+    try:
+        with pytest.raises(FetchError) as error:
+            fetcher.get("/gone")
+        assert error.value.status == 404
     finally:
         fetcher.close()
 

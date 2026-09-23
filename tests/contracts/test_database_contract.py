@@ -6,7 +6,7 @@ from datetime import datetime, timezone
 import pytest
 
 from listam.adapters.db_sqlite import SqliteDatabase
-from listam.domain.models import Listing, Match, Request
+from listam.domain.models import Listing, ListingPage, Match, PageFields, Request
 from listam.ports.database import Database
 
 NOW = datetime(2026, 9, 21, 10, 0, tzinfo=timezone.utc)  # календарь: не сравнивается с часами
@@ -1387,3 +1387,141 @@ def test_a_match_without_a_listing_cannot_exist_at_all(db):
 
     assert db.count_matches_alive(request.id) == 0
     assert db.matches_with_listings(request.id) == []
+
+
+# --- кэш страниц объявлений (фаза 3 M3.5) -------------------------------
+
+def make_page(listing_id="24254997", **over) -> ListingPage:
+    values = dict(
+        listing_id=listing_id, status="ok", fetched_at=LATER, attempts=1,
+        price_raw="$132,000",
+        fields=PageFields(values={"renovation": "косметический", "elevator": True,
+                                  "ceiling_height": 2.7, "_unknown": ["Сауна"]},
+                          description="Продаётся квартира", photos=["//img/1.webp"]),
+    )
+    values.update(over)
+    return ListingPage(**values)
+
+
+def test_a_page_nobody_opened_is_none(db):
+    assert db.get_page("24254997") is None
+
+
+def test_a_saved_page_reads_back_with_its_fields(db):
+    """Поля страницы — данные, по которым решается матч: вернуться они
+    обязаны теми же, включая список неразобранных подписей."""
+    db.save_page(make_page())
+
+    page = db.get_page("24254997")
+
+    assert page.status == "ok"
+    assert page.attempts == 1
+    assert page.fetched_at == LATER
+    assert page.price_raw == "$132,000"
+    assert page.fields.values == {"renovation": "косметический", "elevator": True,
+                                  "ceiling_height": 2.7, "_unknown": ["Сауна"]}
+    assert page.fields.description == "Продаётся квартира"
+    assert page.fields.photos == ["//img/1.webp"]
+
+
+def test_saving_a_page_again_replaces_it(db):
+    """Апсерт по объявлению: вторая запись — не вторая строка."""
+    db.save_page(make_page(status="failed", attempts=1, fields=None, error="таймаут"))
+    db.save_page(make_page(status="ok", attempts=2))
+
+    page = db.get_page("24254997")
+
+    assert page.status == "ok"
+    assert page.attempts == 2
+    assert page.error is None
+    assert page.fields.values["elevator"] is True
+
+
+def test_a_failed_page_keeps_no_fields(db):
+    db.save_page(make_page(status="failed", fields=None, error="таймаут", fetched_at=None))
+
+    page = db.get_page("24254997")
+
+    assert page.status == "failed"
+    assert page.fields is None
+    assert page.fetched_at is None
+    assert page.error == "таймаут"
+
+
+def test_pages_come_for_many_listings_at_once(db):
+    """Подбор спрашивает страницы всех кандидатов одним запросом."""
+    db.save_page(make_page("1"))
+    db.save_page(make_page("2", status="gone", fields=None))
+
+    pages = db.pages_for(["1", "2", "3"])
+
+    assert set(pages) == {"1", "2"}
+    assert pages["2"].status == "gone"
+    assert db.pages_for([]) == {}
+
+
+def test_listings_paged_since_are_only_the_opened_ones(db):
+    """Пора в подбор — тем, чья страница открылась после отметки. Сбой
+    и снятое ничего нового подбору не несут."""
+    db.save_page(make_page("1", fetched_at=NOW))
+    db.save_page(make_page("2", fetched_at=EVEN_LATER))
+    db.save_page(make_page("3", fetched_at=EVEN_LATER, status="failed", fields=None))
+
+    assert db.listings_paged_since(LATER) == {"2"}
+
+
+def test_a_listing_whose_page_just_opened_is_touched(db):
+    """Кандидат ждал страницу; она открылась — `match --new` обязан его
+    увидеть, хотя на ленте с ним ничего не случилось (решение 9)."""
+    db.upsert_listing(make_listing(), seen_at=NOW)
+    assert db.listings_touched_since(LATER) == []
+
+    db.save_page(make_page(fetched_at=EVEN_LATER))
+
+    assert [item.id for item in db.listings_touched_since(LATER)] == ["24254997"]
+
+
+def test_origin_is_written_once_and_not_compared(db):
+    """`origin` ставится при вставке. Пересчёт его не сравнивает и не
+    переписывает: рыночный матч не становится «заявочным» оттого, что
+    заявку поправили."""
+    db.upsert_listing(make_listing(), seen_at=NOW)
+    db.upsert_request(Request(external_id="R-1"), now=NOW)
+    request = db.get_request("R-1")
+
+    db.upsert_matches([Match(request_id=request.id, listing_id="24254997",
+                             score=80.0, origin="market")], NOW)
+    counts = db.upsert_matches([Match(request_id=request.id, listing_id="24254997",
+                                      score=80.0, origin="request")], LATER)
+    assert counts == {"new": 0, "updated": 0, "unchanged": 1}
+
+    db.upsert_matches([Match(request_id=request.id, listing_id="24254997",
+                             score=90.0, origin="request")], EVEN_LATER)
+    db.upsert_match(Match(request_id=request.id, listing_id="24254997",
+                          score=91.0, origin="request"), EVEN_LATER)
+
+    stored = db.matches_for_request(request.id)[0]
+    assert stored.score == 91.0
+    assert stored.origin == "market"
+
+
+def test_a_single_match_is_born_with_its_origin(db):
+    db.upsert_listing(make_listing(), seen_at=NOW)
+    db.upsert_request(Request(external_id="R-1"), now=NOW)
+    request = db.get_request("R-1")
+
+    db.upsert_match(Match(request_id=request.id, listing_id="24254997",
+                          score=80.0, origin="request"), NOW)
+
+    assert db.matches_for_request(request.id)[0].origin == "request"
+
+
+def test_pages_are_counted_by_status(db):
+    """`doctor` показывает кэш целиком — счётом, без чтения полей."""
+    assert db.page_counts() == {}
+    db.save_page(make_page("1"))
+    db.save_page(make_page("2"))
+    db.save_page(make_page("3", status="failed", fields=None))
+    db.save_page(make_page("4", status="gone", fields=None))
+
+    assert db.page_counts() == {"ok": 2, "failed": 1, "gone": 1}

@@ -46,14 +46,17 @@ def build_storage(config: Config) -> Storage:
     raise _unknown("storage", kind, ["local", "gdrive"])
 
 
-def build_fetcher(config: Config) -> Fetcher:
+def build_fetcher(config: Config, delay_seconds: float | None = None) -> Fetcher:
+    """`delay_seconds` — своя пауза вместо `scrape.delay_seconds`: у страниц
+    объявлений она длиннее, чем у ленты (`funnel.delay_seconds`)."""
     kind = _kind(config, "scrape", "http")
+    delay = config.get("scrape.delay_seconds", 1.5) if delay_seconds is None         else delay_seconds
     if kind in ("http", "fetcher", ""):
         from listam.adapters.fetcher_http import DEFAULT_USER_AGENT, HttpFetcher
 
         return HttpFetcher(
             base_url=config.get("scrape.base_url"),
-            delay_seconds=config.get("scrape.delay_seconds", 1.5),
+            delay_seconds=delay,
             user_agent=config.get("scrape.user_agent", DEFAULT_USER_AGENT),
             timeout=config.get("scrape.timeout_seconds", 20.0),
             retries=config.get("scrape.retries", 3),
@@ -68,7 +71,7 @@ def build_fetcher(config: Config) -> Fetcher:
         _guard_profile_dir(config)
         return PlaywrightFetcher(
             base_url=config.get("scrape.base_url"),
-            delay_seconds=config.get("scrape.delay_seconds", 1.5),
+            delay_seconds=delay,
             timeout=config.get("scrape.timeout_seconds", 45.0),
             retries=config.get("scrape.retries", 3),
             headless=config.get("scrape.headless", False),

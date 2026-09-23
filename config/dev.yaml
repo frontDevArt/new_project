@@ -25,9 +25,27 @@ schedule:                       # `python -m listam schedule install` стави
   cycles:                       # шаги — аргументы CLI без «python -m listam»; первый ненулевой код — стоп
                                 # «в ЧЧ:30», а не «:00»: часовой идёт в начале часа, и занятый им
                                 # замок тихо пропустил бы ночной обход или вечерний дайджест
-    hourly:  {every_minutes: 60, steps: ["scrape --fresh", "match --new", "notify --hot"]}
-    nightly: {at: "04:30", steps: ["scrape", "match --all", "notify --feed"]}
+    hourly:  {every_minutes: 60, steps: ["scrape --fresh", "pages", "match --new", "notify --hot"]}
+    nightly: {at: "04:30", steps: ["scrape", "pages", "match --all", "notify --feed"]}
     evening: {at: "20:30", steps: ["notify --digest"]}
+
+funnel:                         # воронка: страница объявления — только кандидату под живую заявку
+  delay_seconds: 5              # пауза между страницами объявлений — больше, чем у ленты
+  max_opens_per_run: 30         # потолок открытий за прогон; null нельзя — это был бы массовый обход
+  find_max_opens: 20            # потолок для find --open (фаза 5)
+  max_attempts: 3               # неудачное открытие повторяется до стольких раз, дальше поле неизвестно
+  wishes:                       # слово брокера в must_have / nice_to_have → условие на поле страницы
+                                # значения — слова сайта строчными, как на странице объявления
+                                # (сверено с тремя страницами 23.09.2026; «евроремонт» на них не встретился)
+    ремонт:          {field: renovation, any_of: [косметический, евроремонт, дизайнерский]}
+    евроремонт:      {field: renovation, any_of: [евроремонт, дизайнерский]}
+    камень:          {field: building_type, any_of: [каменное]}
+    монолит:         {field: building_type, any_of: [монолит]}
+    не панель:       {field: building_type, none_of: [панельное]}
+    балкон:          {field: balcony, is: true}
+    лифт:            {field: elevator, is: true}
+    новостройка:     {field: new_build, is: true}
+    высокие потолки: {field: ceiling_height, min: 3}
 
 validate:                       # пороги «это опечатка продавца, а не данные»
   price_usd: {min: 5000, max: 5000000}
@@ -54,7 +72,7 @@ requests:
 
 match:                          # движок подбора: `python -m listam match`
   weights:                      # веса факторов, сумма значения не имеет
-                                # названы обязаны быть все шесть: имя с опечаткой
+                                # названы обязаны быть все семь: имя с опечаткой
                                 # и пропущенный фактор — отказ на входе, а не
                                 # молча другой балл. Выключают фактор весом 0
     budget: 30                  # попадание в бюджет
@@ -63,6 +81,7 @@ match:                          # движок подбора: `python -m listam
     area_rooms: 15              # площадь и комнаты
     floor: 10                   # штраф за первый и последний, если клиент против
     seller_type: 5              # собственник выше агентства
+    wishes: 15                  # пожелания nice_to_have со страницы; предварительно, фаза 4 уточняет
   thresholds:
     hot: 70                     # немедленное уведомление (заработает на M3)
     digest: 40                  # дневной дайджест

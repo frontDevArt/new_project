@@ -15,8 +15,10 @@ from __future__ import annotations
 from dataclasses import dataclass, field
 from datetime import datetime, timezone
 
-from listam.config import Config
+from listam.config import Config, ConfigError
+from listam.domain.models import Request
 from listam.domain.requests import RequestError
+from listam.domain.wishes import parse_wishes, vocabulary
 from listam.runner import SessionRefused, publish, working_session
 from listam.wiring import build_requests_source
 
@@ -32,6 +34,7 @@ class SyncReport:
     closed: int = 0             # заявок закрыто: строки в источнике больше нет
     closed_ids: list[str] = field(default_factory=list)
     rejected: list[RequestError] = field(default_factory=list)
+    warnings: list[str] = field(default_factory=list)   # заявка читается, но не вся
     errors: int = 0
     notes: str | None = None
     finished_at: datetime | None = None
@@ -49,7 +52,39 @@ class SyncReport:
         if self.rejected:
             lines.append(f"⚠ Не разобрано: {len(self.rejected)}")
             lines.extend(f"  {item.render()}" for item in self.rejected)
+        lines.extend(self.warnings)
         return "\n".join(lines)
+
+
+def _check_wishes(parsed: list[Request], vocab: dict
+                  ) -> tuple[list[Request], list[RequestError], list[str]]:
+    """Пожелания заявок против словаря `funnel.wishes` (решение 10).
+
+    Неизвестное слово в `must_have` — отказ строки: жёсткий критерий наугад
+    не истолковывается. В `nice_to_have` — предупреждение: заявка читается,
+    слово не учитывается.
+    """
+    kept: list[Request] = []
+    rejected: list[RequestError] = []
+    warnings: list[str] = []
+    for request in parsed:
+        _, unknown_must = parse_wishes(request.must_have, vocab)
+        if unknown_must:
+            rejected.append(RequestError(
+                row_number=0, external_id=request.external_id, column="must_have",
+                value=", ".join(unknown_must),
+                message="слова нет в словаре funnel.wishes — жёсткий критерий "
+                        "наугад не истолковывается; поправь слово или словарь",
+            ))
+            continue
+        _, unknown_nice = parse_wishes(request.nice_to_have, vocab)
+        warnings.extend(
+            f"⚠ {request.external_id} · nice_to_have: слово «{word}» не из словаря "
+            f"funnel.wishes — не учитывается"
+            for word in unknown_nice
+        )
+        kept.append(request)
+    return kept, rejected, warnings
 
 
 def run_requests_sync(config: Config) -> SyncReport:
@@ -70,7 +105,17 @@ def run_requests_sync(config: Config) -> SyncReport:
         report.finished_at = datetime.now(timezone.utc)
         return report
 
-    report.rejected = list(rejected)
+    try:
+        vocab = vocabulary(config)
+    except ConfigError as exc:
+        report.errors = 1
+        report.notes = f"Заявки не прочитаны: {exc}"
+        report.finished_at = datetime.now(timezone.utc)
+        return report
+    parsed, wrong_words, report.warnings = _check_wishes(list(parsed), vocab)
+
+    report.rejected = list(rejected) + wrong_words
+    rejected = report.rejected
     if rejected and not parsed:
         # Ни одна строка не разобралась при непустой таблице: это не полсотни
         # опечаток подряд, это уехавший формат таблицы.

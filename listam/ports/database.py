@@ -3,8 +3,11 @@ from __future__ import annotations
 
 from abc import ABC, abstractmethod
 from datetime import datetime
+from typing import Iterable
 
-from listam.domain.models import Listing, Match, Notification, PricePoint, Request, Run
+from listam.domain.models import (
+    Listing, ListingPage, Match, Notification, PricePoint, Request, Run,
+)
 
 
 class Database(ABC):
@@ -145,10 +148,32 @@ class Database(ABC):
     def listings_touched_since(self, since: datetime) -> list[Listing]:
         """Активные без аномалии, которых с отметки что-то коснулось.
 
-        Коснулось — это появилось, сменило цену или вернулось на ленту.
+        Коснулось — это появилось, сменило цену, вернулось на ленту **или
+        у него открылась страница** (`listings_paged_since`): кандидат, ждавший
+        страницу, становится матчем в ближайшем подборе (решение 9).
         Мерить одним `first_seen`, как `listings_for_matching(since=...)`,
         мало: подешевевшая квартира новой не становится, а подбор её ждёт.
         """
+
+    @abstractmethod
+    def get_page(self, listing_id: str) -> ListingPage | None:
+        """Кэш страницы объявления; страницу не открывали — None."""
+
+    @abstractmethod
+    def save_page(self, page: ListingPage) -> None:
+        """Апсерт по `listing_id`. `attempts` считает вызывающий."""
+
+    @abstractmethod
+    def pages_for(self, listing_ids: Iterable[str]) -> dict[str, ListingPage]:
+        """Страницы многих объявлений одним запросом; неоткрытых в ответе нет."""
+
+    @abstractmethod
+    def page_counts(self) -> dict[str, int]:
+        """Сколько страниц в кэше по статусам (`ok`, `failed`, `gone`) — счётом."""
+
+    @abstractmethod
+    def listings_paged_since(self, since: datetime) -> set[str]:
+        """Чья страница открыта (`status = ok`) после отметки: им пора в подбор."""
 
     @abstractmethod
     def mark_requests_matched(self, request_ids: list[int], now: datetime) -> None:

@@ -330,5 +330,38 @@ def test_migration_011_remembers_the_channel_of_a_send(tmp_path):
     columns = {row["name"] for row in
                database.conn.execute("PRAGMA table_info(notifications)")}
     assert "channel" in columns
+    assert database.schema_version() >= 11
+    database.close()
+
+
+def test_migration_012_adds_the_funnel_and_keeps_the_old_matches(tmp_path):
+    """Схема 11 → 12 на заполненной базе: строки на месте, у старых матчей
+    `origin` пуст — кто их родил, до миграции никто не записал."""
+    database = opened(tmp_path, upto(tmp_path, 11))
+    database.migrate()
+    database.conn.execute(
+        "INSERT INTO listings (id, url, status, first_seen, last_seen) "
+        "VALUES ('1', 'u', 'active', '2026-09-21T10:00:00+00:00', "
+        "'2026-09-21T10:00:00+00:00')"
+    )
+    database.conn.execute("INSERT INTO requests (external_id) VALUES ('R-1')")
+    database.conn.execute(
+        "INSERT INTO matches (request_id, listing_id, score) VALUES (1, '1', 80)"
+    )
+    database.conn.commit()
     assert database.schema_version() == 11
+    database.close()
+
+    database = opened(tmp_path, MIGRATIONS_DIR)
+    database.migrate()
+
+    assert database.schema_version() == 12
+    assert {"listing_pages", "request_exclusions"} <= database.table_names()
+    row = database.conn.execute("SELECT * FROM matches").fetchone()
+    assert row["score"] == 80
+    assert row["origin"] is None
+    assert database.conn.execute(
+        "SELECT COUNT(*) AS n FROM listings").fetchone()["n"] == 1
+    assert database.conn.execute(
+        "SELECT COUNT(*) AS n FROM listing_pages").fetchone()["n"] == 0
     database.close()

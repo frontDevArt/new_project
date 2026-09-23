@@ -272,13 +272,16 @@ funnel:
   find_max_opens: 20            # потолок для find --open
   max_attempts: 3
   wishes:                       # слово брокера → условие на поле страницы
-    ремонт:     {field: renovation, any_of: [cosmetic, euro, designer]}
-    евроремонт: {field: renovation, any_of: [euro, designer]}
-    камень:     {field: building_type, any_of: [stone]}
-    монолит:    {field: building_type, any_of: [monolith]}
-    не панель:  {field: building_type, none_of: [panel]}
-    балкон:     {field: balcony, is: true}
-    лифт:       {field: elevator, is: true}
+                                # значения — слова сайта строчными (разведка фазы 3)
+    ремонт:          {field: renovation, any_of: [косметический, евроремонт, дизайнерский]}
+    евроремонт:      {field: renovation, any_of: [евроремонт, дизайнерский]}
+    камень:          {field: building_type, any_of: [каменное]}
+    монолит:         {field: building_type, any_of: [монолит]}
+    не панель:       {field: building_type, none_of: [панельное]}
+    балкон:          {field: balcony, is: true}
+    лифт:            {field: elevator, is: true}
+    новостройка:     {field: new_build, is: true}
+    высокие потолки: {field: ceiling_height, min: 3}
 
 feedback:
   reasons:                      # слова отказа → что исключить из заявки
@@ -296,9 +299,14 @@ notify:
     gem_percent: 15             # 💎 — дешевле медианы района хотя бы на столько
 ```
 
-Имена полей страницы (`renovation`, `building_type`, …) и их значения —
-**предварительные**. Их фиксирует разведка фазы 3 по 2–3 настоящим
-страницам, и словарь правится под то, что реально есть на сайте.
+Имена полей страницы и их значения **зафиксированы разведкой фазы 3**
+(23.09.2026, три страницы, снятые инструментом, плюс пять живых страниц шага
+`pages`): значение — слово сайта строчными, а не перевод в латиницу —
+так брокер сверяет словарь со страницей глазами. `building_type`: каменное,
+панельное, монолит; `renovation`: косметический, частичный, дизайнерский,
+евроремонт, капитальный; `elevator`, `new_build` — да/нет; `balcony` — есть
+ли балкон, `balcony_type` — открытый, закрытый; `ceiling_height` — метры.
+Полный список полей — в «Результате фазы 3» плана.
 Шаги `pages` появляются в циклах только в фазе 3; до неё циклы идут без них.
 
 `match.weights` получает седьмой фактор `wishes` (фаза 3). Проверка «названы

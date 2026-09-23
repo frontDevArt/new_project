@@ -8,9 +8,11 @@ from contextlib import contextmanager
 from dataclasses import fields as dataclass_fields
 from datetime import datetime, timezone
 from pathlib import Path
-from typing import Iterator
+from typing import Iterable, Iterator
 
-from listam.domain.models import Listing, Match, Notification, PricePoint, Request, Run
+from listam.domain.models import (
+    Listing, ListingPage, Match, Notification, PageFields, PricePoint, Request, Run,
+)
 from listam.ports.database import Database
 
 MIGRATIONS_DIR = Path(__file__).resolve().parent.parent / "migrations"
@@ -493,11 +495,64 @@ class SqliteDatabase(Database):
             "   AND (first_seen >= :since "
             "        OR returned_at >= :since "
             "        OR id IN (SELECT listing_id FROM price_history "
-            "                   WHERE seen_at >= :since)) "
+            "                   WHERE seen_at >= :since) "
+            "        OR id IN (SELECT listing_id FROM listing_pages "
+            "                   WHERE status = 'ok' AND fetched_at >= :since)) "
             " ORDER BY first_seen DESC, id DESC",
             {"since": stamp},
         )
         return [_row_to_listing(row) for row in rows]
+
+    # --- страницы объявлений ----------------------------------------------
+    def get_page(self, listing_id: str) -> ListingPage | None:
+        row = self.conn.execute(
+            "SELECT * FROM listing_pages WHERE listing_id = ?", (listing_id,)
+        ).fetchone()
+        return _row_to_page(row) if row else None
+
+    def save_page(self, page: ListingPage) -> None:
+        """Апсерт целой строкой: прошлый сбой не оставляет в удачной свою ошибку."""
+        values = {
+            "listing_id": page.listing_id,
+            "fetched_at": to_iso(page.fetched_at),
+            "status": page.status,
+            "attempts": int(page.attempts),
+            "price_raw": page.price_raw,
+            "fields": _page_fields_json(page.fields),
+            "error": page.error,
+        }
+        columns = ", ".join(values)
+        placeholders = ", ".join(f":{name}" for name in values)
+        assignments = ", ".join(f"{name} = excluded.{name}"
+                                for name in values if name != "listing_id")
+        with self.transaction():
+            self.conn.execute(
+                f"INSERT INTO listing_pages ({columns}) VALUES ({placeholders}) "
+                f"ON CONFLICT(listing_id) DO UPDATE SET {assignments}",
+                values,
+            )
+
+    def pages_for(self, listing_ids: Iterable[str]) -> dict[str, ListingPage]:
+        """Одним запросом, без списка из тысяч «?»: кандидатов бывает много."""
+        wanted = set(listing_ids)
+        if not wanted:
+            return {}
+        return {row["listing_id"]: _row_to_page(row)
+                for row in self.conn.execute("SELECT * FROM listing_pages")
+                if row["listing_id"] in wanted}
+
+    def page_counts(self) -> dict[str, int]:
+        rows = self.conn.execute(
+            "SELECT status, COUNT(*) AS n FROM listing_pages GROUP BY status")
+        return {row["status"]: row["n"] for row in rows}
+
+    def listings_paged_since(self, since: datetime) -> set[str]:
+        rows = self.conn.execute(
+            "SELECT listing_id FROM listing_pages "
+            "WHERE status = 'ok' AND fetched_at >= ?",
+            (to_iso(since),),
+        )
+        return {row["listing_id"] for row in rows}
 
     def upsert_request(self, request: Request, now: datetime) -> str:
         values = {name: _request_value(request, name) for name in REQUEST_FIELDS}
@@ -607,6 +662,7 @@ class SqliteDatabase(Database):
             values["listing_id"] = match.listing_id
             values["status"] = match.status or "new"
             values["reject_reason"] = match.reject_reason
+            values["origin"] = match.origin
             values["first_matched_at"] = to_iso(now)
             values["matched_at"] = to_iso(now)
             columns = ", ".join(values)
@@ -674,7 +730,7 @@ class SqliteDatabase(Database):
                 values.update(
                     request_id=match.request_id, listing_id=match.listing_id,
                     status=match.status or "new", reject_reason=match.reject_reason,
-                    first_matched_at=stamp, matched_at=stamp,
+                    origin=match.origin, first_matched_at=stamp, matched_at=stamp,
                 )
                 inserts.append(values)
                 counts["new"] += 1
@@ -1206,4 +1262,30 @@ def _row_to_match(row: sqlite3.Row) -> Match:
         retired_at=from_iso(row["retired_at"]),
         retired_reason=row["retired_reason"],
         revived_at=from_iso(row["revived_at"]),
+        # Витрина и выгрузка читают базу без миграций: у отставшей колонки нет.
+        origin=row["origin"] if "origin" in row.keys() else None,
+    )
+
+
+def _page_fields_json(fields: PageFields | None) -> str | None:
+    if fields is None:
+        return None
+    return json.dumps({"values": fields.values, "description": fields.description,
+                       "photos": fields.photos}, ensure_ascii=False, sort_keys=True)
+
+
+def _row_to_page(row: sqlite3.Row) -> ListingPage:
+    raw = json.loads(row["fields"]) if row["fields"] else None
+    return ListingPage(
+        listing_id=row["listing_id"],
+        status=row["status"],
+        fetched_at=from_iso(row["fetched_at"]),
+        attempts=int(row["attempts"] or 0),
+        price_raw=row["price_raw"],
+        fields=None if raw is None else PageFields(
+            values=raw.get("values") or {},
+            description=raw.get("description"),
+            photos=list(raw.get("photos") or []),
+        ),
+        error=row["error"],
     )

@@ -62,8 +62,9 @@ class RequestError:
 
     def render(self) -> str:
         who = f" (заявка {self.external_id})" if self.external_id else ""
-        return (f"строка {self.row_number}{who}: "
-                f"{self.column} = {self.value!r} — {self.message}")
+        # Номер 0 — строку отклонили после разбора, по заявке, а не по месту.
+        where = f"строка {self.row_number}{who}" if self.row_number             else f"заявка {self.external_id}"
+        return f"{where}: {self.column} = {self.value!r} — {self.message}"
 
 
 def _text(row: dict, column: str) -> str:

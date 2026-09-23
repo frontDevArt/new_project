@@ -151,3 +151,32 @@ class Match:
     retired_at: datetime | None = None      # когда проход перестал его подтверждать
     retired_reason: str | None = None       # почему: «бюджет», «район», «не представитель»
     revived_at: datetime | None = None      # когда закрытый матч снова подтвердился
+    origin: str | None = None               # market | request: кто родил; не сравнивается
+
+
+@dataclass
+class PageFields:
+    """Разобранная страница объявления: то, чего нет в карточке ленты.
+
+    `values` — поле → значение: `renovation` → «косметический» (слово сайта
+    строчными), `elevator` → True, `ceiling_height` → 2.7. Подписи, которых
+    разбор не знает, лежат списком в `values["_unknown"]`: прогон их считает,
+    а не молчит.
+    """
+
+    values: dict[str, object] = field(default_factory=dict)
+    description: str | None = None
+    photos: list[str] = field(default_factory=list)      # ссылки; для M4
+
+
+@dataclass
+class ListingPage:
+    """Строка кэша открытых страниц. HTML не хранится — только разобранное."""
+
+    listing_id: str
+    status: str                             # ok | gone | failed
+    fetched_at: datetime | None = None      # когда открылась удачно
+    attempts: int = 0                       # сколько раз пробовали; считает вызывающий
+    price_raw: str | None = None            # цена карточки в момент открытия
+    fields: PageFields | None = None
+    error: str | None = None

@@ -363,3 +363,29 @@ def test_both_configs_carry_locale_and_schedule(env, prefix, tmp_path, monkeypat
     assert config.get("locale.timezone") == "Asia/Yerevan"
     assert config.get("schedule.task_prefix") == prefix
     assert config.get("schedule.log_dir")
+
+
+# --- воронка (фаза 3 M3.5) ----------------------------------------------
+
+@pytest.mark.parametrize("env", ["dev", "prod"])
+def test_shipped_configs_carry_a_valid_funnel(env, tmp_path, monkeypatch):
+    """Потолок, пауза и словарь читаются без отказа; слова примера заявок
+    (R-2: «ремонт», «балкон, лифт»; R-3: «не панель», «евроремонт») в словаре."""
+    from listam.pages import funnel_settings
+
+    funnel = funnel_settings(shipped_config(env, tmp_path, monkeypatch))
+
+    assert funnel.max_opens >= 1
+    assert funnel.delay_seconds >= 5
+    assert {"ремонт", "балкон", "лифт", "не панель", "евроремонт"} <= set(funnel.wishes)
+
+
+@pytest.mark.parametrize("env", ["dev", "prod"])
+@pytest.mark.parametrize("cycle", ["hourly", "nightly"])
+def test_pages_run_between_the_scrape_and_the_match(env, cycle, tmp_path, monkeypatch):
+    """Решение 9: страница открывается после обхода и до подбора, иначе
+    кандидат ждёт матча лишний цикл."""
+    steps = shipped_config(env, tmp_path, monkeypatch).get(f"schedule.cycles.{cycle}.steps")
+    names = [step.split()[0] for step in steps]
+
+    assert names.index("scrape") < names.index("pages") < names.index("match")

@@ -5,7 +5,16 @@ from abc import ABC, abstractmethod
 
 
 class FetchError(Exception):
-    """Страницу получить не удалось."""
+    """Страницу получить не удалось.
+
+    `status` — код ответа сайта, если сайт ответил (404 — страницы нет).
+    Сеть отказала раньше ответа — `None`: шаг `pages` отличает «объявление
+    снято» от «сеть моргнула» по нему.
+    """
+
+    def __init__(self, message: str = "", status: int | None = None):
+        super().__init__(message)
+        self.status = status
 
 
 class Fetcher(ABC):
