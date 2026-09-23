@@ -8,6 +8,7 @@ import pytest
 
 from listam.config import ConfigError, load_config
 from listam.domain.models import Listing, Match, Request
+from listam.layout import Message, plain
 from listam.notifications import run_notify
 from listam.wiring import build_database
 
@@ -96,7 +97,7 @@ def test_a_send_writes_one_line_in_the_journal(prepared, capsys):
     database.close()
     assert last is not None
     assert last.events == 2
-    assert "Заявка R-1" in last.text
+    assert "R-1 · Ани" in last.text
 
 
 def test_the_second_run_sends_nothing_new(prepared):
@@ -159,7 +160,7 @@ def test_a_wide_request_is_marked(prepared):
     report = run_notify(prepared, kind="digest", dry_run=True)
 
     assert "слишком широкая" in report.text
-    assert "…и ещё 1 из 2" in report.text
+    assert "➕ ещё 1 вариант ниже по баллу" in report.text
 
 
 def test_closures_do_not_make_a_request_wide(prepared):
@@ -179,7 +180,7 @@ def test_closures_do_not_make_a_request_wide(prepared):
 
     report = run_notify(prepared, kind="digest", dry_run=True)
 
-    assert "отпало 2 (бюджет 1, район 1)" in report.text
+    assert "❌ 2 (бюджет 1, район 1)" in report.text
     assert "слишком широкая" not in report.text
 
 
@@ -246,24 +247,28 @@ def test_the_feed_message_counts_what_came_outside_the_requests(prepared):
     """Лента — отдельный разговор: брокеру нужно видеть её и тогда, когда
     ни одна заявка ничего не взяла."""
     fresh_listings(prepared, 2)
+    # Ноль — это ноль: 💎 у всех, кто не дороже медианы района.
+    prepared.data["notify"]["feed"]["gem_percent"] = 0
 
     report = run_notify(prepared, kind="feed", dry_run=True)
 
     assert report.events == 2
-    assert "На ленте: новых 2" in report.text
+    assert "🆕 2 новых" in report.text
     assert "https://www.list.am/ru/item/fresh-0" in report.text
 
 
 def test_the_feed_message_keeps_the_tail_honest(prepared):
     """Потолок ленты режет строки, но не счётчик: «новых 2» остаётся правдой."""
-    fresh_listings(prepared, 2)
+    fresh_listings(prepared, 3)
     prepared.data["notify"]["feed"]["limit"] = 1
+    prepared.data["notify"]["feed"]["gem_percent"] = 0
 
     report = run_notify(prepared, kind="feed", dry_run=True)
 
-    assert report.events == 2
-    assert "На ленте: новых 2" in report.text
-    assert "…и ещё 1 — python -m listam changes" in report.text
+    assert report.events == 3
+    assert "🆕 3 новых" in report.text
+    assert sum(line.startswith("💎") for line in report.text.splitlines()) == 1
+    assert "➕ ещё 1 заметно дешевле медианы" in report.text
 
 
 def test_a_wide_mark_does_not_stick_to_a_neighbour(prepared):
@@ -291,9 +296,11 @@ def test_a_wide_mark_does_not_stick_to_a_neighbour(prepared):
 
     report = run_notify(prepared, kind="digest", dry_run=True)
 
-    assert report.text.count("слишком широкая") == 1
     marked = [line for line in report.text.splitlines() if "слишком широкая" in line]
-    assert "2 событий" in marked[0]
+    assert marked, "широкая R-1 помечена"
+    assert all(not line.startswith("R-11") for line in marked)
+    assert any("2 события" in line for line in marked)
+    assert "R-11 · Тигран — 🆕 1" in report.text
 
 
 def test_telegram_without_a_token_is_refused_before_the_work(prepared, monkeypatch):
@@ -343,8 +350,7 @@ def test_the_hot_message_never_carries_closures(prepared):
 
     report = run_notify(prepared, kind="hot", dry_run=True)
 
-    assert "отпало" not in report.text
-    assert "только закрытия" not in report.text
+    assert "❌" not in report.text
     assert "событий нет" in report.text
 
 
@@ -355,7 +361,7 @@ def test_the_digest_leaves_closures_out_when_told_so(prepared):
 
     report = run_notify(prepared, kind="digest", dry_run=True)
 
-    assert "отпало" not in report.text
+    assert "❌" not in report.text
 
 
 def test_closures_are_not_counted_as_events(prepared):
@@ -369,7 +375,7 @@ def test_closures_are_not_counted_as_events(prepared):
     assert report.events == 0
     assert report.retired == 2
     assert report.requests == 0
-    assert "отпало 2" in report.render()
+    assert "R-1 · Ани — ❌ 2 (бюджет 2)" in report.render()
     database = build_database(prepared)
     database.connect()
     assert database.last_notification("digest").events == 0
@@ -431,6 +437,27 @@ def test_a_senseless_notify_setting_is_refused_before_the_work(
         run_notify(prepared, kind="digest", dry_run=True)
 
 
+
+@pytest.mark.parametrize("kind, key, value", [
+    ("hot", "notify.layout.score_green", 170),
+    ("digest", "notify.layout.score_green", "зелёный"),
+    ("feed", "notify.feed.gem_percent", -5),
+    ("feed", "notify.feed.gem_percent", 150),
+])
+def test_a_senseless_layout_setting_is_refused_before_the_work(
+        prepared, monkeypatch, kind, key, value):
+    """Кружок 🟢 от балла 170 не загорится никогда, а 💎 «дешевле на −5%»
+    — это любой. Вёрстка читает свои пороги до замка, как и остальной `notify`."""
+    def no_work(*args, **kwargs):
+        raise AssertionError("работа не должна начинаться")
+
+    monkeypatch.setattr("listam.notifications.working_session", no_work)
+    section, name = key.split(".")[1:]
+    prepared.data["notify"].setdefault(section, {})[name] = value
+
+    with pytest.raises(ConfigError, match=key):
+        run_notify(prepared, kind=kind, dry_run=True)
+
 def test_hot_switched_off_by_its_threshold_sends_nothing(prepared):
     """`hot: null` у подбора значит «горячих не бывает». До фазы 5 QA
     `collect_events` подставлял вместо него порог дайджеста, и «Звони сейчас»
@@ -472,12 +499,12 @@ def test_text_printed_to_the_console_does_not_move_the_telegram_window(
     prepared.data["notify"].update({"kind": "telegram", "token": "t", "chat_id": "1"})
     sent = []
     monkeypatch.setattr("listam.adapters.notify_telegram.TelegramNotifier.send",
-                        lambda self, text, to=None: sent.append(text))
+                        lambda self, message, to=None: sent.append(message))
 
     report = run_notify(prepared, kind="hot")
 
     assert report.events == 2
-    assert "Заявка R-1" in sent[0]
+    assert "R-1 · Ани" in plain(sent[0])
 
 
 def cli_args(config) -> list[str]:
@@ -588,3 +615,48 @@ def test_an_empty_digest_is_still_sent(prepared, monkeypatch):
     assert empty.events == 0
     assert len(sent) == 1
     assert empty.sent is True
+
+
+def test_dry_run_equals_journal_text(prepared, monkeypatch):
+    """`--dry-run` и журнал — простой текст той же структуры, что уходит
+    в канал (решение 6 спеки M3.5): что брокер прочёл в консоли, то и ушло."""
+    from listam.ports.notifier import StdoutNotifier
+
+    dry = run_notify(prepared, kind="hot", dry_run=True)
+    sent = []
+    monkeypatch.setattr(StdoutNotifier, "send",
+                        lambda self, message, to=None: sent.append(message))
+
+    report = run_notify(prepared, kind="hot")
+
+    database = build_database(prepared)
+    database.connect()
+    journal = database.last_notification("hot").text
+    database.close()
+    assert isinstance(sent[0], Message)
+    assert journal == dry.text == report.text == plain(sent[0])
+    assert journal.startswith("🔥 ЗВОНИ СЕЙЧАС · R-1 · Ани")
+    assert "🔗 Открыть: https://www.list.am/ru/item/0" in journal
+    assert "<b>" not in journal
+
+
+def test_the_digest_opens_with_a_summary_of_active_requests(prepared):
+    """Сводка дайджеста называет, сколько заявок в работе, — «с находками
+    1 из 1» отвечает брокеру, по скольким клиентам сегодня есть разговор."""
+    report = run_notify(prepared, kind="digest", dry_run=True)
+
+    lines = report.text.splitlines()
+    assert lines[0].startswith("📋 ДАЙДЖЕСТ · ")
+    assert "👥 заявок с находками — 1 из 1" in lines
+    assert "R-1 · Ани — 🆕 2" in lines
+
+
+def test_no_cli_hints_in_the_sent_text(prepared):
+    """Подсказка `python -m listam …` в телефоне бесполезна (пункт 8)."""
+    fresh_listings(prepared, 3)
+    prepared.data["notify"]["feed"]["limit"] = 1
+    prepared.data["notify"]["hot"]["per_request"] = 1
+    prepared.data["notify"]["digest"]["per_request"] = 1
+
+    for kind in ("hot", "digest", "feed"):
+        assert "python -m listam" not in run_notify(prepared, kind=kind, dry_run=True).text

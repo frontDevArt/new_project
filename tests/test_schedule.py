@@ -17,6 +17,7 @@ import yaml
 
 from listam.adapters.run_lock import RunLock
 from listam.config import Config, ConfigError
+from listam.layout import Message, plain
 from listam.ports.notifier import Notifier, NotifyError
 from listam.schedule import (Cycle, cron_lines, cycles, install, remove, run_cycle,
                              windows_tasks)
@@ -58,12 +59,14 @@ def make_config(tmp_path: Path, **schedule_over) -> Config:
 class Recorder(Notifier):
     def __init__(self, fail: bool = False):
         self.sent: list[str] = []
+        self.messages: list[Message] = []
         self.fail = fail
 
-    def send(self, text, to=None):
+    def send(self, message, to=None):
         if self.fail:
             raise NotifyError("сеть отказала")
-        self.sent.append(text)
+        self.messages.append(message)
+        self.sent.append(plain(message))
 
     def describe(self):
         return "запись в память"
@@ -296,6 +299,9 @@ def test_a_failed_cycle_alerts_once_per_window(tmp_path):
     assert notifier.sent[0].startswith("⚠️ listam: часовой цикл не прошёл")
     assert "scrape --fresh" in notifier.sent[0]
     assert (Path(config.get("schedule.log_dir")) / "last-alert").exists()
+    alert = notifier.messages[0]
+    assert isinstance(alert, Message), "тревога — такое же сообщение, как остальные"
+    assert len(alert.sections) == 1 and alert.sections[0].cards == []
 
     third = run_cycle(config, "hourly", dispatch=failing, notifier=notifier,
                       now=NOW + timedelta(hours=6))

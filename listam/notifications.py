@@ -1,9 +1,13 @@
-"""Уведомление: окно, текст сообщения, отправка и журнал отправок.
+"""Уведомление: окно, выборка, сообщение, отправка и журнал отправок.
 
 Окно живёт здесь с фазы 3, потому что срез витрины `matches --new` мерится
 ровно тем же: одна выборка и две подачи (решение 10 спеки). Текст сообщения
 нельзя проверить иначе, чем отправкой, а отправленное не отзывается — значит,
 человек обязан уметь посмотреть то же самое в терминале до отправки.
+
+Сообщение собирает `listam/layout.py` (пункт 8 анализа после M3): канал
+получает структуру, `--dry-run` и журнал — её простой текст. Одна выборка,
+одна структура, два рендера — расхождения между «посмотрел» и «ушло» нет.
 """
 from __future__ import annotations
 
@@ -12,7 +16,9 @@ from datetime import datetime, timedelta, timezone
 
 from listam.config import Config, ConfigError, hours, positive, switch
 from listam.domain.models import Notification
-from listam.matches_view import collect_events, render_events
+from listam.layout import (Message, circles, digest_message, feed_message,
+                           gem_percent, hot_message, plain)
+from listam.matches_view import collect_events
 from listam.matching import settings
 from listam.ports.notifier import NotifyError
 from listam.runner import SessionRefused, publish, working_session
@@ -121,6 +127,11 @@ def tuning_for(config: Config, kind: str) -> NotifyTuning:
         wide = positive(config, f"{base}.wide_request", 50)
         tuning.wide_request = None if wide is None else int(wide)
         tuning.include_retired = switch(config, f"{base}.include_retired", True)
+    # Пороги вёрстки — тоже на входе: 🟢 от балла 170 не загорится никогда.
+    if kind == "feed":
+        gem_percent(config)
+    else:
+        circles(config)
     return tuning
 
 
@@ -183,7 +194,8 @@ def run_notify(config: Config, *, kind: str, dry_run: bool = False) -> NotifyRep
             report.scope = scope
 
             if kind == "feed":
-                report.text, report.events = _feed_text(database, knobs, since, until)
+                message, report.events = _feed_message(config, database, knobs,
+                                                       since, until)
             else:
                 page = collect_events(config, since=since, until=until,
                                       min_score=min_score, note=scope,
@@ -195,7 +207,8 @@ def run_notify(config: Config, *, kind: str, dry_run: bool = False) -> NotifyRep
                 # Заявка, у которой только закрытия, звонка не требует и
                 # в счёт заявок не входит.
                 report.requests = len({event.match.request_id for event in calls})
-                report.text = _match_text(page, knobs, kind)
+                message = _match_message(config, database, page, knobs, kind, until)
+            report.text = plain(message)
 
             if dry_run:
                 notes.append("пробный прогон: не отправлено, журнал не тронут")
@@ -209,7 +222,7 @@ def run_notify(config: Config, *, kind: str, dry_run: bool = False) -> NotifyRep
                 notes.append("событий нет — не отправлено")
             else:
                 try:
-                    notifier.send(report.text)
+                    notifier.send(message)
                 except NotifyError as exc:
                     report.errors = 1
                     notes.append(f"канал отказал: {exc}. Окно не сдвинуто — "
@@ -241,26 +254,32 @@ def run_notify(config: Config, *, kind: str, dry_run: bool = False) -> NotifyRep
     return report
 
 
-def _match_text(page, knobs: NotifyTuning, kind: str) -> str:
-    """Текст уведомления по заявкам. Широкую заявку помечает сама витрина.
+def _match_message(config: Config, database, page, knobs: NotifyTuning, kind: str,
+                   until: datetime) -> Message:
+    """Сообщение по заявкам: «звони сейчас» или дайджест со сводкой.
 
-    Пометка только в дайджесте: «горячее» отвечает на «кому звонить сейчас»,
-    и совет «сузь заявку» ему не по размеру. Широкая заявка — это разговор
-    с брокером, а не с рынком: 10 250 матчей и 7 515 горячих на одной заявке
-    боевая приёмка уже видела.
+    Пометка широкой заявки только в дайджесте: «горячее» отвечает на «кому
+    звонить сейчас», и совет «сузь заявку» ему не по размеру. Процент к
+    медиане района — по тем же объявлениям, по которым считает подбор.
     """
-    head = "Звони сейчас" if kind == "hot" else "Что нового со вчера"
-    return render_events(page, per_request=knobs.per_request, head=head,
-                         wide=knobs.wide_request if kind == "digest" else None)
+    from listam.domain.stats import median_price_per_sqm_by_district
+
+    medians = (median_price_per_sqm_by_district(database.listings_for_matching())
+               if page.events else {})
+    if kind == "hot":
+        return hot_message(page, medians, config, per_request=knobs.per_request)
+    active = sum(1 for _ in database.iter_requests())
+    return digest_message(page, medians, config, per_request=knobs.per_request,
+                          wide=knobs.wide_request, active=active, at=until)
 
 
-def _feed_text(database, knobs: NotifyTuning, since, until) -> tuple[str, int]:
-    """Что пришло на ленту вне заявок: счётчики и лучшие по выгодности.
+def _feed_message(config: Config, database, knobs: NotifyTuning,
+                  since, until) -> tuple[Message, int]:
+    """Что пришло на ленту вне заявок: счётчики и 💎 против медианы района.
 
     Тумблер отдельный нарочно: брокеру нужно видеть ленту, даже когда
     ни одна заявка этого не взяла.
     """
-    from listam.changes import money, per_sqm
     from listam.domain.stats import median_price_per_sqm_by_district
 
     fresh = [item for item in database.listings_first_seen_since(since)
@@ -268,27 +287,7 @@ def _feed_text(database, knobs: NotifyTuning, since, until) -> tuple[str, int]:
     cheaper = [row for row in database.price_changes_since(since)
                if row[1] is not None and row[2] is not None and row[2] < row[1]]
     gone = database.listings_gone_since(since)
-
     medians = median_price_per_sqm_by_district(database.listings_for_matching())
-
-    def cheapness(item) -> float:
-        """Насколько объявление дешевле медианы своего района. Нет медианы —
-        считаем ноль: не наказываем и не награждаем, как и скоринг."""
-        median = medians.get(item.district or "")
-        if not median or item.price_per_sqm is None:
-            return 0.0
-        return (median - item.price_per_sqm) / median
-
-    best = sorted(fresh, key=cheapness, reverse=True)[:knobs.per_request or 0]
-    lines = [
-        f"На ленте: новых {len(fresh)}, подешевели {len(cheaper)}, снято {len(gone)}",
-    ]
-    for item in best:
-        lines.append(
-            f"  • {money(item.price_usd):>10}  {per_sqm(item):>12}  "
-            f"{item.district or '—'}, {item.street or '—'}  {item.url}"
-        )
-    left = len(fresh) - len(best)
-    if left > 0:
-        lines.append(f"  …и ещё {left} — python -m listam changes")
-    return "\n".join(lines), len(fresh)
+    message = feed_message(fresh, cheaper=len(cheaper), gone=len(gone),
+                           medians=medians, config=config, limit=knobs.per_request)
+    return message, len(fresh)

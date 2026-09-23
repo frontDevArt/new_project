@@ -28,6 +28,7 @@ from typing import Callable
 from zoneinfo import ZoneInfo, ZoneInfoNotFoundError
 
 from listam.config import Config, ConfigError, hours, positive, switch
+from listam.layout import text_message
 
 # Как цикл называется в тревоге. Имя цикла — ключ конфига, и незнакомое
 # печатается как есть: словарь здесь — подпись, а не список разрешённых.
@@ -290,7 +291,7 @@ def _alert(config: Config, cycle: Cycle, step: str, code: int, now: datetime,
             from listam.wiring import build_notifier
 
             notifier = build_notifier(config)
-        notifier.send(text)
+        notifier.send(text_message(text))
     except Exception as exc:        # NotifyError, ConfigError без токена, сеть
         say(f"тревога не ушла: {exc}")
         return

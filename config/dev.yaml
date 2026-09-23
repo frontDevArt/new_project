@@ -91,6 +91,8 @@ notify:
   kind: stdout                  # none | stdout | telegram
   # token: ${TELEGRAM_BOT_TOKEN}      # для kind: telegram
   # chat_id: ${TELEGRAM_CHAT_ID}      # чат брокера: клиентам он пересылает сам
+  layout:                       # вёрстка по пункту 8 docs/анализ-после-M3.md
+    score_green: 80             # 🟢 от этого балла; 🟡 — от match.thresholds.hot, ниже — ⚪
   hot:                          # «звони сейчас»: раз в час, после match --new
     enabled: true
     per_request: 5              # строк на заявку; порог балла — match.thresholds.hot
@@ -103,7 +105,8 @@ notify:
     fallback_hours: 24
   feed:                         # что пришло на ленту вне заявок
     enabled: false              # тумблер: от заявок не зависит вовсе
-    limit: 15                   # строк в сообщении, лучшие по выгодности
+    limit: 15                   # строк 💎 в сообщении, самые выгодные сверху
+    gem_percent: 15             # 💎 — дешевле медианы района хотя бы на столько процентов
     fallback_hours: 24
 
 scrape:

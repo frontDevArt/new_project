@@ -4,12 +4,18 @@
 сам. Адресата порт всё равно принимает — маршруты появятся позже, и менять
 подпись у трёх реализаций разом дороже, чем принять `to=None` сегодня.
 
+Сообщение — структура `layout.Message`, а не строка (решение 7 спеки
+M3.5): резать между карточками может только тот, кто знает, где карточки.
+Рендер выбирает реализация: Telegram — HTML, консоль — простой текст.
+
 Отказ канала — `NotifyError`, а не голое исключение библиотеки: команда,
 которая его ловит, не обязана знать, чем именно ходит адаптер в сеть.
 """
 from __future__ import annotations
 
 from abc import ABC, abstractmethod
+
+from listam.layout import Message, plain
 
 
 class NotifyError(Exception):
@@ -18,8 +24,8 @@ class NotifyError(Exception):
 
 class Notifier(ABC):
     @abstractmethod
-    def send(self, text: str, to: str | None = None) -> None:
-        """Отправляет сообщение; `to` не задан — адресат по умолчанию из конфига."""
+    def send(self, message: Message, to: str | None = None) -> None:
+        """Отправляет сообщение целиком; `to` не задан — адресат по умолчанию из конфига."""
 
     @abstractmethod
     def describe(self) -> str:
@@ -29,7 +35,7 @@ class Notifier(ABC):
 class NullNotifier(Notifier):
     """`notify.kind: none` — канал не настроен, и это не ошибка."""
 
-    def send(self, text: str, to: str | None = None) -> None:
+    def send(self, message: Message, to: str | None = None) -> None:
         return None
 
     def describe(self) -> str:
@@ -43,8 +49,8 @@ class StdoutNotifier(Notifier):
     он уйдёт человеку. Отправленное не отзывается.
     """
 
-    def send(self, text: str, to: str | None = None) -> None:
-        print(f"[уведомление{' → ' + to if to else ''}]\n{text}")
+    def send(self, message: Message, to: str | None = None) -> None:
+        print(f"[уведомление{' → ' + to if to else ''}]\n{plain(message)}")
 
     def describe(self) -> str:
         return "уведомления печатаются в консоль (notify.kind: stdout)"

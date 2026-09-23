@@ -49,27 +49,58 @@ def notifier():
 
 
 def test_short_message_is_visible_in_the_chat(chat):
+    from listam.layout import text_message
+
     mark = f"listam-live {uuid.uuid4().hex[:8]}"
-    notifier().send(f"{mark}\nпроверка канала, это не заявка")
+    notifier().send(text_message(f"{mark}\nпроверка канала, это не заявка"))
     chat.get_by_text(mark).last.wait_for(timeout=RENDER_WAIT)
     time.sleep(SEND_DELAY)
 
 
-def test_long_message_arrives_whole_and_never_cuts_a_line(chat):
-    from listam.adapters.notify_telegram import LIMIT, split_message
+def live_section(mark: str, count: int):
+    """Раздел заявки из `count` карточек по три строки — как у настоящего
+    «звони сейчас», с символами, которые HTML обязан экранировать (Т-3)."""
+    from listam.layout import Section, Span
+
+    cards = [[[Span("🆕 "), Span(f"${100000 + n:,}".replace(",", " "), bold=True),
+               Span(" · 100 м² · $1 650/м² (−12% к району)")],
+              [Span(f"📍 {mark} карточка {n:04d}, ул. <Раффи> & Co · этаж 5/9")],
+              [Span("👤 Собственник · 🟢 балл 82 · 🔗 "),
+               Span("Открыть", href="https://www.list.am/ru")]]
+             for n in range(count)]
+    return Section(head=[[Span(f"🔥 ЗВОНИ СЕЙЧАС · {mark} · это не заявка", bold=True)],
+                         [Span("━━━━━━━━━━━━━━━")]],
+                   cards=cards, tail=[[Span(f"➕ {mark} конец")]])
+
+
+def test_a_card_arrives_as_html(chat):
+    """Т-1, Т-3: цена жирным, «Открыть» — ссылка словом, `<` `>` `&` на месте."""
+    from listam.layout import Message
 
     mark = f"listam-live {uuid.uuid4().hex[:8]}"
-    lines = [f"{mark} строка {n:04d} " + "объявление" * 6 for n in range(200)]
-    body = "\n".join(lines)
-    assert len(body) > LIMIT, "тест бессмыслен, если текст влезает в одно сообщение"
-    print(f"длинное: символов {len(body)}, частей {len(split_message(body))}")
+    notifier().send(Message([live_section(mark, 2)]))
+    chat.get_by_text(f"{mark} карточка 0001, ул. <Раффи> & Co").last.wait_for(
+        timeout=RENDER_WAIT)
+    chat.get_by_role("link", name="Открыть").last.wait_for(timeout=RENDER_WAIT)
+    time.sleep(SEND_DELAY)
 
-    notifier().send(body)
-    # последняя строка на месте — значит доехали все части
-    chat.get_by_text(f"{mark} строка 0199").last.wait_for(timeout=RENDER_WAIT)
-    chat.get_by_text(f"{mark} строка 0000").last.wait_for(timeout=RENDER_WAIT)
+
+def test_long_message_is_cut_between_cards_with_the_head(chat):
+    """Т-2: длинная заявка режется между карточками, продолжение — с шапкой."""
+    from listam.adapters.notify_telegram import LIMIT, split_section
+    from listam.layout import Message, to_html
+
+    mark = f"listam-live {uuid.uuid4().hex[:8]}"
+    section = live_section(mark, 40)
+    assert len(to_html(section)) > LIMIT, "тест бессмыслен, если раздел влезает целиком"
+    print(f"длинное: частей {len(split_section(section))}")
+
+    notifier().send(Message([section]))
+    chat.get_by_text(f"{mark} конец").last.wait_for(timeout=RENDER_WAIT)
+    chat.get_by_text(f"{mark} · это не заявка (продолжение)").last.wait_for(
+        timeout=RENDER_WAIT)
     seen = "\n".join(chat.get_by_text(mark).all_inner_texts())
-    assert all(line in seen for line in lines[:5] + lines[-5:])
+    assert all(f"{mark} карточка {n:04d}" in seen for n in (0, 1, 38, 39))
     time.sleep(SEND_DELAY)
 
 
@@ -85,14 +116,16 @@ def run_listam(config_dir, *args):
 def test_digest_command_reaches_the_chat(chat, live_config_dir):
     """Сквозняк: команда CLI, а не только адаптер. Сначала сухой прогон —
     отправленное не отзывается, и 50 сообщений в личку брокера тест не шлёт."""
-    from listam.adapters.notify_telegram import split_message
+    from listam.adapters.notify_telegram import LIMIT
 
     dry = run_listam(live_config_dir, "notify", "--digest", "--dry-run")
     assert dry.returncode == 0, dry.stdout + dry.stderr
     lines = dry.stdout.splitlines()
     text = "\n".join(lines[1:next(n for n, line in enumerate(lines)
                                   if line.startswith("Событий:"))])
-    parts = len(split_message(text))
+    # Простой текст не хранит разметку карточек: оцениваем снизу — по
+    # сообщению на заявку (черта под шапкой) плюс сводка, и по объёму.
+    parts = max(text.count("━━━━━━━━━━━━━━━") + 1, -(-len(text) // LIMIT))
     if parts > MAX_DIGEST_PARTS:
         pytest.skip(f"дайджест вышел бы {parts} сообщениями (> {MAX_DIGEST_PARTS}): "
                     f"в личку брокера не шлём; подними TELEGRAM_LIVE_MAX_PARTS осознанно")

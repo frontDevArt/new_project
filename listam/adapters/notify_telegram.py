@@ -4,20 +4,27 @@
 Секреты сюда приходят аргументами: токен и чат живут в `.env`, выбор
 адаптера — в конфиге, знание имени — в `listam/wiring.py`.
 
-Telegram режет сообщение на 4096 символах. Резать посреди строки нельзя:
-обрезанная ссылка — это несостоявшийся звонок. Режем по разделам (пустая
-строка), и **каждый раздел — отдельное сообщение**, даже если два влезли бы
-в одно: брокер пересылает раздел клиенту (решение 4 спеки), и чужой клиент
-в пересланном — это чужое имя и чужой бюджет. Раздел длиннее лимита режется
-по строкам.
+Сообщение приходит структурой (`layout.Message`) и уходит HTML
+(`parse_mode: HTML`, превью ссылок выключено — пункт 8 анализа после M3).
+**Каждый раздел — отдельное сообщение**, даже если два влезли бы в одно:
+брокер пересылает раздел клиенту (решение 4 спеки M3), и чужой клиент
+в пересланном — это чужое имя и чужой бюджет.
+
+Telegram режет сообщение на 4096 символах, а HTML с оборванным тегом
+отклоняет целиком. Поэтому раздел длиннее лимита режется **только между
+карточками**, и каждое продолжение начинается с шапки заявки
+« (продолжение)». Карточку длиннее лимита (нечеловеческий ввод) режем по её
+строкам: строка — законченный кусок HTML, теги в ней закрыты.
 """
 from __future__ import annotations
 
+import html
 import time
 
 import requests
 from urllib3.exceptions import ConnectTimeoutError, MaxRetryError
 
+from listam.layout import Line, Message, Section, Span, to_html
 from listam.ports.notifier import NotifyError, Notifier
 
 DEFAULT_API = "https://api.telegram.org"
@@ -33,64 +40,72 @@ MAX_WAIT = 60.0          # дольше минуты не ждём: повтор
 CONTINUED = " (продолжение)"
 
 
-def split_message(text: str, limit: int = LIMIT) -> list[str]:
-    """Сообщение, разрезанное по разделам так, чтобы ни одна строка не разорвалась.
+def split_section(section: Section, limit: int = LIMIT) -> list[str]:
+    """Раздел заявки HTML-частями не длиннее `limit`, разрезанный между карточками.
 
-    Шапка (первый блок, не начинающийся с «Заявка») едет с первой частью
-    первого раздела: одна строка «Что нового со вчера» отдельным сообщением —
-    шум. Место под неё первый раздел оставляет сам, поэтому шапка отдельно
-    уходит, только если она длиннее четверти лимита. Раздел длиннее лимита
-    режется по строкам, и каждое продолжение начинается с заголовка заявки:
-    брокер пересылает часть клиенту, и кусок без имени заявки — это чужой
-    разговор.
+    Первая часть — с шапкой, каждое продолжение — с шапкой « (продолжение)»:
+    брокер пересылает часть клиенту, и кусок без имени заявки — чужой
+    разговор. Хвост («➕ ещё …») едет с последней частью.
     """
-    blocks = [block for block in text.split("\n\n") if block.strip()] or [text]
-    head = blocks.pop(0) if len(blocks) > 1 and not blocks[0].startswith("Заявка") else None
-    attached = head is not None and len(head) + 2 <= limit // 4
+    whole = to_html(section)
+    if len(whole) <= limit:
+        return [whole]
 
+    again = _continued(section.head)
+    budget = limit - len(to_html(Section(head=again, cards=[]))) - 2
     parts: list[str] = []
-    for index, block in enumerate(blocks):
-        if index == 0 and attached:
-            pieces = _split_section(block, limit - len(head) - 2)
-            pieces[0] = f"{head}\n\n{pieces[0]}"
-        else:
-            pieces = _split_section(block, limit)
-        parts.extend(pieces)
-    if head is not None and not attached:
-        parts.insert(0, head)
+    head, current = section.head, []
+    for unit in _units(section.cards, budget):
+        if current and len(to_html(Section(head=head, cards=current + [unit]))) > limit:
+            parts.append(to_html(Section(head=head, cards=current)))
+            head, current = again, []
+        current.append(unit)
+    last = Section(head=head, cards=current, tail=section.tail)
+    if current and len(to_html(last)) > limit:
+        parts.append(to_html(Section(head=head, cards=current)))
+        last = Section(head=again, cards=[], tail=section.tail)
+    parts.append(to_html(last))
     return parts
 
 
-def _split_section(block: str, limit: int) -> list[str]:
-    """Раздел заявки: целиком — или по строкам, с заголовком на каждой части."""
-    if len(block) <= limit:
-        return [block]
-    title = block.splitlines()[0][: limit // 4] + CONTINUED
-    pieces = _split_lines(block, limit - len(title) - 1)
-    return [pieces[0]] + [f"{title}\n{piece}" for piece in pieces[1:]]
+def _continued(head: list[Line]) -> list[Line]:
+    """Шапка продолжения: к первой строке приписано « (продолжение)»."""
+    if not head or not head[0]:
+        return [[Span(CONTINUED.strip())]] + head[1:]
+    first = list(head[0])
+    last = first[-1]
+    first[-1] = Span(last.text + CONTINUED, bold=last.bold, href=last.href)
+    return [first] + head[1:]
 
 
-def _split_lines(block: str, limit: int) -> list[str]:
-    if len(block) <= limit:
-        return [block]
-    parts: list[str] = []
-    current = ""
-    for line in block.splitlines():
-        candidate = f"{current}\n{line}" if current else line
-        if len(candidate) <= limit:
-            current = candidate
+def _units(cards: list[list[Line]], budget: int) -> list[list[Line]]:
+    """Карточки как есть; карточка длиннее бюджета — по строке на часть,
+    строка длиннее бюджета — кусками простого текста (без тегов)."""
+    units: list[list[Line]] = []
+    for card in cards:
+        if len(to_html(Section(head=[], cards=[card]))) <= budget:
+            units.append(card)
             continue
-        if current:
-            parts.append(current)
-        # Строка длиннее лимита целиком — такое бывает только у нечеловеческого
-        # ввода; режем как есть, потому что альтернатива — не отправить вовсе.
-        while len(line) > limit:
-            parts.append(line[:limit])
-            line = line[limit:]
-        current = line
+        for line in card:
+            if len(to_html(Section(head=[], cards=[[line]]))) <= budget:
+                units.append([line])
+            else:
+                units.extend([[Span(piece)]] for piece in _pieces(line, budget))
+    return units
+
+
+def _pieces(line: Line, budget: int) -> list[str]:
+    text = "".join(f"{span.text} {span.href}" if span.href else span.text
+                   for span in line)
+    pieces, current = [], ""
+    for char in text:
+        if len(html.escape(current + char, quote=False)) > budget:
+            pieces.append(current)
+            current = ""
+        current += char
     if current:
-        parts.append(current)
-    return parts
+        pieces.append(current)
+    return pieces
 
 
 def _retry_after(answer) -> float | None:
@@ -127,9 +142,9 @@ class TelegramNotifier(Notifier):
         self.api_url = api_url.rstrip("/")
         self.pause = pause
 
-    def send(self, text: str, to: str | None = None) -> None:
+    def send(self, message: Message, to: str | None = None) -> None:
         chat = to or self.chat_id
-        parts = split_message(text)
+        parts = [part for section in message.sections for part in split_section(section)]
         for number, part in enumerate(parts):
             if number:
                 time.sleep(self.pause)
@@ -148,8 +163,8 @@ class TelegramNotifier(Notifier):
             try:
                 answer = requests.post(
                     f"{self.api_url}/bot{self.token}/sendMessage",
-                    json={"chat_id": chat, "text": part,
-                          "disable_web_page_preview": True},
+                    json={"chat_id": chat, "text": part, "parse_mode": "HTML",
+                          "link_preview_options": {"is_disabled": True}},
                     timeout=self.timeout,
                 )
             except requests.ConnectionError as exc:

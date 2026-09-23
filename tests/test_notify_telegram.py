@@ -8,7 +8,8 @@ from __future__ import annotations
 import pytest
 import requests
 
-from listam.adapters.notify_telegram import LIMIT, TelegramNotifier, split_message
+from listam.adapters.notify_telegram import LIMIT, TelegramNotifier, split_section
+from listam.layout import Message, Section, Span, text_message, to_html
 from listam.ports.notifier import NotifyError
 
 
@@ -34,7 +35,8 @@ def test_a_message_goes_to_the_chat_from_the_config(monkeypatch):
         return Answer()
 
     monkeypatch.setattr("listam.adapters.notify_telegram.requests.post", post)
-    TelegramNotifier(token="123:abc", chat_id="-100500").send("Заявка R-1 — 3 новых")
+    TelegramNotifier(token="123:abc", chat_id="-100500").send(
+        text_message("Заявка R-1 — 3 новых"))
 
     url, payload = sent[0]
     assert url.endswith("/bot123:abc/sendMessage")
@@ -47,7 +49,7 @@ def test_an_explicit_addressee_wins(monkeypatch):
     monkeypatch.setattr("listam.adapters.notify_telegram.requests.post",
                         lambda url, json, timeout: sent.append(json) or Answer())
 
-    TelegramNotifier(token="t", chat_id="-100500").send("текст", to="-100777")
+    TelegramNotifier(token="t", chat_id="-100500").send(text_message("текст"), to="-100777")
 
     assert sent[0]["chat_id"] == "-100777"
 
@@ -62,7 +64,7 @@ def test_a_refusal_of_the_channel_is_a_notify_error(monkeypatch):
     )
 
     with pytest.raises(NotifyError):
-        TelegramNotifier(token="t", chat_id="-1").send("текст")
+        TelegramNotifier(token="t", chat_id="-1").send(text_message("текст"))
 
 
 def test_a_network_failure_does_not_leak_the_token(monkeypatch):
@@ -75,54 +77,111 @@ def test_a_network_failure_does_not_leak_the_token(monkeypatch):
     monkeypatch.setattr("listam.adapters.notify_telegram.requests.post", post)
 
     with pytest.raises(NotifyError) as caught:
-        TelegramNotifier(token="8833:SECRET", chat_id="-1").send("текст")
+        TelegramNotifier(token="8833:SECRET", chat_id="-1").send(text_message("текст"))
 
     assert "8833:SECRET" not in str(caught.value)
 
 
-def test_a_long_message_is_split_by_sections():
-    """Резать посреди строки нельзя: обрезанная ссылка — это несостоявшийся
-    звонок. Режем по разделам, в крайнем случае — по строкам."""
-    section = "Заявка R-1\n" + "\n".join(f"  • строка {i}" for i in range(200))
-    text = "\n\n".join([section] * 4)
+def sections(*heads: str) -> Message:
+    """Сообщение из разделов с одной строкой шапки — по разделу на заявку."""
+    return Message([Section(head=[[Span(head)]], cards=[]) for head in heads])
 
-    parts = split_message(text)
+
+def fat_card(number: int) -> list:
+    """Карточка из трёх строк, с тегами в HTML: цена жирным и ссылка."""
+    return [[Span("🆕 "), Span(f"${number:06d}", bold=True), Span(" · " + "м² " * 60)],
+            [Span(f"📍 карточка {number:03d} · " + "ул. <Раффи> & Co " * 5)],
+            [Span("🔗 "), Span("Открыть", href=f"https://www.list.am/ru/item/{number}")]]
+
+
+def long_section(count: int = 40) -> Section:
+    return Section(head=[[Span("🔥 ЗВОНИ СЕЙЧАС · R-7 · Давид", bold=True)],
+                         [Span("━━━━━━━━━━━━━━━")]],
+                   cards=[fat_card(number) for number in range(count)],
+                   tail=[[Span("➕ ещё 3 варианта — в дайджесте вечером")]])
+
+
+def test_the_message_is_html_without_a_preview(monkeypatch):
+    """Пункт 8: `parse_mode: HTML` и выключенное превью — иначе одна
+    карточка займёт весь экран."""
+    sent = []
+    monkeypatch.setattr("listam.adapters.notify_telegram.requests.post",
+                        lambda url, json, timeout: sent.append(json) or Answer())
+
+    TelegramNotifier(token="t", chat_id="1").send(Message([long_section(1)]))
+
+    assert sent[0]["parse_mode"] == "HTML"
+    assert sent[0]["link_preview_options"] == {"is_disabled": True}
+    assert "disable_web_page_preview" not in sent[0]
+    assert '<a href="https://www.list.am/ru/item/0">Открыть</a>' in sent[0]["text"]
+    assert "&lt;Раффи&gt; &amp; Co" in sent[0]["text"]
+
+
+def test_a_short_section_stays_one_piece():
+    section = long_section(2)
+
+    assert split_section(section) == [to_html(section)]
+
+
+def test_split_only_between_cards():
+    """Резать внутри карточки нельзя: обрезанный тег Telegram отклонит, а
+    карточка без ссылки — несостоявшийся звонок."""
+    section = long_section()
+    cards = [to_html(Section(head=[], cards=[card])) for card in section.cards]
+
+    parts = split_section(section)
 
     assert len(parts) > 1
+    joined = "\n".join(parts)
+    assert all(joined.count(card) == 1 for card in cards), "каждая карточка целиком и один раз"
+    for part in parts:
+        assert part.count("<b>") == part.count("</b>")
+        assert part.count("<a ") == part.count("</a>")
+
+
+def test_continuation_repeats_the_head():
+    """L-1 аудита: часть без имени заявки — чужой разговор для клиента,
+    которому брокер её переслал."""
+    parts = split_section(long_section())
+
+    assert parts[0].startswith("<b>🔥 ЗВОНИ СЕЙЧАС · R-7 · Давид</b>\n━")
+    for part in parts[1:]:
+        assert part.startswith("<b>🔥 ЗВОНИ СЕЙЧАС · R-7 · Давид (продолжение)</b>\n━")
+    assert parts[-1].endswith("➕ ещё 3 варианта — в дайджесте вечером")
+    assert sum("➕ ещё 3" in part for part in parts) == 1
+
+
+def test_no_part_exceeds_the_limit():
+    parts = split_section(long_section(120))
+
     assert all(len(part) <= LIMIT for part in parts)
-    assert "".join(parts).count("https") == text.count("https")
+    small = split_section(long_section(40), limit=1000)
+    assert all(len(part) <= 1000 for part in small)
+    assert len(small) > len(split_section(long_section(40)))
 
 
-def test_a_short_message_stays_one_piece():
-    assert split_message("Заявка R-1 — 3 новых") == ["Заявка R-1 — 3 новых"]
+def test_a_card_longer_than_the_limit_is_cut_between_its_lines():
+    """Нечеловеческий ввод: одна карточка длиннее лимита. Режем по строкам —
+    строка остаётся целой, теги в ней закрыты."""
+    huge = [[Span("строка " + "х" * 1500)] for _ in range(5)]
+    section = Section(head=[[Span("шапка")]], cards=[huge])
+
+    parts = split_section(section, limit=2000)
+
+    assert all(len(part) <= 2000 for part in parts)
+    assert sum(part.count("строка ") for part in parts) == 5
 
 
-def test_two_requests_never_share_a_message():
-    """Брокер пересылает раздел клиенту (решение 4 спеки). Два клиента в одном
-    сообщении — это имя и бюджет одного, пересланные другому."""
-    text = ("Что нового со вчера: с прошлой отправки\n\n"
-            "Заявка R-1 (Ани) — новый: 1\n  • 85 баллов\n\n"
-            "Заявка R-2 (Давид) — новый: 1\n  • 70 баллов")
+def test_two_requests_never_share_a_message(monkeypatch):
+    """Брокер пересылает раздел клиенту (решение 4 спеки M3). Два клиента в
+    одном сообщении — это имя и бюджет одного, пересланные другому."""
+    sent = []
+    monkeypatch.setattr("listam.adapters.notify_telegram.requests.post",
+                        lambda url, json, timeout: sent.append(json["text"]) or Answer())
 
-    parts = split_message(text)
+    TelegramNotifier(token="t", chat_id="-1").send(sections("Заявка R-1", "Заявка R-2"))
 
-    assert parts == [
-        "Что нового со вчера: с прошлой отправки\n\nЗаявка R-1 (Ани) — новый: 1\n  • 85 баллов",
-        "Заявка R-2 (Давид) — новый: 1\n  • 70 баллов",
-    ]
-
-
-def test_a_section_longer_than_the_limit_is_cut_between_lines():
-    lines = [f"  • строка {i:04d} https://www.list.am/ru/item/{i}" for i in range(300)]
-    text = "Заявка R-1 — новый: 300\n" + "\n".join(lines)
-
-    parts = split_message(text)
-
-    assert len(parts) > 1
-    assert all(len(part) <= LIMIT for part in parts)
-    title = "Заявка R-1 — новый: 300 (продолжение)\n"
-    assert all(part.startswith(title) for part in parts[1:])
-    assert "\n".join([parts[0]] + [part[len(title):] for part in parts[1:]]) == text
+    assert sent == ["Заявка R-1", "Заявка R-2"]
 
 
 def test_every_part_is_sent_in_order(monkeypatch):
@@ -130,9 +189,11 @@ def test_every_part_is_sent_in_order(monkeypatch):
     monkeypatch.setattr("listam.adapters.notify_telegram.requests.post",
                         lambda url, json, timeout: sent.append(json["text"]) or Answer())
 
-    TelegramNotifier(token="t", chat_id="-1").send("Заявка R-1\n\nЗаявка R-2\n\nЗаявка R-3")
+    TelegramNotifier(token="t", chat_id="-1").send(
+        Message([sections("Заявка R-1").sections[0], long_section()]))
 
-    assert sent == ["Заявка R-1", "Заявка R-2", "Заявка R-3"]
+    assert sent[0] == "Заявка R-1"
+    assert sent[1:] == split_section(long_section())
 
 
 def test_a_refusal_in_the_middle_says_how_much_already_arrived(monkeypatch):
@@ -145,7 +206,7 @@ def test_a_refusal_in_the_middle_says_how_much_already_arrived(monkeypatch):
 
     with pytest.raises(NotifyError) as caught:
         TelegramNotifier(token="t", chat_id="-1").send(
-            "Заявка R-1\n\nЗаявка R-2\n\nЗаявка R-3\n\nЗаявка R-4")
+            sections("Заявка R-1", "Заявка R-2", "Заявка R-3", "Заявка R-4"))
 
     assert "доставлено 2 из 4" in str(caught.value)
 
@@ -171,8 +232,8 @@ class TooMany:
                 "parameters": {"retry_after": self.retry_after}}
 
 
-def five_sections() -> str:
-    return "\n\n".join(f"Заявка R-{index} — новый: 1" for index in range(5))
+def five_sections() -> Message:
+    return sections(*(f"Заявка R-{index} — новый: 1" for index in range(5)))
 
 
 def test_a_too_many_requests_answer_is_waited_out_and_not_resent(monkeypatch):
@@ -202,7 +263,7 @@ def test_a_channel_that_keeps_saying_wait_gives_up_in_words(monkeypatch):
                         lambda url, json, timeout: TooMany())
 
     with pytest.raises(NotifyError, match="429"):
-        TelegramNotifier(token="t", chat_id="1").send("Заявка R-1 — новый: 1")
+        TelegramNotifier(token="t", chat_id="1").send(text_message("Заявка R-1 — новый: 1"))
 
 
 def test_a_wait_longer_than_a_minute_is_not_waited(monkeypatch):
@@ -214,7 +275,7 @@ def test_a_wait_longer_than_a_minute_is_not_waited(monkeypatch):
                         lambda url, json, timeout: next(answers))
     monkeypatch.setattr("listam.adapters.notify_telegram.time.sleep", waited.append)
 
-    TelegramNotifier(token="t", chat_id="1").send("Заявка R-1 — новый: 1")
+    TelegramNotifier(token="t", chat_id="1").send(text_message("Заявка R-1 — новый: 1"))
 
     assert max(waited) <= 60
 
@@ -233,7 +294,7 @@ def test_a_connection_torn_after_the_send_is_not_repeated(monkeypatch):
     monkeypatch.setattr("listam.adapters.notify_telegram.requests.post", post)
 
     with pytest.raises(NotifyError):
-        TelegramNotifier(token="t", chat_id="1").send("Заявка R-1 — новый: 1")
+        TelegramNotifier(token="t", chat_id="1").send(text_message("Заявка R-1 — новый: 1"))
 
     assert len(calls) == 1
 
@@ -258,21 +319,7 @@ def test_a_connection_that_never_opened_is_tried_again(monkeypatch):
 
     monkeypatch.setattr("listam.adapters.notify_telegram.requests.post", post)
 
-    TelegramNotifier(token="t", chat_id="1").send("Заявка R-1 — новый: 1")
+    TelegramNotifier(token="t", chat_id="1").send(text_message("Заявка R-1 — новый: 1"))
 
     assert sent == ["Заявка R-1 — новый: 1"]
 
-
-def test_a_section_cut_in_parts_keeps_its_title_on_every_part():
-    """L-1 аудита: вторая часть длинного раздела уходила без имени заявки, а
-    шапка «Что нового» — отдельным сообщением. Брокер пересылает часть
-    клиенту — и клиент получает кусок без контекста."""
-    section = "Заявка R-7 (Давид) — новый: 40\n" + "\n".join(
-        f"  • {index:03d} " + "x" * 150 for index in range(40))
-
-    parts = split_message("Что нового\n\n" + section)
-
-    assert parts[0].startswith("Что нового\n\nЗаявка R-7")
-    assert all(part.startswith(("Что нового", "Заявка R-7")) for part in parts)
-    assert all(len(part) <= LIMIT for part in parts)
-    assert "\n".join(parts).count("• 039") == 1
