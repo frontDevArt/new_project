@@ -13,7 +13,7 @@ import pytest
 from listam.adapters.db_sqlite import SqliteDatabase
 from listam.crawler import resume_start_page
 
-NOW = datetime(2026, 9, 21, 10, 0, tzinfo=timezone.utc)
+NOW = datetime(2026, 9, 21, 10, 0, tzinfo=timezone.utc)  # календарь: не сравнивается с часами
 
 
 @pytest.fixture

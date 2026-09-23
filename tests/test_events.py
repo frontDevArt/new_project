@@ -7,10 +7,10 @@ from listam.domain.events import CHEAPER, NEW, NOT_REPRESENTATIVE, RETIRED, \
     REVIVED, classify, events_for, limited
 from listam.domain.models import Listing, Match
 
-SINCE = datetime(2026, 9, 21, 0, 0, tzinfo=timezone.utc)
-INSIDE = datetime(2026, 9, 21, 12, 0, tzinfo=timezone.utc)
-UNTIL = datetime(2026, 9, 22, 0, 0, tzinfo=timezone.utc)
-BEFORE = datetime(2026, 9, 20, 0, 0, tzinfo=timezone.utc)
+SINCE = datetime(2026, 9, 21, 0, 0, tzinfo=timezone.utc)  # календарь: не сравнивается с часами
+INSIDE = datetime(2026, 9, 21, 12, 0, tzinfo=timezone.utc)  # календарь: не сравнивается с часами
+UNTIL = datetime(2026, 9, 22, 0, 0, tzinfo=timezone.utc)  # календарь: не сравнивается с часами
+BEFORE = datetime(2026, 9, 20, 0, 0, tzinfo=timezone.utc)  # календарь: не сравнивается с часами
 
 
 def listing(price=150000.0) -> Listing:
@@ -62,7 +62,7 @@ def test_a_revived_match_is_an_event_once():
     revived = match(first_matched_at=BEFORE, revived_at=INSIDE)
     assert classify(revived, listing(), None, SINCE, UNTIL).kind == REVIVED
     assert classify(revived, listing(), None, UNTIL,
-                    datetime(2026, 9, 23, tzinfo=timezone.utc)) is None
+                    datetime(2026, 9, 23, tzinfo=timezone.utc)) is None  # календарь: не сравнивается с часами
 
 
 def test_a_retired_match_never_pretends_to_be_new():

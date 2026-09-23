@@ -111,3 +111,25 @@ def test_the_schedule_sends_the_notifications():
     assert hourly and all("notify --hot" in line for line in hourly), hourly
     assert any("schtasks" in line or "/tr" in line for line in daily), daily
     assert any(line.startswith("0 ") for line in daily), daily
+
+
+# Пометка на строке с датой из календаря: «эта дата с часами кода не встречается».
+CALENDAR_MARK = "# календарь: не сравнивается с часами"
+
+
+def test_no_calendar_dates_against_real_clock():
+    """Дата из календаря в тесте, которую код сравнивает с `now()`, — бомба:
+    сегодня тест зелёный, завтра падает без единой правки. Приёмка QA после M3
+    нашла такие в подборе. Каждая календарная дата в тестах либо помечена
+    как не встречающаяся с часами кода, либо заменена на «сейчас ± дельта»."""
+    unmarked = []
+    for path in sorted((ROOT / "tests").rglob("*.py")):
+        for number, line in enumerate(path.read_text(encoding="utf-8").splitlines(), 1):
+            if "datetime(20" in line and CALENDAR_MARK not in line \
+                    and "CALENDAR_MARK" not in line and '"datetime(20"' not in line:
+                unmarked.append(f"{path.relative_to(ROOT)}:{number}: {line.strip()}")
+    assert not unmarked, (
+        "дата из календаря без пометки — сравнивает ли её код с настоящими "
+        "часами? Сравнивает — datetime.now(timezone.utc) ± timedelta; нет — "
+        f"пометка «{CALENDAR_MARK}»:\n" + "\n".join(unmarked)
+    )

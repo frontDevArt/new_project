@@ -23,7 +23,7 @@ from listam.wiring import build_database
 
 from tests.contracts.test_database_contract import make_listing, make_request
 
-NOW = datetime(2026, 9, 21, 10, 0, tzinfo=timezone.utc)
+NOW = datetime(2026, 9, 21, 10, 0, tzinfo=timezone.utc)  # календарь: не сравнивается с часами
 YESTERDAY = NOW - timedelta(days=1)
 
 
@@ -158,7 +158,7 @@ def test_new_takes_everything_touched_since_the_last_run(matching_config_with_tw
     old = database.get_listing("old-1")
     database.upsert_listing(
         replace(old, price_usd=(old.price_usd or 0) - 10_000, price_raw="подешевело"),
-        datetime(2026, 9, 23, tzinfo=timezone.utc),
+        datetime(2026, 9, 23, tzinfo=timezone.utc),  # календарь: не сравнивается с часами
     )
     database.close()
 
@@ -424,7 +424,7 @@ def test_a_listing_that_left_the_budget_leaves_the_window(matching_config):
     listing = database.get_listing("1")
     database.upsert_listing(
         replace(listing, price_usd=900_000.0, price_raw="900000 $"),
-        datetime(2026, 9, 23, tzinfo=timezone.utc),
+        datetime(2026, 9, 23, tzinfo=timezone.utc),  # календарь: не сравнивается с часами
     )
     database.close()
 
@@ -447,7 +447,7 @@ def test_a_cheaper_twin_replaces_the_old_representative_and_not_doubles_it(
     database.upsert_listing(
         replace(twin, id="L-cheap", url="https://www.list.am/ru/item/L-cheap",
                 price_usd=(twin.price_usd or 0) - 5_000),
-        datetime(2026, 9, 23, tzinfo=timezone.utc),
+        datetime(2026, 9, 23, tzinfo=timezone.utc),  # календарь: не сравнивается с часами
     )
     database.close()
 
@@ -479,7 +479,9 @@ def test_new_sees_the_one_that_got_cheaper(tmp_path):
     listing = database.get_listing("pricey")
     database.upsert_listing(
         replace(listing, price_usd=118_000.0, price_raw="подешевело"),
-        datetime(2026, 9, 23, tzinfo=timezone.utc),
+        # Выборка --new без прогонов в журнале — окно fallback_hours от настоящих
+        # часов: дата из календаря через сутки из окна выпадала.
+        datetime.now(timezone.utc),
     )
     database.close()
 
@@ -537,7 +539,7 @@ def test_a_cluster_that_lost_a_member_is_the_same_in_the_base_and_in_the_match(
     database.connect()
     # «mid» — якорь кластера: по нему кластер и назван. Его уход кластер
     # переименовывает, ничего в колонках не обнуляя.
-    database.mark_gone(["mid"], datetime(2026, 9, 23, tzinfo=timezone.utc))
+    database.mark_gone(["mid"], datetime(2026, 9, 23, tzinfo=timezone.utc))  # календарь: не сравнивается с часами
     database.close()
 
     run_match(config)
@@ -577,7 +579,7 @@ def test_a_match_closed_by_budget_says_budget(matching_config):
     listing = database.get_listing("1")
     database.upsert_listing(
         replace(listing, price_usd=900_000.0, price_raw="900000 $"),
-        datetime(2026, 9, 23, tzinfo=timezone.utc),
+        datetime(2026, 9, 23, tzinfo=timezone.utc),  # календарь: не сравнивается с часами
     )
     database.close()
 
@@ -597,7 +599,7 @@ def test_a_match_closed_by_a_cheaper_twin_says_so(matching_config_with_duplicate
     database.upsert_listing(
         replace(twin, id="L-cheap", url="https://www.list.am/ru/item/L-cheap",
                 price_usd=(twin.price_usd or 0) - 5_000),
-        datetime(2026, 9, 23, tzinfo=timezone.utc),
+        datetime(2026, 9, 23, tzinfo=timezone.utc),  # календарь: не сравнивается с часами
     )
     database.close()
 

@@ -186,7 +186,7 @@ def test_migration_004_adds_delta_columns_to_a_filled_database(tmp_path):
     database.migrate()
     database.upsert_listing(
         Listing(id="1", url="https://www.list.am/ru/item/1", price_raw="100,000", currency="USD"),
-        seen_at=datetime(2026, 9, 21, tzinfo=timezone.utc),
+        seen_at=datetime(2026, 9, 21, tzinfo=timezone.utc),  # календарь: не сравнивается с часами
     )
     database.close()
 
@@ -213,10 +213,10 @@ def test_migrations_005_and_006_add_the_return_columns_to_a_filled_database(tmp_
     database.migrate()
     database.upsert_listing(
         Listing(id="1", url="https://www.list.am/ru/item/1", price_raw="100,000", currency="USD"),
-        seen_at=datetime(2026, 9, 21, tzinfo=timezone.utc),
+        seen_at=datetime(2026, 9, 21, tzinfo=timezone.utc),  # календарь: не сравнивается с часами
     )
-    run_id = database.start_run(datetime(2026, 9, 21, tzinfo=timezone.utc), 400.0)
-    database.finish_run(run_id, datetime(2026, 9, 21, tzinfo=timezone.utc), pages_fetched=9)
+    run_id = database.start_run(datetime(2026, 9, 21, tzinfo=timezone.utc), 400.0)  # календарь: не сравнивается с часами
+    database.finish_run(run_id, datetime(2026, 9, 21, tzinfo=timezone.utc), pages_fetched=9)  # календарь: не сравнивается с часами
     database.close()
 
     database = SqliteDatabase(tmp_path / "listam.sqlite")   # все миграции с диска

@@ -11,7 +11,7 @@ from listam.domain.models import Listing, Match, Request
 from listam.notifications import run_notify
 from listam.wiring import build_database
 
-NOW = datetime(2026, 9, 21, 10, 0, tzinfo=timezone.utc)
+NOW = datetime(2026, 9, 21, 10, 0, tzinfo=timezone.utc)  # календарь: не сравнивается с часами
 
 CONFIG = """
 env: test

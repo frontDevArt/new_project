@@ -9,9 +9,9 @@ from listam.adapters.db_sqlite import SqliteDatabase
 from listam.domain.models import Listing, Match, Request
 from listam.ports.database import Database
 
-NOW = datetime(2026, 9, 21, 10, 0, tzinfo=timezone.utc)
-LATER = datetime(2026, 9, 21, 12, 0, tzinfo=timezone.utc)
-EVEN_LATER = datetime(2026, 9, 21, 14, 0, tzinfo=timezone.utc)
+NOW = datetime(2026, 9, 21, 10, 0, tzinfo=timezone.utc)  # календарь: не сравнивается с часами
+LATER = datetime(2026, 9, 21, 12, 0, tzinfo=timezone.utc)  # календарь: не сравнивается с часами
+EVEN_LATER = datetime(2026, 9, 21, 14, 0, tzinfo=timezone.utc)  # календарь: не сравнивается с часами
 
 
 @pytest.fixture(params=["sqlite"])

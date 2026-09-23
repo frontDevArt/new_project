@@ -18,7 +18,7 @@ from listam.domain.models import Match, Notification, Request
 from tests.contracts.test_database_contract import make_listing
 from tests.test_migrations import upto
 
-RUN = datetime(2026, 9, 22, 10, 0, tzinfo=timezone.utc)
+RUN = datetime(2026, 9, 22, 10, 0, tzinfo=timezone.utc)  # календарь: не сравнивается с часами
 
 
 def base(path: Path, run_at: datetime = RUN, migrations_dir=None) -> SqliteDatabase:

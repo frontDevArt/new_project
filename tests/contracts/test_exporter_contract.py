@@ -10,7 +10,7 @@ from listam.adapters.exporter_xlsx import XlsxExporter
 from listam.domain.models import Listing, Match, Request
 from listam.ports.exporter import Exporter
 
-NOW = datetime(2026, 9, 21, 10, 0, tzinfo=timezone.utc)
+NOW = datetime(2026, 9, 21, 10, 0, tzinfo=timezone.utc)  # календарь: не сравнивается с часами
 
 
 def listing(listing_id: str, first_seen: datetime, **over) -> Listing:
@@ -166,7 +166,7 @@ def test_a_gone_listing_shows_its_status_and_the_day_it_left(exporter):
     """Снятое объявление остаётся в выгрузке: цена ушедшей квартиры — история рынка."""
     gone = Listing(id="1", url="https://www.list.am/ru/item/1", status="gone",
                    first_seen=NOW, last_seen=NOW,
-                   gone_at=datetime(2026, 9, 22, 8, 0, tzinfo=timezone.utc))
+                   gone_at=datetime(2026, 9, 22, 8, 0, tzinfo=timezone.utc))  # календарь: не сравнивается с часами
 
     sheet = load_workbook(exporter.export([gone])).active
     headers = [cell.value for cell in sheet[1]]

@@ -17,7 +17,7 @@ from listam.wiring import build_database
 
 from tests.contracts.test_database_contract import make_listing
 
-NOW = datetime(2026, 9, 21, 10, 0, tzinfo=timezone.utc)
+NOW = datetime(2026, 9, 21, 10, 0, tzinfo=timezone.utc)  # календарь: не сравнивается с часами
 
 
 def cfg(tmp_path: Path, **over) -> Config:
