@@ -8,7 +8,7 @@
 from __future__ import annotations
 
 from dataclasses import replace
-from datetime import datetime, timezone
+from datetime import datetime, timedelta, timezone
 
 from listam.matches_view import collect_events, render_events
 from listam.matching import run_match
@@ -16,9 +16,17 @@ from listam.wiring import build_database
 from tests.contracts.test_database_contract import make_listing, make_request
 from tests.test_matching import cfg, fill, suitable
 
+_last_moment = datetime.min.replace(tzinfo=timezone.utc)
+
 
 def now() -> datetime:
-    return datetime.now(timezone.utc)
+    """Строго растущие отметки теста. Часы Windows тикают крупно: отметка
+    окна и точка цены, взятые подряд, совпадали до микросекунды, и окно
+    `(since, until]` честно относило точку к прошлому окну."""
+    global _last_moment
+    moment = max(datetime.now(timezone.utc), _last_moment + timedelta(microseconds=1))
+    _last_moment = moment
+    return moment
 
 
 def events_after(config, since, until=None):

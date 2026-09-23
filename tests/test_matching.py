@@ -496,9 +496,11 @@ def test_a_request_edited_after_its_last_matching_is_swept_whole(matching_config
     database = build_database(config)
     database.connect()
     request = next(iter(database.iter_requests()))
+    # Правка — после подбора по его же отметке: подбор ставит `matched_at`
+    # по настоящим часам, и число из календаря однажды оказывается в прошлом.
     database.upsert_request(
         replace(request, budget_max=(request.budget_max or 0) * 3),
-        datetime(2026, 9, 23, tzinfo=timezone.utc),
+        request.matched_at + timedelta(seconds=1),
     )
     database.close()
 
