@@ -182,3 +182,23 @@ def test_a_long_run_keeps_its_lock_alive(project, monkeypatch):  # noqa: F811
     run_scrape(project)
 
     assert verdicts == ["не дали"]
+
+
+def test_busy_does_not_take_the_lock(tmp_path):
+    """Цикл по расписанию спрашивает «занят ли замок», прежде чем начать:
+    часовой пришёлся на ночной — пропуск, а не гонка. Вопрос замок не берёт,
+    а протухший замок держателем не считается."""
+    lock_path = tmp_path / "run.lock"
+    probe = RunLock(lock_path)
+
+    assert probe.busy() is None
+    assert not lock_path.exists(), "вопрос «занят ли» замок не создаёт"
+
+    holder = RunLock(lock_path).acquire()
+    try:
+        assert "pid=" in (probe.busy() or "")
+        assert RunLock(lock_path, stale_after_seconds=0).busy() is None
+        assert lock_path.exists(), "протухший замок вопрос не снимает"
+    finally:
+        holder.release()
+    assert probe.busy() is None

@@ -60,6 +60,16 @@ class RunLock:
         except OSError:
             return            # файл увели из-под нас: прогон всё равно идёт дальше
 
+    def busy(self) -> str | None:
+        """Кто держит замок, не захватывая его; свободен или протух — `None`.
+
+        Цикл по расписанию спрашивает это до первого шага: часовой, пришедшийся
+        на ночной обход, пропускается тихо, а не падает на первом же `scrape`.
+        """
+        if not self.path.exists() or self._is_stale():
+            return None
+        return self._describe()
+
     def release(self) -> None:
         if self._held:
             self.path.unlink(missing_ok=True)

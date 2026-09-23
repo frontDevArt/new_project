@@ -26,9 +26,11 @@ schedule:                       # `python -m listam schedule install` стави
   alert_every_hours: 6          # и не чаще этого
   linux_xvfb: true              # на Linux цикл заворачивается в xvfb-run -a
   cycles:                       # шаги — аргументы CLI без «python -m listam»; первый ненулевой код — стоп
+                                # «в ЧЧ:30», а не «:00»: часовой идёт в начале часа, и занятый им
+                                # замок тихо пропустил бы ночной обход или вечерний дайджест
     hourly:  {every_minutes: 60, steps: ["scrape --fresh", "match --new", "notify --hot"]}
-    nightly: {at: "04:00", steps: ["scrape", "match --all", "notify --feed"]}
-    evening: {at: "20:00", steps: ["notify --digest"]}
+    nightly: {at: "04:30", steps: ["scrape", "match --all", "notify --feed"]}
+    evening: {at: "20:30", steps: ["notify --digest"]}
 
 validate:                       # пороги «это опечатка продавца, а не данные»
   price_usd: {min: 5000, max: 5000000}

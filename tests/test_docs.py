@@ -100,17 +100,28 @@ def test_the_schedule_sends_the_notifications():
     """Уведомление, которое никто не запускает, брокеру не приходит.
 
     Спека M3 («Команды») ставит `notify --hot` в часовой слой за `match --new`,
-    а `notify --digest` — раз в сутки. Раздел расписания и оба примера
-    (`schtasks` и `cron`) обязаны это называть: человек копирует их как есть.
+    а `notify --digest` — раз в сутки. С M3.5 шаги живут в `schedule.cycles`,
+    а задачи `schtasks` и строки `cron` пишет `schedule install` (решение 3):
+    проверяется поставляемый конфиг и его выдержка в README.
     """
+    import yaml
+
+    for env in ("dev", "prod"):
+        shipped = yaml.safe_load((ROOT / "config" / f"{env}.yaml").read_text(encoding="utf-8"))
+        cycles = shipped["schedule"]["cycles"]
+        hourly = [c["steps"] for c in cycles.values() if c.get("every_minutes")]
+        daily = [c["steps"] for c in cycles.values() if c.get("at")]
+        assert any(steps.index("notify --hot") > steps.index("match --new")
+                   for steps in hourly if "notify --hot" in steps and "match --new" in steps), env
+        assert any("notify --digest" in steps for steps in daily), env
+
     schedule = README.split("## Как запускать по расписанию")[1].split("\n## ")[0]
     lines = schedule.splitlines()
     hourly = [line for line in lines if "match --new" in line and "scrape --fresh" in line]
-    daily = [line for line in lines if "notify --digest" in line]
-
     assert hourly and all("notify --hot" in line for line in hourly), hourly
-    assert any("schtasks" in line or "/tr" in line for line in daily), daily
-    assert any(line.startswith("0 ") for line in daily), daily
+    assert any("notify --digest" in line and "at:" in line for line in lines)
+    for command in ("schedule show", "schedule install", "schedule remove"):
+        assert f"python -m listam {command}" in schedule, command
 
 
 # Пометка на строке с датой из календаря: «эта дата с часами кода не встречается».

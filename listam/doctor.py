@@ -8,6 +8,7 @@ from __future__ import annotations
 
 import tempfile
 from dataclasses import dataclass, field
+from datetime import datetime, timedelta, timezone
 from pathlib import Path
 
 from listam.config import Config, ConfigError, score_threshold, threshold
@@ -273,6 +274,71 @@ def notify_check(config: Config) -> Check:
     return Check(name="Уведомления", ok=not harm, details=details, warn=bool(warn))
 
 
+# Сколько может пройти с последнего прогона, пока расписание считается живым:
+# часовой — час и запас на пропуск под занятым замком, ночной — сутки и запас
+# на долгий полный обход.
+FRESH_OVERDUE_HOURS = 2
+FULL_OVERDUE_HOURS = 26
+
+
+def schedule_check(config: Config, now: datetime | None = None) -> Check:
+    """Работает ли расписание: давность последнего часового и ночного обхода.
+
+    Мерка — журнал `runs`, а не системный планировщик: так строка одинакова
+    на Windows и на Linux, и задача, которая стоит, но падает, видна так же,
+    как задача, которой нет.
+    """
+    from listam.schedule import cycles, local_zone
+
+    name = "Расписание"
+    if config.get("schedule") is None:
+        return Check(name=name, ok=True, warn=True,
+                     details="секции schedule в конфиге нет — сама система не запустится")
+    try:
+        found = cycles(config)
+        zone = local_zone(config)
+    except ConfigError as exc:
+        return Check(name=name, ok=False, details=str(exc))
+
+    working = database_path(config)
+    fresh = full = None
+    if working.exists():
+        try:
+            from listam.adapters.db_sqlite import SqliteDatabase
+
+            database = SqliteDatabase(working)
+            database.connect()
+            try:
+                fresh = database.last_run("fresh")
+                full = database.last_run("full")
+            finally:
+                database.close()
+        except Exception as exc:        # sqlite3.Error, OSError — журнал не прочитан
+            return Check(name=name, ok=True, warn=True,
+                         details=f"журнал прогонов не прочитан: {exc}")
+
+    listed = ", ".join(found)
+    if fresh is None and full is None:
+        return Check(name=name, ok=True, warn=True,
+                     details=f"по расписанию ещё не работало (циклы: {listed}); "
+                             f"поставить — python -m listam schedule install")
+
+    now = now or datetime.now(timezone.utc)
+    problems, facts = [], []
+    for title, run, limit in (("часовой", fresh, FRESH_OVERDUE_HOURS),
+                              ("ночной", full, FULL_OVERDUE_HOURS)):
+        if run is None or run.started_at is None:
+            problems.append(f"{title}: ещё не было")
+            continue
+        stamp = f"{run.started_at.astimezone(zone):%d.%m %H:%M}"
+        if now - run.started_at > timedelta(hours=limit):
+            problems.append(f"{title}: последний {stamp} — старше {limit} ч")
+        else:
+            facts.append(f"{title}: {stamp}")
+    details = "; ".join(problems + facts) + f" ({zone.key})"
+    return Check(name=name, ok=True, warn=bool(problems), details=details)
+
+
 def run_doctor(config: Config, check_network: bool = True) -> DoctorReport:
     report = DoctorReport()
     report.add("Конфиг", True, f"{config.path} (APP_ENV={config.env})")
@@ -280,6 +346,7 @@ def run_doctor(config: Config, check_network: bool = True) -> DoctorReport:
     report.checks.append(requests_check(config))
     report.checks.append(match_check(config))
     report.checks.append(notify_check(config))
+    report.checks.append(schedule_check(config))
 
     # --- хранилище ----------------------------------------------------
     try:

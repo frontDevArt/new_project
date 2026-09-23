@@ -1,11 +1,13 @@
 """`listam doctor` — то, чем проверяется переезд на другой аккаунт."""
 from __future__ import annotations
 
+from datetime import datetime, timedelta, timezone
 from pathlib import Path
+from zoneinfo import ZoneInfo
 
 from listam.adapters.db_sqlite import SqliteDatabase
 from listam.config import Config
-from listam.doctor import match_check, run_doctor
+from listam.doctor import match_check, run_doctor, schedule_check
 from listam.wiring import database_path
 
 
@@ -411,3 +413,84 @@ def test_the_channel_check_is_in_the_report(tmp_path):
     channel = next(check for check in report.checks if check.name == "Уведомления")
     assert not channel.ok
     assert "misspelled" in channel.details
+
+
+# --- расписание (M3.5, задача 1.6) ----------------------------------------
+
+SCHEDULED = {"log_dir": "logs", "task_prefix": "listam-test", "cycles": {
+    "hourly": {"every_minutes": 60, "steps": ["scrape --fresh"]},
+    "nightly": {"at": "04:30", "steps": ["scrape"]}}}
+
+
+def scheduled_cfg(tmp_path):
+    return cfg(tmp_path, schedule=SCHEDULED, locale={"timezone": "Asia/Yerevan"})
+
+
+def with_runs(config, *runs):
+    """Журнал прогонов: (режим, сколько часов назад начался)."""
+    path = database_path(config)
+    path.parent.mkdir(parents=True, exist_ok=True)
+    database = SqliteDatabase(path)
+    database.connect()
+    database.migrate()
+    now = datetime.now(timezone.utc)
+    for mode, hours_ago in runs:
+        started = now - timedelta(hours=hours_ago)
+        run_id = database.start_run(started, 400.0, mode=mode)
+        database.finish_run(run_id, started + timedelta(minutes=5))
+    database.close()
+
+
+def test_the_schedule_that_never_ran_is_a_warning(tmp_path):
+    check = schedule_check(scheduled_cfg(tmp_path))
+    assert check.name == "Расписание"
+    assert check.ok is True and check.warn is True
+    assert "по расписанию ещё не работало" in check.details
+
+
+def test_a_working_schedule_is_ok(tmp_path):
+    config = scheduled_cfg(tmp_path)
+    with_runs(config, ("full", 10), ("fresh", 0.5))
+
+    check = schedule_check(config)
+
+    assert check.ok is True and check.warn is False, check.details
+
+
+def test_an_old_hourly_run_is_a_warning_with_its_date(tmp_path):
+    """Мерка — журнал `runs`, а не системный планировщик: так строка
+    одинакова на Windows и на Linux."""
+    config = scheduled_cfg(tmp_path)
+    with_runs(config, ("full", 10), ("fresh", 3))
+
+    check = schedule_check(config)
+
+    assert check.warn is True
+    assert "часовой" in check.details
+    stamp = (datetime.now(timezone.utc) - timedelta(hours=3)).astimezone(
+        ZoneInfo("Asia/Yerevan"))
+    assert f"{stamp:%d.%m %H:%M}" in check.details
+
+
+def test_an_old_nightly_run_is_a_warning(tmp_path):
+    config = scheduled_cfg(tmp_path)
+    with_runs(config, ("full", 27), ("fresh", 0.5))
+
+    check = schedule_check(config)
+
+    assert check.warn is True
+    assert "ночной" in check.details
+
+
+def test_a_broken_schedule_in_the_config_fails(tmp_path):
+    broken = cfg(tmp_path, schedule={"cycles": {"hourly": {"every_minutes": 60,
+                                                           "steps": ["scarpe"]}}})
+    check = schedule_check(broken)
+    assert check.ok is False
+    assert "scarpe" in check.details
+
+
+def test_the_doctor_names_the_schedule(tmp_path):
+    report = run_doctor(scheduled_cfg(tmp_path), check_network=False)
+    assert "Расписание" in [check.name for check in report.checks]
+    assert report.ok is True

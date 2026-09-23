@@ -114,6 +114,19 @@ def build_parser() -> argparse.ArgumentParser:
     changes.add_argument("--limit", type=int,
                          help="сколько строк показывать в каждом разделе "
                               "(по умолчанию — из конфига)")
+
+    cycle = commands.add_parser(
+        "cycle", help="выполнить цикл расписания из schedule.cycles (лог, тревога)")
+    cycle.add_argument("name", help="имя цикла: hourly, nightly, evening — из конфига")
+
+    schedule = commands.add_parser(
+        "schedule", help="задачи системного планировщика по schedule.cycles")
+    schedule.add_argument("action", choices=["show", "install", "remove"],
+                          help="show — что будет поставлено; install / remove — "
+                               "поставить или снять задачи")
+    schedule.add_argument("--platform", choices=["windows", "linux"],
+                          help="чья платформа (по умолчанию — эта); "
+                               "install и remove — только на своей")
     return parser
 
 
@@ -301,6 +314,12 @@ def _dispatch(args, config) -> int:
             return 2
         return _changes(config, hours=args.hours, limit=args.limit)
 
+    if args.command == "cycle":
+        return _cycle(config, args.name)
+
+    if args.command == "schedule":
+        return _schedule(config, args.action, args.platform)
+
     return 2
 
 
@@ -445,6 +464,56 @@ def _changes(config, hours: float | None, limit: int | None) -> int:
     if limit is None:
         limit = positive(config, "changes.limit", 50) or 50
     print(render(report, limit=limit))
+    return 0
+
+
+def _cycle(config, name: str) -> int:
+    from listam.schedule import cycles, run_cycle
+
+    known = cycles(config)
+    if name not in known:
+        print(f"Цикла «{name}» в schedule.cycles нет. Известные: {', '.join(known)}.",
+              file=sys.stderr)
+        return 2
+    # Шаг цикла идёт через `_dispatch` этого модуля: тот же разбор, те же
+    # проверки, что у команды, набранной руками, и конфиг — уже загруженный.
+    return run_cycle(config, name)
+
+
+def _schedule(config, action: str, platform: str | None) -> int:
+    from pathlib import Path
+
+    import listam
+    from listam import schedule
+
+    own = schedule.this_platform()
+    target = platform or own
+    if target is None:
+        print(f"Платформа {sys.platform} расписанию незнакома: оно умеет windows "
+              f"(schtasks) и linux (crontab). Посмотреть — schedule show --platform …",
+              file=sys.stderr)
+        return 2
+    if action != "show" and target != own:
+        print(f"schedule {action} --platform {target} не годится: задачи ставятся "
+              f"на своей машине ({own or sys.platform}). Чужую — только show.",
+              file=sys.stderr)
+        return 2
+
+    # Корень проекта и интерпретатор — этой установки, в момент установки:
+    # в репозитории и README им не место (решение 3 спеки M3.5).
+    root = Path(listam.__file__).resolve().parent.parent
+    python = sys.executable
+    try:
+        if action == "show":
+            lines = schedule.show(config, target, root=root, python=python)
+        elif action == "install":
+            lines = schedule.install(config, target, root=root, python=python)
+        else:
+            lines = schedule.remove(config, target, root=root)
+    except schedule.ScheduleError as exc:
+        print(f"Планировщик отказал: {exc}", file=sys.stderr)
+        return 1
+    print("\n".join(lines))
     return 0
 
 
