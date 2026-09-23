@@ -86,13 +86,17 @@ def _requests(result):
 
 
 def _fits(facts: dict, request, percent: float, amd_per_usd: float) -> bool:
+    """Жёсткие критерии спеки M2: район, комнат не меньше минимума, бюджет с
+    растяжкой, площадь не ниже `area_min`. Список комнат и `area_max` — мягкий
+    фактор балла (`area_rooms`): квартира больше заказанной кандидатом быть может."""
     usd = facts["price"] if facts["currency"] == "USD" else facts["price"] / amd_per_usd
     ceiling = request.stretch(percent)
     return ((not request.districts or facts["district"] in request.districts)
-            and (not request.rooms or facts["rooms"] in request.rooms)
+            and (not request.rooms or facts["rooms"] is None
+                 or facts["rooms"] >= min(request.rooms))
             and (ceiling is None or usd <= ceiling * 1.01)
-            and (request.area_min is None or facts["area"] >= request.area_min - AREA_SLACK)
-            and (request.area_max is None or facts["area"] <= request.area_max + AREA_SLACK))
+            and (request.area_min is None or facts["area"] is None
+                 or facts["area"] >= request.area_min - AREA_SLACK))
 
 
 def compute(result) -> list[Metric]:
@@ -146,9 +150,14 @@ def compute(result) -> list[Metric]:
     counts = [s.events for s in hot_sections]
     median = statistics.median(counts) if counts else None
     p95 = percentile(counts, 0.95)
+    # Карточки layout режет на per_request — по ним порог выполнен всегда;
+    # они рядом, чтобы было видно, что «НЕТ» дал хвост «➕ ещё N».
+    cards = [len(s.ids) for s in hot_sections]
     metrics.append(Metric(
-        "С-3", "«звони сейчас»: сообщений (пустых) / событий на заявку — медиана, p95",
-        f"{len(hot_rows)} ({sum(1 for _, e, _ in hot_rows if not e)}) / {median}, {p95}",
+        "С-3", "«звони сейчас»: сообщений (пустых) / на заявку — медиана, p95",
+        f"{len(hot_rows)} ({sum(1 for _, e, _ in hot_rows if not e)}) / "
+        f"{median}, {p95} — события; "
+        f"{statistics.median(cards) if cards else None}, {percentile(cards, 0.95)} — карточки",
         f"медиана ≤ 3, p95 ≤ {per_request}",
         None if median is None else median <= 3 and p95 <= per_request,
         "notifications kind='hot': секции «🔥 ЗВОНИ СЕЙЧАС · R-…», события = карточки + «➕ ещё N»"))
@@ -173,8 +182,8 @@ def compute(result) -> list[Metric]:
                and not any(_fits(f.facts, r, percent, rate) for r in requests)]
     metrics.append(Metric("С-6", "открытия вне жёстких фильтров всех заявок",
                           len(outside), "0", not outside,
-                          "район, комнаты, бюджет с растяжкой ×1.01, площадь ±5 м² — своим "
-                          "кодом; первые: " + ", ".join(f.key for f in outside[:5])))
+                          "район, комнат ≥ минимума, бюджет с растяжкой ×1.01, "
+                          "площадь ≥ area_min − 5 м² — своим кодом; первые: " + ", ".join(f.key for f in outside[:5])))
 
     # С-7 — задержка нового горячего
     first_seen: dict[str, datetime] = {}

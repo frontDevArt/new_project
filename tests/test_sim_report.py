@@ -46,3 +46,24 @@ def test_percentile_is_nearest_rank():
     assert percentile([1, 2, 3, 4, 5, 6, 7, 8, 9, 10], 0.5) == 5
     assert percentile([1, 2, 3, 4, 5, 6, 7, 8, 9, 10], 0.95) == 10
     assert percentile([], 0.5) is None
+
+
+def test_fits_uses_the_system_hard_criteria_more_rooms_and_area_are_fine():
+    """Жёсткие критерии спеки M2: комнат не меньше минимума, площадь не ниже
+    `area_min`; список комнат и `area_max` — мягкий фактор балла, не фильтр."""
+    import csv
+    import io
+
+    from listam.domain.requests import parse_rows
+    from tests.sim.report import _fits
+    from tests.sim.sandbox import EXAMPLE_REQUESTS
+
+    parsed, _ = parse_rows(csv.DictReader(io.StringIO(EXAMPLE_REQUESTS)))
+    r2 = next(r for r in parsed if r.external_id == "R-2")
+    big = {"district": "Канакер-Зейтун", "rooms": 4, "area": 139.0,
+           "currency": "USD", "price": 129800}
+    assert _fits(big, r2, 10.0, 363.25)
+    assert not _fits({**big, "rooms": 1}, r2, 10.0, 363.25)
+    assert not _fits({**big, "area": 70.0}, r2, 10.0, 363.25)
+    assert not _fits({**big, "district": "Ачапняк"}, r2, 10.0, 363.25)
+    assert not _fits({**big, "price": 250000}, r2, 10.0, 363.25)
