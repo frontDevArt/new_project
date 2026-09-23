@@ -5,8 +5,8 @@
 """
 from __future__ import annotations
 
-from listam.domain.models import Request
-from listam.domain.scoring import rejection, score
+from listam.domain.models import Exclusion, PageFields, Request
+from listam.domain.scoring import refusal_words, rejection, score
 
 from tests.contracts.test_database_contract import make_listing
 
@@ -290,3 +290,99 @@ def test_without_a_priority_every_named_district_is_full():
     result = score(request, make_listing(district="Арабкир"), secondary_district=0.0)
 
     assert result.breakdown["district"] == (20.0, 20.0)
+
+
+# --- исключения из отказов клиента (фаза 6 M3.5, решение 15) ---------------
+
+def refused(kind, value=None, reason=None) -> Exclusion:
+    return Exclusion(request_id=1, kind=kind, value=value, reason=reason, match_id=1)
+
+
+def test_a_refused_cluster_is_rejected_with_the_clients_words():
+    """Отвергнутая квартира не возвращается ни этой карточкой, ни двойником."""
+    listing = make_listing(cluster_id="c-1")
+    no = [refused("cluster", "c-1", reason="дорого за такой ремонт")]
+
+    assert rejection(a_request(), listing, 10, refused=no) == \
+        "клиент отказал: дорого за такой ремонт"
+    assert score(a_request(), listing, refused=no).rejected_by == \
+        "клиент отказал: дорого за такой ремонт"
+
+
+def test_the_cluster_of_the_pass_beats_the_stale_one_on_the_listing():
+    """Кластер карточки считает подбор: колонка `listings.cluster_id` бывает
+    вчерашней, и мерка — то, что передано аргументом."""
+    listing = make_listing(cluster_id="вчерашний")
+
+    assert rejection(a_request(), listing, 10, refused=[refused("cluster", "c-1")],
+                     cluster_id="c-1") == "клиент отказал"
+
+
+def test_another_cluster_is_not_touched_by_the_refusal():
+    listing = make_listing(cluster_id="c-2")
+
+    assert rejection(a_request(), listing, 10, refused=[refused("cluster", "c-1")],
+                     cluster_id="c-2") is None
+
+
+def test_a_first_floor_refusal_narrows_the_request():
+    no = [refused("first_floor", reason="первый этаж")]
+
+    assert rejection(a_request(), make_listing(floor=1), 10, refused=no) == \
+        "клиент отказал: первый этаж"
+    assert rejection(a_request(), make_listing(floor=2), 10, refused=no) is None
+
+
+def test_a_last_floor_refusal_needs_the_number_of_floors():
+    no = [refused("last_floor", reason="последний этаж")]
+
+    assert rejection(a_request(), make_listing(floor=9, floors_total=9), 10,
+                     refused=no) == "клиент отказал: последний этаж"
+    assert rejection(a_request(), make_listing(floor=9, floors_total=None), 10,
+                     refused=no) is None
+
+
+def test_a_district_refusal_takes_out_that_district_only():
+    request = a_request(districts=["Центр", "Арабкир"], districts_priority=[])
+    no = [refused("district", "Арабкир", reason="район")]
+
+    assert rejection(request, make_listing(district="Арабкир"), 10, refused=no) == \
+        "клиент отказал: район"
+    assert rejection(request, make_listing(district="Центр"), 10, refused=no) is None
+
+
+def test_a_page_field_refusal_needs_the_field_known():
+    """Поле страницы неизвестно — не отказ (как у пожеланий): узнать больше
+    нечем, брокер уточнит звонком."""
+    no = [refused("building_type", "панельное", reason="тип дома")]
+    panel = PageFields(values={"building_type": "Панельное"})
+    stone = PageFields(values={"building_type": "каменное"})
+
+    assert rejection(a_request(), make_listing(), 10, page=panel, refused=no) == \
+        "клиент отказал: тип дома"
+    assert rejection(a_request(), make_listing(), 10, page=stone, refused=no) is None
+    assert rejection(a_request(), make_listing(), 10, page=None, refused=no) is None
+
+
+def test_the_coarse_sieve_speaks_before_the_refusal():
+    """Бюджет честнее «клиент отказал»: вариант не подошёл бы и без отказа."""
+    listing = make_listing(cluster_id="c-1", price_usd=500_000.0)
+
+    assert rejection(a_request(), listing, 10,
+                     refused=[refused("cluster", "c-1")]) == "бюджет"
+
+
+def test_refusals_in_words_skip_the_clusters():
+    """Шапка заявки: исключения словами; отвергнутые квартиры не перечисляются."""
+    words = refusal_words([
+        refused("cluster", "c-1"),
+        refused("first_floor"),
+        refused("first_floor"),
+        refused("last_floor"),
+        refused("district", "Арабкир"),
+        refused("building_type", "панельное"),
+        refused("renovation", "косметический"),
+    ])
+
+    assert words == ["без 1-го этажа", "без последнего этажа", "не Арабкир",
+                     "без панели", "ремонт не «косметический»"]

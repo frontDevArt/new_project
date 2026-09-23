@@ -6,7 +6,7 @@ from datetime import datetime
 from typing import Iterable
 
 from listam.domain.models import (
-    Listing, ListingPage, Match, Notification, PricePoint, Request, Run,
+    Exclusion, Listing, ListingPage, Match, Notification, PricePoint, Request, Run,
 )
 
 
@@ -174,6 +174,29 @@ class Database(ABC):
     @abstractmethod
     def listings_paged_since(self, since: datetime) -> set[str]:
         """Чья страница открыта (`status = ok`) после отметки: им пора в подбор."""
+
+    @abstractmethod
+    def add_exclusions(self, exclusions: list[Exclusion]) -> None:
+        """Записывает исключения из отказа клиента (решение 15) одной транзакцией.
+
+        `created_at` ставит вызывающий: отметка и её исключения рождаются
+        в один момент.
+        """
+
+    @abstractmethod
+    def exclusions_for(self, request_id: int) -> list[Exclusion]:
+        """Исключения заявки в порядке записи; отказов не было — пустой список.
+
+        Заявка (`get_request`, `iter_requests`) их не несёт: подбор читает
+        исключения отдельно, одним запросом на заявку за прогон.
+        """
+
+    @abstractmethod
+    def drop_exclusions(self, match_id: int) -> int:
+        """Снимает исключения, порождённые отметкой этого матча. Отдаёт, сколько.
+
+        Это откат `mark … new`: чужие отказы по той же заявке остаются.
+        """
 
     @abstractmethod
     def mark_requests_matched(self, request_ids: list[int], now: datetime) -> None:

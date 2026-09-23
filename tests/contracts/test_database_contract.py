@@ -6,7 +6,9 @@ from datetime import datetime, timezone
 import pytest
 
 from listam.adapters.db_sqlite import SqliteDatabase
-from listam.domain.models import Listing, ListingPage, Match, PageFields, Request
+from listam.domain.models import (
+    Exclusion, Listing, ListingPage, Match, PageFields, Request,
+)
 from listam.ports.database import Database
 
 NOW = datetime(2026, 9, 21, 10, 0, tzinfo=timezone.utc)  # календарь: не сравнивается с часами
@@ -1525,3 +1527,81 @@ def test_pages_are_counted_by_status(db):
     db.save_page(make_page("4", status="gone", fields=None))
 
     assert db.page_counts() == {"ok": 2, "failed": 1, "gone": 1}
+
+
+# --- исключения из отказов клиента (фаза 6 M3.5) ------------------------
+
+def stored_request(db, external_id="R-1") -> Request:
+    db.upsert_request(Request(external_id=external_id), now=NOW)
+    return db.get_request(external_id)
+
+
+def test_a_request_without_refusals_has_no_exclusions(db):
+    request = stored_request(db)
+
+    assert db.exclusions_for(request.id) == []
+
+
+def test_exclusions_read_back_as_written(db):
+    """Слова брокера, значение и породившая отметка возвращаются теми же:
+    по ним подбор говорит «клиент отказал: …», а откат снимает своё."""
+    request = stored_request(db)
+
+    db.add_exclusions([
+        Exclusion(request_id=request.id, kind="cluster", value="c-24254997",
+                  reason="первый этаж", match_id=7, created_at=NOW),
+        Exclusion(request_id=request.id, kind="first_floor",
+                  reason="первый этаж", match_id=7, created_at=NOW),
+    ])
+
+    stored = db.exclusions_for(request.id)
+    assert [(e.kind, e.value, e.reason, e.match_id, e.created_at) for e in stored] == [
+        ("cluster", "c-24254997", "первый этаж", 7, NOW),
+        ("first_floor", None, "первый этаж", 7, NOW),
+    ]
+    assert all(e.id is not None and e.request_id == request.id for e in stored)
+
+
+def test_exclusions_of_one_request_do_not_reach_another(db):
+    first = stored_request(db, "R-1")
+    second = stored_request(db, "R-2")
+
+    db.add_exclusions([Exclusion(request_id=first.id, kind="district", value="Арабкир",
+                                 match_id=1, created_at=NOW)])
+
+    assert db.exclusions_for(second.id) == []
+    assert [e.value for e in db.exclusions_for(first.id)] == ["Арабкир"]
+
+
+def test_an_empty_list_of_exclusions_writes_nothing(db):
+    request = stored_request(db)
+
+    db.add_exclusions([])
+
+    assert db.exclusions_for(request.id) == []
+
+
+def test_dropping_exclusions_takes_only_those_of_the_mark(db):
+    """Откат отметки снимает её исключения и ничьи больше: второй отказ
+    по той же заявке остаётся в силе."""
+    request = stored_request(db)
+    db.add_exclusions([
+        Exclusion(request_id=request.id, kind="cluster", value="a", match_id=1, created_at=NOW),
+        Exclusion(request_id=request.id, kind="first_floor", match_id=1, created_at=NOW),
+        Exclusion(request_id=request.id, kind="cluster", value="b", match_id=2, created_at=LATER),
+    ])
+
+    assert db.drop_exclusions(1) == 2
+    assert [(e.kind, e.value) for e in db.exclusions_for(request.id)] == [("cluster", "b")]
+    assert db.drop_exclusions(1) == 0
+
+
+def test_requests_do_not_carry_their_exclusions(db):
+    """Подбор читает исключения отдельно, одним запросом на прогон:
+    заявка из порта о них не знает."""
+    request = stored_request(db)
+    db.add_exclusions([Exclusion(request_id=request.id, kind="first_floor",
+                                 match_id=1, created_at=NOW)])
+
+    assert not hasattr(db.get_request("R-1"), "exclusions")
+    assert not hasattr(next(iter(db.iter_requests())), "exclusions")

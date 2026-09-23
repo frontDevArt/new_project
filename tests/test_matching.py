@@ -1004,3 +1004,96 @@ def test_the_yellow_circle_still_exists_above_the_hot_threshold(env, tmp_path):
     green, yellow = circles(config)
     assert yellow == settings(config).hot
     assert green > yellow
+
+
+# --- исключения из отказов клиента (фаза 6 M3.5, решение 15) ----------------
+
+from listam.domain.models import Exclusion  # noqa: E402
+
+
+def refuse(config, external_id, kind, value=None, reason=None, match_id=None):
+    database = build_database(config)
+    database.connect()
+    try:
+        request = database.get_request(external_id)
+        database.add_exclusions([Exclusion(
+            request_id=request.id, kind=kind, value=value, reason=reason,
+            match_id=match_id, created_at=datetime.now(timezone.utc))])
+    finally:
+        database.close()
+
+
+def all_matches(config, external_id="R-1"):
+    database = build_database(config)
+    database.connect()
+    try:
+        request = database.get_request(external_id)
+        return {match.listing_id: match
+                for match in database.matches_for_request(request.id,
+                                                          include_retired=True)}
+    finally:
+        database.close()
+
+
+def test_a_refused_cluster_retires_with_the_clients_words(matching_config):
+    run_match(matching_config)
+    target = all_matches(matching_config)["2"]
+    refuse(matching_config, "R-1", "cluster", target.cluster_id, "дорого",
+           match_id=target.id)
+
+    report = run_match(matching_config, external_id="R-1")
+
+    after = all_matches(matching_config)
+    assert report.retired == 1
+    assert after["2"].retired_reason == "клиент отказал: дорого"
+    assert after["1"].retired_at is None and after["3"].retired_at is None
+
+
+def test_a_refused_cluster_stays_out_with_its_twin(matching_config_with_duplicates):
+    """Карточку отвергнутой квартиры сменили на дешёвую — двойник той же
+    квартиры матчем не становится."""
+    run_match(matching_config_with_duplicates)
+    target = all_matches(matching_config_with_duplicates)["cheap"]
+    refuse(matching_config_with_duplicates, "R-1", "cluster", target.cluster_id,
+           match_id=target.id)
+    database = build_database(matching_config_with_duplicates)
+    database.connect()
+    try:
+        database.upsert_listing(make_listing(
+            "cheaper", area=85.5, price_usd=100_000.0, district="Кентрон",
+            street="ул. Туманяна", rooms=3, floor=4, floors_total=9,
+            seller_type="agency"), seen_at=NOW)
+    finally:
+        database.close()
+
+    run_match(matching_config_with_duplicates)
+
+    alive = [key for key, match in all_matches(matching_config_with_duplicates).items()
+             if match.retired_at is None]
+    assert alive == []
+
+
+def test_one_requests_refusal_does_not_narrow_another(tmp_path):
+    config = cfg(tmp_path)
+    fill(config, listings=[suitable("1")],
+         requests=[make_request("R-1"), make_request("R-2")])
+    refuse(config, "R-1", "district", "Кентрон", "район")
+
+    run_match(config)
+
+    assert all_matches(config, "R-1") == {}
+    assert list(all_matches(config, "R-2")) == ["1"]
+
+
+def test_a_page_field_refusal_reads_the_page_without_wishes(tmp_path):
+    """Заявка без пожеланий, а клиент отказал по типу дома: подбор обязан
+    прочитать страницы, иначе отказ по полю страницы не сработает."""
+    config = funnel_config(tmp_path, [suitable("1"), suitable("2")],
+                           [make_request("R-1")])
+    save_page(config, "1", building_type="панельное")
+    save_page(config, "2", building_type="каменное")
+    refuse(config, "R-1", "building_type", "панельное", "тип дома")
+
+    run_match(config)
+
+    assert [match.listing_id for match in live(config)] == ["2"]

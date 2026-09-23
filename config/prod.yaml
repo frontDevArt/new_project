@@ -50,6 +50,16 @@ funnel:                         # воронка: страница объявл�
     новостройка:     {field: new_build, is: true}
     высокие потолки: {field: ceiling_height, min: 3}
 
+feedback:                       # `python -m listam mark … rejected --reason "…"`
+  reasons:                      # слово отказа → что исключить из заявки (в базе, не в таблице брокера)
+                                # отвергнутая квартира исключается всегда; слова нет здесь — причина
+                                # записывается и заявку не сужает
+    первый этаж:    {exclude: first_floor}
+    последний этаж: {exclude: last_floor}
+    район:          {exclude: district}         # район этого объявления
+    тип дома:       {exclude: building_type}    # значение с открытой страницы этого объявления
+    ремонт:         {exclude: renovation}
+
 validate:                       # пороги «это опечатка продавца, а не данные»
   price_usd: {min: 5000, max: 5000000}
   price_per_sqm: {min: 100, max: 20000}

@@ -19,13 +19,17 @@
 жёсткие, проверяются в `rejection`, и без открытой страницы объявление не
 матч, а кандидат («страница не открыта»); `nice` — седьмой фактор `wishes`.
 Поле страницы, которого нет, — не отказ и не ноль: оно неизвестно.
+
+Отказы клиента (фаза 6 M3.5, решение 15) — ещё жёсткие критерии:
+отвергнутая квартира (кластер) и то, чем брокер объяснил отказ, — первый
+этаж, район, тип дома. Причина закрытия — «клиент отказал: <слова>».
 """
 from __future__ import annotations
 
 from dataclasses import dataclass, field
 from typing import Sequence
 
-from listam.domain.models import Listing, PageFields, Request
+from listam.domain.models import Exclusion, Listing, PageFields, Request
 from listam.domain.wishes import Wish, field_label
 
 DEFAULT_WEIGHTS: dict[str, float] = {
@@ -56,11 +60,16 @@ class Score:
 
 
 def rejection(request: Request, listing: Listing, stretch_percent: float, *,
-              page: PageFields | None = None, must: Sequence[Wish] = ()) -> str | None:
+              page: PageFields | None = None, must: Sequence[Wish] = (),
+              refused: Sequence[Exclusion] = (),
+              cluster_id: str | None = None) -> str | None:
     """Почему объявление не годится вовсе, или `None`, если годится.
 
     Причина — одно слово: она попадает в отчёт и в базу, и её читает человек,
     а не разбирает программа.
+
+    `refused` — исключения заявки из отказов клиента; `cluster_id` — кластер
+    объявления в этом проходе (колонка `listings.cluster_id` бывает вчерашней).
     """
     if request.districts and listing.district not in request.districts:
         return "район"
@@ -82,6 +91,12 @@ def rejection(request: Request, listing: Listing, stretch_percent: float, *,
             and listing.area < request.area_min:
         return "площадь"
 
+    # Отказ клиента — после грубого сита: «бюджет» честнее, вариант не
+    # подошёл бы и без отказа.
+    for exclusion in refused:
+        if _refuses(exclusion, listing, cluster_id, page):
+            return REFUSED + (f": {exclusion.reason}" if exclusion.reason else "")
+
     # Страничные условия — последними: отказ грубого сита честнее, чем
     # «страница не открыта», и ради такого объявления страницу не откроют.
     if must:
@@ -92,6 +107,60 @@ def rejection(request: Request, listing: Listing, stretch_percent: float, *,
                 return field_label(wish.field)
 
     return None
+
+
+REFUSED = "клиент отказал"
+FIRST_FLOOR, LAST_FLOOR, DISTRICT, CLUSTER = "first_floor", "last_floor", "district", "cluster"
+NOT_PAGE_KINDS = frozenset({FIRST_FLOOR, LAST_FLOOR, DISTRICT, CLUSTER})  # прочие — поля страницы
+# «без панели» читается, «тип дома не «панельное»» — нет. Прочие значения —
+# общей формой.
+BUILDING_WORDS = {"панельное": "без панели", "каменное": "без камня",
+                  "монолит": "без монолита"}
+
+
+def _refuses(exclusion: Exclusion, listing: Listing, cluster_id: str | None,
+             page: PageFields | None) -> bool:
+    """Попадает ли объявление под исключение. Неизвестное — не попадает."""
+    kind, value = exclusion.kind, exclusion.value
+    if kind == CLUSTER:
+        return value is not None and value in {cluster_id or listing.cluster_id, listing.id}
+    if kind == FIRST_FLOOR:
+        return listing.floor == 1
+    if kind == LAST_FLOOR:
+        return listing.floor is not None and listing.floor == listing.floors_total
+    if kind == DISTRICT:
+        return value is not None and listing.district == value
+    # Поле страницы: страница не открыта или поля на ней нет — не отказ.
+    if page is None or value is None:
+        return False
+    known = page.values.get(kind)
+    return known is not None and str(known).strip().lower() == value.strip().lower()
+
+
+def refusal_words(refused: Sequence[Exclusion]) -> list[str]:
+    """Исключения заявки словами для шапки: «без 1-го этажа», «не Арабкир».
+
+    Отвергнутые квартиры не перечисляются: их список ничего не говорит
+    о том, чего клиент не хочет вообще. Повторы схлопываются.
+    """
+    words: list[str] = []
+    for exclusion in refused:
+        kind, value = exclusion.kind, exclusion.value
+        if kind == CLUSTER:
+            continue
+        if kind == FIRST_FLOOR:
+            word = "без 1-го этажа"
+        elif kind == LAST_FLOOR:
+            word = "без последнего этажа"
+        elif kind == DISTRICT:
+            word = f"не {value}"
+        elif kind == "building_type" and str(value).lower() in BUILDING_WORDS:
+            word = BUILDING_WORDS[str(value).lower()]
+        else:
+            word = f"{field_label(kind)} не «{value}»"
+        if word not in words:
+            words.append(word)
+    return words
 
 
 # --- факторы ----------------------------------------------------------
@@ -210,15 +279,19 @@ def score(request: Request, listing: Listing, *,
           page: PageFields | None = None,
           must: Sequence[Wish] = (),
           nice: Sequence[Wish] = (),
-          secondary_district: float = DEFAULT_SECONDARY_DISTRICT) -> Score:
+          secondary_district: float = DEFAULT_SECONDARY_DISTRICT,
+          refused: Sequence[Exclusion] = (),
+          cluster_id: str | None = None) -> Score:
     """Балл объявления по заявке: 0–100 и разбор, из чего он сложился.
 
     `secondary_district` — доля фактора `district` у района из списка заявки,
-    но не из приоритетных (`match.secondary_district`).
+    но не из приоритетных (`match.secondary_district`). `refused` и
+    `cluster_id` — см. `rejection`.
     """
-    refused = rejection(request, listing, stretch_percent, page=page, must=must)
-    if refused is not None:
-        return Score(value=0, breakdown={}, rejected_by=refused)
+    reason = rejection(request, listing, stretch_percent, page=page, must=must,
+                       refused=refused, cluster_id=cluster_id)
+    if reason is not None:
+        return Score(value=0, breakdown={}, rejected_by=reason)
 
     weights = DEFAULT_WEIGHTS if weights is None else weights
     shares = {

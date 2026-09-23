@@ -11,7 +11,8 @@ from pathlib import Path
 from typing import Iterable, Iterator
 
 from listam.domain.models import (
-    Listing, ListingPage, Match, Notification, PageFields, PricePoint, Request, Run,
+    Exclusion, Listing, ListingPage, Match, Notification, PageFields, PricePoint,
+    Request, Run,
 )
 from listam.ports.database import Database
 
@@ -553,6 +554,36 @@ class SqliteDatabase(Database):
             (to_iso(since),),
         )
         return {row["listing_id"] for row in rows}
+
+    # --- исключения из отказов ----------------------------------------------
+    def add_exclusions(self, exclusions: list[Exclusion]) -> None:
+        if not exclusions:
+            return
+        with self.transaction():
+            self.conn.executemany(
+                "INSERT INTO request_exclusions "
+                "(request_id, kind, value, reason, match_id, created_at) "
+                "VALUES (?, ?, ?, ?, ?, ?)",
+                [(int(item.request_id), item.kind, item.value, item.reason,
+                  item.match_id, to_iso(item.created_at)) for item in exclusions],
+            )
+
+    def exclusions_for(self, request_id: int) -> list[Exclusion]:
+        rows = self.conn.execute(
+            "SELECT * FROM request_exclusions WHERE request_id = ? ORDER BY id",
+            (int(request_id),),
+        )
+        return [Exclusion(request_id=row["request_id"], kind=row["kind"],
+                          value=row["value"], reason=row["reason"],
+                          match_id=row["match_id"],
+                          created_at=from_iso(row["created_at"]), id=row["id"])
+                for row in rows]
+
+    def drop_exclusions(self, match_id: int) -> int:
+        with self.transaction():
+            cursor = self.conn.execute(
+                "DELETE FROM request_exclusions WHERE match_id = ?", (int(match_id),))
+        return cursor.rowcount
 
     def upsert_request(self, request: Request, now: datetime) -> str:
         values = {name: _request_value(request, name) for name in REQUEST_FIELDS}

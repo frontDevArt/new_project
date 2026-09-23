@@ -717,3 +717,30 @@ def test_initial_top_is_read_before_the_work(prepared):
 
     with pytest.raises(ConfigError, match="notify.digest.initial_top"):
         run_notify(prepared, kind="digest", dry_run=True)
+
+
+# ---------------------------------------------------------------- отказы клиента
+
+def refused_first_floor(config, external_id="R-1") -> None:
+    from listam.domain.models import Exclusion
+
+    database = build_database(config)
+    database.connect()
+    request = database.get_request(external_id)
+    database.add_exclusions([Exclusion(request_id=request.id, kind="first_floor",
+                                       reason="первый этаж", match_id=1,
+                                       created_at=datetime.now(timezone.utc))])
+    database.close()
+
+
+def test_the_request_head_carries_the_refusals_from_the_base(prepared):
+    """Решение 15: исключения из отказов читаются из базы и видны в шапке
+    «звони сейчас» и обоих разделов дайджеста."""
+    born_by_the_request(prepared, 3, request_id="R-1", start=200)
+    refused_first_floor(prepared)
+
+    hot = run_notify(prepared, kind="hot", dry_run=True).text
+    digest = run_notify(prepared, kind="digest", dry_run=True).text
+
+    assert "без 1-го этажа" in hot
+    assert digest.count("без 1-го этажа") == 2      # рынок и первичная подборка

@@ -18,12 +18,13 @@ from __future__ import annotations
 import html
 from dataclasses import dataclass, field
 from datetime import datetime
+from typing import Sequence
 
 from listam.config import Config, score_threshold
 from listam.domain.events import (CHEAPER, NEW, RETIRED, REVIVED, MatchEvent, is_initial,
                                   limited)
-from listam.domain.models import Listing, Request
-from listam.domain.scoring import DEFAULT_HOT
+from listam.domain.models import Exclusion, Listing, Request
+from listam.domain.scoring import DEFAULT_HOT, refusal_words
 
 MINUS = "−"          # настоящий минус U+2212: дефис в числе теряется
 RULE = "━" * 15       # черта под шапкой заявки
@@ -256,15 +257,19 @@ def request_title(icon_title: str, request: Request) -> str:
                     request.client_name])
 
 
-def request_head(icon_title: str, request: Request) -> list[Line]:
+def request_head(icon_title: str, request: Request,
+                 refused: Sequence[Exclusion] = ()) -> list[Line]:
     """Шапка заявки: кто клиент и что он просил — чтобы не вспоминать.
 
     Незаданное в заявке не печатается; заявка без единого пожелания — без
-    второй строки вовсе.
+    второй строки вовсе. `refused` — отказы клиента (решение 15): словами
+    в конце второй строки, «· без 1-го этажа, без панели».
     """
+    words = refusal_words(refused)
     wishes = _joined([", ".join(request.districts) or None, _rooms(request.rooms),
                       _area_range(request),
-                      f"до {usd(request.budget_max)}" if request.budget_max else None])
+                      f"до {usd(request.budget_max)}" if request.budget_max else None,
+                      ", ".join(words) or None])
     lines: list[Line] = [[Span(request_title(icon_title, request), bold=True)]]
     if wishes:
         lines.append([Span(wishes)])
@@ -284,6 +289,11 @@ def _by_request(page) -> list[tuple[Request, list[MatchEvent]]]:
     ordered += [(Request(id=rid, external_id=f"#{rid}"), events)
                 for rid, events in grouped.items() if rid not in owners]
     return ordered
+
+
+def _refused(page, request: Request) -> list[Exclusion]:
+    """Исключения заявки, которые принесла страница событий (`EventsPage`)."""
+    return list(page.exclusions.get(request.id, ()))
 
 
 def _cards(events: list[MatchEvent], medians: dict[str, float],
@@ -312,7 +322,7 @@ def hot_message(page, medians: dict[str, float], config: Config,
         shown, total = limited(alive, per_request)
         tail = ([[Span(f"➕ ещё {_variants(total - len(shown))} — в дайджесте вечером")]]
                 if total > len(shown) else [])
-        sections.append(Section(head=request_head(HOT, request),
+        sections.append(Section(head=request_head(HOT, request, _refused(page, request)),
                                 cards=_cards(shown, medians, config), tail=tail))
     if not sections:
         sections.append(Section(head=[[Span(f"{HOT} · событий нет", bold=True)]], cards=[]))
@@ -379,11 +389,12 @@ def digest_message(page, medians: dict[str, float], config: Config,
                                      for reason, count in reasons.items()) + ")")
         rows.append([Span(f"{request_title('', request)} — "
                           + "  ".join(marks))])
+        refused = _refused(page, request)
         sections.extend(_market_section(request, alive, medians, config,
-                                        per_request, too_wide))
+                                        per_request, too_wide, refused))
         if initial:
             best, count = limited(initial, initial_top)
-            head = request_head(DIGEST, request)
+            head = request_head(DIGEST, request, refused)
             head[0][0].text += (f" — первичная подборка: {len(best)} "
                                 f"{_plural(len(best), 'лучший', 'лучших', 'лучших')} "
                                 f"из {count}")
@@ -398,12 +409,13 @@ def digest_message(page, medians: dict[str, float], config: Config,
 
 def _market_section(request: Request, alive: list[MatchEvent],
                     medians: dict[str, float], config: Config,
-                    per_request: int | None, too_wide: bool) -> list[Section]:
+                    per_request: int | None, too_wide: bool,
+                    refused: Sequence[Exclusion] = ()) -> list[Section]:
     """Раздел рыночных событий заявки; нет событий — нет раздела."""
     if not alive:
         return []
     shown, count = limited(alive, per_request)
-    head = request_head(DIGEST, request)
+    head = request_head(DIGEST, request, refused)
     if too_wide:
         # Широту мерят события, а закрытие событием не является (решение 1
         # спеки M3): сотни «отпало» — ответ на сужение заявки.

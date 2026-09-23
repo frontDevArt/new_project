@@ -265,6 +265,8 @@ class EventsPage:
     totals: dict[str, int] = field(default_factory=dict)  # ключ группы → всего событий
     requests: dict[str, Request] = field(default_factory=dict)
     note: str = ""                                       # «с 21.09 19:00 UTC»
+    # Отказы клиента по id заявки (решение 15): шапка сообщения говорит их словами.
+    exclusions: dict[int, list] = field(default_factory=dict)
 
     def calls(self) -> list:
         """События, по которым звонят: всё, кроме закрытий.
@@ -282,7 +284,7 @@ class EventsPage:
         в этот час. Заявка, у которой осталась только подборка, раздела
         не получает.
         """
-        page = EventsPage(note=self.note)
+        page = EventsPage(note=self.note, exclusions=self.exclusions)
         for event in self.events:
             if is_initial(event):
                 continue
@@ -349,6 +351,9 @@ def collect_events(config: Config, *, since, until,
             page.events.extend(found)
             page.totals[key] = len(found)
             page.requests[key] = request
+            refused = database.exclusions_for(request.id)
+            if refused:
+                page.exclusions[request.id] = refused
         return page
     finally:
         if own:

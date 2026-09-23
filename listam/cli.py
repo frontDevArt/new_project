@@ -11,6 +11,7 @@
     python -m listam changes         что принёс последний прогон
     python -m listam notify          послать уведомление брокеру
     python -m listam find            быстрый поиск по базе без заявки
+    python -m listam mark            отметка «звонил» / «отказ» по матчу заявки
 
 Окружение выбирается переменной APP_ENV или флагом --env.
 """
@@ -107,6 +108,15 @@ def build_parser() -> argparse.ArgumentParser:
     find.add_argument("--open", type=int, dest="open_pages",
                       help="открыть страницы N лучших найденных "
                            "(не выше funnel.find_max_opens)")
+
+    mark = commands.add_parser(
+        "mark", help="отметка по матчу: звонил, отказ (сужает заявку) или откат")
+    mark.add_argument("request", help="заявка: R-4")
+    mark.add_argument("listing", help="объявление: 24254997 (или любое из его кластера)")
+    mark.add_argument("status", choices=["called", "rejected", "new"],
+                      help="called — звонили; rejected — клиент отказал; new — откат")
+    mark.add_argument("--reason", help="причина отказа словами из feedback.reasons: "
+                                       "«первый этаж», «район, тип дома»")
 
     matches = commands.add_parser(
         "matches", help="ранжированный список подобранных вариантов")
@@ -273,6 +283,9 @@ def _dispatch(args, config) -> int:
 
     if args.command == "find":
         return _find(config, args)
+
+    if args.command == "mark":
+        return _mark(config, args)
 
     if args.command == "matches":
         # Бессмысленный ввод отклоняется на входе: ноль строк — это пустая
@@ -448,6 +461,22 @@ def _find(config, args) -> int:
     except FindError as exc:
         print(exc, file=sys.stderr)
         return 2
+    print(report.render())
+    return 1 if report.errors else 0
+
+
+def _mark(config, args) -> int:
+    from listam.feedback import MarkError, run_mark
+
+    try:
+        report = run_mark(config, args.request, args.listing, args.status,
+                          reason=args.reason)
+    except MarkError as exc:
+        print(exc, file=sys.stderr)
+        return 2
+    if report.refusal:
+        print(report.refusal, file=sys.stderr)
+        return 1
     print(report.render())
     return 1 if report.errors else 0
 

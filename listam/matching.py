@@ -31,7 +31,7 @@ from listam.domain.events import NOT_REPRESENTATIVE
 from listam.domain.models import ListingPage, Match, PageFields, Request
 from listam.domain.scoring import (DEFAULT_HOT, DEFAULT_SECONDARY_DISTRICT,
                                    DEFAULT_STRETCH_PERCENT, DEFAULT_WEIGHTS, NOT_OPENED,
-                                   score)
+                                   NOT_PAGE_KINDS, score)
 from listam.domain.wishes import request_wishes
 from listam.domain.stats import median_price_per_sqm_by_district
 from listam.ports.database import Database
@@ -394,16 +394,24 @@ def _write_matches(database: Database, report: MatchReport, requests, candidates
         # боевые 67 000 матчей стоили минуту фиксаций на диск.
         batch: list[Match] = []
         must, nice = request_wishes(request, context.wishes)
+        # Отказы клиента — ещё жёсткие критерии (решение 15): одним запросом
+        # на заявку. Отказ по полю страницы требует страницу и у заявки без
+        # пожеланий.
+        refused = database.exclusions_for(request.id)
+        needs_page = bool(must or nice) or any(
+            exclusion.kind not in NOT_PAGE_KINDS for exclusion in refused)
         origin = "request" if request.id in context.born else "market"
         unseen: set[str] = set()
         for listing in candidates:
             page = (known_fields(context.pages.get(listing.id), context.max_attempts)
-                    if must or nice else None)
+                    if needs_page else None)
             result = score(request, listing, median_by_district=medians,
                            weights=tuning.weights,
                            stretch_percent=tuning.stretch_percent,
                            page=page, must=must, nice=nice,
-                           secondary_district=tuning.secondary_district)
+                           secondary_district=tuning.secondary_district,
+                           refused=refused,
+                           cluster_id=representatives[listing.id].cluster_id)
             if result.rejected_by == NOT_OPENED:
                 unseen.add(listing.id)
                 continue

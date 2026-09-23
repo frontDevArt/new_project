@@ -180,3 +180,23 @@ class ListingPage:
     price_raw: str | None = None            # цена карточки в момент открытия
     fields: PageFields | None = None
     error: str | None = None
+
+
+@dataclass
+class Exclusion:
+    """Отказ клиента, сузивший заявку (решение 15). Живёт в базе, а не
+    в таблице заявок: таблицу ведёт брокер, и синхронизация её не трогает.
+
+    `kind` — `cluster` (отвергнутая квартира), `first_floor`, `last_floor`,
+    `district` или поле страницы (`building_type`, `renovation`); `value` —
+    что именно исключено: кластер, район, слово сайта. `match_id` — отметка,
+    которая его породила: откат отметки снимает её исключения.
+    """
+
+    request_id: int
+    kind: str
+    value: str | None = None
+    reason: str | None = None               # слова брокера как есть
+    match_id: int | None = None
+    created_at: datetime | None = None
+    id: int | None = None

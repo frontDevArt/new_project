@@ -9,7 +9,7 @@ from datetime import datetime, timezone
 
 from listam.config import Config
 from listam.domain.events import CHEAPER, NEW, RETIRED, REVIVED, MatchEvent
-from listam.domain.models import Listing, Match, Request
+from listam.domain.models import Exclusion, Listing, Match, Request
 from listam.layout import (Message, Section, Span, card, digest_message,
                            feed_message, hot_message, plain, request_head,
                            to_html, to_plain)
@@ -221,14 +221,62 @@ def test_request_head_without_any_wishes_has_no_empty_line():
     assert lines == ["🔥 ЗВОНИ СЕЙЧАС · R-4 · Клиент 4", "━━━━━━━━━━━━━━━"]
 
 
+def refused(kind, value=None) -> Exclusion:
+    return Exclusion(request_id=4, kind=kind, value=value, match_id=1)
+
+
+def test_request_head_says_the_refusals_in_words():
+    """Решение 15: отказ клиента сужает заявку — брокер видит это в шапке,
+    а отвергнутые квартиры не перечисляются."""
+    lines = texts(request_head("🔥 ЗВОНИ СЕЙЧАС", request(),
+                               [refused("cluster", "c-1"), refused("first_floor"),
+                                refused("building_type", "панельное")]))
+
+    assert lines[1] == ("Канакер-Зейтун · 2 комн. · 80–110 м² · до $175 000"
+                        " · без 1-го этажа, без панели")
+
+
+def test_request_head_with_only_refusals_still_has_its_line():
+    lines = texts(request_head("🔥 ЗВОНИ СЕЙЧАС",
+                               request(districts=[], rooms=[], area_min=None,
+                                       area_max=None, budget_max=None),
+                               [refused("first_floor")]))
+
+    assert lines == ["🔥 ЗВОНИ СЕЙЧАС · R-4 · Клиент 4", "без 1-го этажа",
+                     "━━━━━━━━━━━━━━━"]
+
+
+def test_a_refused_cluster_alone_adds_nothing_to_the_head():
+    assert texts(request_head("🔥 ЗВОНИ СЕЙЧАС", request(), [refused("cluster", "c")]))         == texts(request_head("🔥 ЗВОНИ СЕЙЧАС", request()))
+
+
+def test_hot_and_both_digest_sections_carry_the_refusals():
+    """Шапка заявки в «звони сейчас», в рыночном разделе дайджеста и в
+    первичной подборке — одна и та же, с исключениями."""
+    market = event(score=90.0)
+    initial = event(score=85.0)
+    initial.match.origin = "request"
+    page = Page([market, initial], [request()],
+                exclusions={4: [refused("first_floor")]})
+
+    hot = hot_message(page, {}, make_config(), per_request=3)
+    digest = digest_message(page, {}, make_config(), per_request=3, wide=None,
+                            active=1, at=AT, initial_top=5)
+
+    heads = [texts(section.head) for section in hot.sections + digest.sections[1:]]
+    assert len(heads) == 3
+    assert all(head[1].endswith("· без 1-го этажа") for head in heads)
+
+
 # ---------------------------------------------------------------- «звони сейчас»
 
 class Page:
     """То, что отдаёт `collect_events`: события и заявки по ключу."""
 
-    def __init__(self, events, requests):
+    def __init__(self, events, requests, exclusions=None):
         self.events = events
         self.requests = {item.external_id: item for item in requests}
+        self.exclusions = exclusions or {}
 
     def calls(self):
         return [item for item in self.events if item.kind != RETIRED]
