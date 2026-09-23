@@ -1,0 +1,48 @@
+"""Отчёт имитации: разбор текста уведомлений и счёт."""
+from __future__ import annotations
+
+from tests.sim.report import CardSection, percentile, sections
+
+HOT = """\
+🔥 ЗВОНИ СЕЙЧАС · R-1 · ПРИМЕР узкая
+Арабкир · 3 комн. · 70–95 м² · до $120 000
+━━━━━━━━━━━━━━━
+
+🆕 $109 900 · 75 м² · $1 465/м² (−43% к району)
+📍 Арабкир · этаж 2/5
+👤 Собственник · 🟢 балл 100 · 🔗 Открыть: https://www.list.am/ru/item/24123988
+
+📉 $120 000 · 82 м² · $1 463/м² (−43% к району)
+📍 Арабкир · этаж 4/5
+🏢 Агентство · 🟢 балл 95 · 🔗 Открыть: https://www.list.am/ru/item/23803420
+➕ ещё 3 варианта — в дайджесте вечером
+
+🔥 ЗВОНИ СЕЙЧАС · R-3 · ПРИМЕР широкая
+━━━━━━━━━━━━━━━
+
+🆕 $200 000 · 90 м²
+👤 Собственник · 🟡 балл 82 · 🔗 Открыть: https://www.list.am/ru/item/24000001
+"""
+
+
+def test_a_hot_text_splits_into_request_sections():
+    assert sections(HOT, {"R-1", "R-2", "R-3"}) == [
+        CardSection("hot", "R-1", ["24123988", "23803420"], 3),
+        CardSection("hot", "R-3", ["24000001"], 0),
+    ]
+
+
+def test_an_empty_hot_has_no_sections():
+    assert sections("🔥 ЗВОНИ СЕЙЧАС · событий нет", {"R-1"}) == []
+
+
+def test_a_digest_summary_head_is_not_a_request():
+    text = ("📋 ДАЙДЖЕСТ · 23.09 · 21:07\n\n📋 ДАЙДЖЕСТ · R-1 · ПРИМЕР узкая — первичная подборка\n"
+            "🔗 Открыть: https://www.list.am/ru/item/5\n")
+    assert sections(text, {"R-1"}) == [CardSection("digest", "R-1", ["5"], 0)]
+
+
+def test_percentile_is_nearest_rank():
+    assert percentile([1, 2, 3, 4, 5, 6, 7, 8, 9, 10], 0.5) == 5
+    assert percentile([1, 2, 3, 4, 5, 6, 7, 8, 9, 10], 0.95) == 10
+    assert percentile([], 0.5) is None
