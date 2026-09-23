@@ -543,3 +543,48 @@ def test_the_notification_reads_through_its_own_session(prepared, monkeypatch):
     run_notify(prepared, kind="hot", dry_run=True)
 
     assert opened == []
+
+
+def test_an_empty_hot_is_not_sent_but_moves_the_window(prepared, monkeypatch):
+    """Решение 5 спеки M3.5: расписание зовёт «звони сейчас» каждый час, и
+    пустое сообщение — это 24 «событий нет» в сутки брокеру в личку. Окна
+    без событий в чат не уходят, но строка журнала пишется: окно сдвигается,
+    и следующий час считается от неё, а не от прошлой настоящей отправки."""
+    from listam.ports.notifier import StdoutNotifier
+
+    run_notify(prepared, kind="hot")                 # два события — ушло
+    sent = []
+    monkeypatch.setattr(StdoutNotifier, "send",
+                        lambda self, text, to=None: sent.append(text))
+
+    empty = run_notify(prepared, kind="hot")
+
+    assert sent == [], "пустое «звони сейчас» не шлётся"
+    assert empty.errors == 0
+    assert empty.sent is False
+    assert "событий нет — не отправлено" in (empty.notes or "")
+    database = build_database(prepared)
+    database.connect()
+    last = database.last_notification("hot")
+    database.close()
+    assert last.events == 0, "журнал пишется и без отправки"
+
+    again = run_notify(prepared, kind="hot")
+    assert again.scope == f"с прошлой отправки ({last.window_to:%d.%m %H:%M} UTC)"
+
+
+def test_an_empty_digest_is_still_sent(prepared, monkeypatch):
+    """У дайджеста «событий нет» — законный ответ раз в сутки: брокер знает,
+    что система жива, а рынок по его заявкам молчит."""
+    from listam.ports.notifier import StdoutNotifier
+
+    run_notify(prepared, kind="digest")
+    sent = []
+    monkeypatch.setattr(StdoutNotifier, "send",
+                        lambda self, text, to=None: sent.append(text))
+
+    empty = run_notify(prepared, kind="digest")
+
+    assert empty.events == 0
+    assert len(sent) == 1
+    assert empty.sent is True

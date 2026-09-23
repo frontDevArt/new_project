@@ -201,14 +201,21 @@ def run_notify(config: Config, *, kind: str, dry_run: bool = False) -> NotifyRep
                 notes.append("пробный прогон: не отправлено, журнал не тронут")
                 return report
 
-            try:
-                notifier.send(report.text)
-            except NotifyError as exc:
-                report.errors = 1
-                notes.append(f"канал отказал: {exc}. Окно не сдвинуто — "
-                             f"следующий запуск пошлёт то же самое")
-                return report
-            report.sent = True
+            # Пустое «звони сейчас» в чат не идёт (решение 5 спеки M3.5):
+            # расписание зовёт его каждый час, и брокер получал бы 24
+            # «событий нет» в сутки. Журнал пишется всё равно — окно сдвигается.
+            # У дайджеста «событий нет» — законный ответ раз в сутки.
+            if kind == "hot" and report.events == 0:
+                notes.append("событий нет — не отправлено")
+            else:
+                try:
+                    notifier.send(report.text)
+                except NotifyError as exc:
+                    report.errors = 1
+                    notes.append(f"канал отказал: {exc}. Окно не сдвинуто — "
+                                 f"следующий запуск пошлёт то же самое")
+                    return report
+                report.sent = True
 
             try:
                 database.record_notification(Notification(
