@@ -1,17 +1,34 @@
-# Рабочее окружение: база живёт в Google Drive, обход идёт до конца категории.
+# Рабочее окружение: обход идёт до конца категории, расписание — из этого файла.
 # Идентификаторы и ключи сюда не пишутся — только ссылки на переменные из .env.
 env: prod
 
 storage:
-  kind: gdrive
-  folder: ${GDRIVE_FOLDER}
-  credentials_file: ${GDRIVE_CREDENTIALS_FILE}
+  kind: local                   # Drive — этап M3.6 (решение пользователя)
+  directory: ./data/store       # общая копия базы и бэкапы
+  # kind: gdrive                # для M3.6:
+  # folder: ${GDRIVE_FOLDER}
+  # credentials_file: ${GDRIVE_CREDENTIALS_FILE}
   work_dir: ./data
-  db_filename: listam.sqlite
+  db_filename: listam-prod.sqlite   # не делит рабочую копию с dev
   keep_backups: 5               # сколько прежних копий базы держим в хранилище
   max_shrink_percent: 10        # насколько база может усохнуть без --allow-shrink
   busy_timeout_ms: 10000        # сколько ждать, пока чужая запись отпустит базу
   lock_stale_seconds: 10800     # замок прогона старше этого считается брошенным
+
+locale:
+  timezone: Asia/Yerevan        # человеческое время: расписание, шапка дайджеста
+
+schedule:                       # `python -m listam schedule install` ставит задачи отсюда
+  log_dir: ./data/logs          # лог каждого цикла: по расписанию вывод иначе пропадает
+  keep_logs_days: 14
+  task_prefix: listam           # имя задач в schtasks, метка в crontab
+  alert_on_failure: true        # упавший шаг — одна строка брокеру в чат
+  alert_every_hours: 6          # и не чаще этого
+  linux_xvfb: true              # на Linux цикл заворачивается в xvfb-run -a
+  cycles:                       # шаги — аргументы CLI без «python -m listam»; первый ненулевой код — стоп
+    hourly:  {every_minutes: 60, steps: ["scrape --fresh", "match --new", "notify --hot"]}
+    nightly: {at: "04:00", steps: ["scrape", "match --all", "notify --feed"]}
+    evening: {at: "20:00", steps: ["notify --digest"]}
 
 validate:                       # пороги «это опечатка продавца, а не данные»
   price_usd: {min: 5000, max: 5000000}
@@ -29,11 +46,10 @@ coverage:                       # доли заполненности полей
     seller_type: {agency: 0.05}
 
 requests:
-  kind: none                    # none | csv | gsheet
-  # Переключение на боевой источник — правка одной строки `kind`.
-  # Живой Google Sheet не проверен (решение 11 спеки): приёмка M2 идёт на csv,
-  # а прод остаётся на none, пока в .env не появится REQUESTS_SHEET.
-  # path: ./data/requests.csv         # для kind: csv
+  kind: csv                     # none | csv | gsheet
+  # Живой Google Sheet — этап M3.6: M3.5 идёт на CSV. Переключение — правка
+  # одной строки `kind` и REQUESTS_SHEET в .env.
+  path: ./data/requests.csv     # папка data не коммитится; образец — config/requests.example.csv
   # sheet: ${REQUESTS_SHEET}          # для kind: gsheet
   # credentials_file: ${GDRIVE_CREDENTIALS_FILE}
   # range: A1:Z1000                   # сколько строк листа читаем
@@ -87,7 +103,7 @@ notify:
     include_retired: true       # тихий раздел «отпало»: куда делась вчерашняя карточка
     fallback_hours: 24
   feed:                         # что пришло на ленту вне заявок
-    enabled: false              # тумблер: от заявок не зависит вовсе
+    enabled: true               # тумблер: от заявок не зависит вовсе
     limit: 15                   # строк в сообщении, лучшие по выгодности
     fallback_hours: 24
 

@@ -12,6 +12,21 @@ storage:
   busy_timeout_ms: 10000        # сколько ждать, пока чужая запись отпустит базу
   lock_stale_seconds: 10800     # замок прогона старше этого считается брошенным
 
+locale:
+  timezone: Asia/Yerevan        # человеческое время: расписание, шапка дайджеста
+
+schedule:                       # `python -m listam schedule install` ставит задачи отсюда
+  log_dir: ./data/logs          # лог каждого цикла: по расписанию вывод иначе пропадает
+  keep_logs_days: 14
+  task_prefix: listam-dev       # имя задач в schtasks, метка в crontab: не пересекается с prod
+  alert_on_failure: true        # упавший шаг — одна строка брокеру в чат
+  alert_every_hours: 6          # и не чаще этого
+  linux_xvfb: true              # на Linux цикл заворачивается в xvfb-run -a
+  cycles:                       # шаги — аргументы CLI без «python -m listam»; первый ненулевой код — стоп
+    hourly:  {every_minutes: 60, steps: ["scrape --fresh", "match --new", "notify --hot"]}
+    nightly: {at: "04:00", steps: ["scrape", "match --all", "notify --feed"]}
+    evening: {at: "20:00", steps: ["notify --digest"]}
+
 validate:                       # пороги «это опечатка продавца, а не данные»
   price_usd: {min: 5000, max: 5000000}
   price_per_sqm: {min: 100, max: 20000}

@@ -334,3 +334,32 @@ def test_the_shipped_prod_config_loads_without_telegram_keys(tmp_path, monkeypat
     assert config.get("notify.kind") == "telegram"
     with pytest.raises(ConfigError, match="TELEGRAM_BOT_TOKEN"):
         build_notifier(config)
+
+
+def test_prod_config_loads_without_google_keys(tmp_path, monkeypatch):
+    """M3.5 идёт на локальной базе и CSV: Drive и Sheet — этап M3.6. Боевой
+    конфиг с `storage.kind: gdrive` при пустых GDRIVE_* не грузился вовсе, и
+    ни одна команда не стартовала. Боевая база — своё имя файла: dev-прогоны
+    на той же машине не делят с ней рабочую копию (решение 2)."""
+    monkeypatch.setenv("GDRIVE_FOLDER", "")
+    monkeypatch.setenv("GDRIVE_CREDENTIALS_FILE", "")
+    monkeypatch.setenv("REQUESTS_SHEET", "")
+
+    config = load_config(env="prod", config_dir=ROOT / "config",
+                         dotenv_path=tmp_path / ".env")
+
+    assert config.get("storage.kind") == "local"
+    assert config.get("storage.db_filename") == "listam-prod.sqlite"
+    assert config.get("requests.kind") == "csv"
+    assert config.get("locale.timezone") == "Asia/Yerevan"
+    assert config.get("notify.feed.enabled") is True
+    assert set(config.get("schedule.cycles")) == {"hourly", "nightly", "evening"}
+
+
+@pytest.mark.parametrize("env, prefix", [("dev", "listam-dev"), ("prod", "listam")])
+def test_both_configs_carry_locale_and_schedule(env, prefix, tmp_path, monkeypatch):
+    """Задачи двух окружений на одной машине не должны перетирать друг друга."""
+    config = shipped_config(env, tmp_path, monkeypatch)
+    assert config.get("locale.timezone") == "Asia/Yerevan"
+    assert config.get("schedule.task_prefix") == prefix
+    assert config.get("schedule.log_dir")
