@@ -143,6 +143,7 @@ R-3,ПРИМЕР широкая,,active,250 000 $,,"Кентрон, Арабки
 | Д-3 | Компьютер не засыпает | пользователь | «Электропитание» → сон «Никогда» при питании от сети; задачи идут с `/it` — пользователь должен быть залогинен |
 | Д-4 | Переезд на Linux вживую не проверен | пользователь | на сервере: `git clone`, `.env`, `pip install`, `python -m listam schedule show`, `schedule install` |
 | Д-5 | «За секунду понятно» глазами брокера | пользователь | неделя фазы 7: отзыв брокера о сообщениях |
+| Д-6 | Живая отправка и установка расписания фазы 1 | пользователь | классификатор прав не дал агенту: `notify --digest` и `schedule install` — команды в «Результате фазы 1», «Что осталось» |
 
 Живые проверки Д-2 (дописываются фазами):
 
@@ -161,7 +162,7 @@ R-3,ПРИМЕР широкая,,active,250 000 $,,"Кентрон, Арабки
 **Смысл:** с конца этой фазы система работает сама на Windows, и история цен
 начинает копиться. Всё остальное в M3.5 доводится поверх живого прогона.
 
-**Ожидается после фазы:** ~850 passed, 25 skipped, схема 11.
+**Ожидается после фазы:** ~850 passed, 25 skipped, схема 11 (вышло 888 — см. «Результат фазы 1»).
 
 ### Задача 1.1. Тесты не зависят от календаря
 
@@ -169,31 +170,31 @@ R-3,ПРИМЕР широкая,,active,250 000 $,,"Кентрон, Арабки
 `tests/test_matching.py` (строки ~161, 427, 450, 482, 538, 578, 598) и
 `tests/test_events.py` (~65). Сравниваются с настоящими часами — завтра упадут.
 
-- [ ] `grep -n "datetime(2026" tests/` — список мест; для каждого решить,
+- [x] `grep -n "datetime(2026" tests/` — список мест; для каждого решить,
   сравнивается ли дата с `now()` кода. Сравнивается — заменить на
   `datetime.now(timezone.utc) + timedelta(…)`. Не сравнивается — оставить.
-- [ ] Оставшимся календарным датам — пометка в строке
+- [x] Оставшимся календарным датам — пометка в строке
   `# календарь: не сравнивается с часами`.
-- [ ] Сторож `test_no_calendar_dates_against_real_clock` в `tests/test_docs.py`:
+- [x] Сторож `test_no_calendar_dates_against_real_clock` в `tests/test_docs.py`:
   ищет `datetime(20` в `tests/` и падает на строке без этой пометки. Новая
   бомба не проскочит.
 
 ### Задача 1.2. Пустое «звони сейчас» не шлётся (решение 5)
 
-- [ ] Тест `test_an_empty_hot_is_not_sent_but_moves_the_window`
+- [x] Тест `test_an_empty_hot_is_not_sent_but_moves_the_window`
   (`tests/test_notifications.py`): окно без событий, `kind="hot"`, канал —
   подменный `Notifier`; `send` не зван, строка журнала `events=0` есть,
   повтор берёт окно от неё.
-- [ ] Тест `test_an_empty_digest_is_still_sent`: у дайджеста «событий нет» —
+- [x] Тест `test_an_empty_digest_is_still_sent`: у дайджеста «событий нет» —
   законный ответ раз в сутки.
-- [ ] Правка `run_notify`: `kind == "hot" and report.events == 0` → не
+- [x] Правка `run_notify`: `kind == "hot" and report.events == 0` → не
   звать `send`, писать журнал, `report.notes = "событий нет — не отправлено"`.
 
 ### Задача 1.3. Боевой конфиг без облака
 
-- [ ] Тест `test_prod_config_loads_without_google_keys` (`tests/test_config.py`):
+- [x] Тест `test_prod_config_loads_without_google_keys` (`tests/test_config.py`):
   `load_config(env="prod")` при пустых `GDRIVE_*` не падает.
-- [ ] `config/prod.yaml`:
+- [x] `config/prod.yaml`:
 
 ```yaml
 storage:
@@ -215,15 +216,15 @@ schedule:
   linux_xvfb: true
   cycles:
     hourly:  {every_minutes: 60, steps: ["scrape --fresh", "match --new", "notify --hot"]}
-    nightly: {at: "04:00", steps: ["scrape", "match --all", "notify --feed"]}
-    evening: {at: "20:00", steps: ["notify --digest"]}
+    nightly: {at: "04:30", steps: ["scrape", "match --all", "notify --feed"]}   # :30 — см. «Результат фазы 1», п. 3
+    evening: {at: "20:30", steps: ["notify --digest"]}
 notify:
   feed:
     enabled: true
 ```
 
   `dev.yaml` получает те же секции `locale` и `schedule` с `task_prefix: listam-dev`.
-- [ ] `requirements.txt` + `tzdata`; `.venv/Scripts/pip install tzdata`.
+- [x] `requirements.txt` + `tzdata`; `.venv/Scripts/pip install tzdata`.
 
 ### Задача 1.4. `listam cycle` (решения 3, 4)
 
@@ -243,47 +244,47 @@ def run_cycle(config: Config, name: str, *, dispatch=None, notifier=None,
               now=None) -> int: ...                           # код возврата цикла
 ```
 
-- [ ] `test_cycles_are_read_and_checked`: пустой `steps`, неизвестная команда
+- [x] `test_cycles_are_read_and_checked`: пустой `steps`, неизвестная команда
   шага (`"scarpe"` — разбирается `cli.build_parser()`), `at: "25:00"`, оба
   `every_minutes` и `at`, ни одного — `ConfigError` с именем ключа.
-- [ ] `test_a_cycle_stops_at_the_first_failing_step`: подменный `dispatch`
+- [x] `test_a_cycle_stops_at_the_first_failing_step`: подменный `dispatch`
   (шаг → код); второй вернул 1 — третий не зван, код цикла 1.
-- [ ] `test_a_busy_lock_skips_the_cycle_quietly`: замок взят — ни одного
+- [x] `test_a_busy_lock_skips_the_cycle_quietly`: замок взят — ни одного
   шага, код 0, строка «пропущен: идёт другой прогон» в логе, тревоги нет.
   Для этого `RunLock.busy() -> str | None` (описание держателя; протухший
   замок — `None`) — тест `test_busy_does_not_take_the_lock` в
   `tests/test_concurrency.py`.
-- [ ] `test_the_cycle_writes_its_log`: файл `cycle-YYYY-MM-DD.log` в
+- [x] `test_the_cycle_writes_its_log`: файл `cycle-YYYY-MM-DD.log` в
   `schedule.log_dir`, в нём шапка цикла, вывод каждого шага и код; логи
   старше `keep_logs_days` удаляются.
-- [ ] `test_a_failed_cycle_alerts_once_per_window`: два падения подряд —
+- [x] `test_a_failed_cycle_alerts_once_per_window`: два падения подряд —
   одна отправка; отметка — файл `last-alert` в `log_dir` (не база: упавший
   шаг мог быть про базу). Отправка тревоги упала — строка в логе, код цикла
   прежний.
-- [ ] Шаг исполняется в том же процессе: `cli.build_parser().parse_args(step.split())`
+- [x] Шаг исполняется в том же процессе: `cli.build_parser().parse_args(step.split())`
   и `cli._dispatch(args, config)`; вывод шага — в лог и в консоль
   (`contextlib.redirect_stdout` в тройник). Флаги `--env`/`--config-dir` цикла
   шаги наследуют через уже загруженный `config`.
-- [ ] CLI: `listam cycle <имя>`; неизвестное имя — код 2 со списком известных.
+- [x] CLI: `listam cycle <имя>`; неизвестное имя — код 2 со списком известных.
 
 ### Задача 1.5. `listam schedule show|install|remove`
 
-- [ ] Чистые функции, без системы:
+- [x] Чистые функции, без системы:
   `windows_tasks(config, root, python, env) -> list[Task]` и
   `cron_lines(config, root, python, env) -> list[str]`. `Task` — имя,
   `schtasks`-аргументы и текст `.cmd`-обёртки.
-- [ ] `test_windows_tasks`: `hourly` → `/sc minute /mo 60`; `evening` →
+- [x] `test_windows_tasks`: `hourly` → `/sc minute /mo 60`; `evening` →
   `/sc daily /st HH:MM` в **местном времени хоста** (Yerevan 20:00 при
   хосте UTC → `16:00`); `/it`, `/f`; команда задачи — обёртка
   `data/schedule/<prefix>-<cycle>.cmd` (`schtasks /tr` не берёт больше
   261 символа), внутри `cd /d "<root>"` и `"<python>" -m listam --env <env> cycle <имя>`.
-- [ ] `test_cron_lines`: `0 * * * *`, `0 16 * * *` для хоста в UTC;
+- [x] `test_cron_lines`: `0 * * * *`, `0 16 * * *` для хоста в UTC;
   `cd "<root>" && xvfb-run -a "<python>" -m listam --env prod cycle hourly`;
   каждая строка с меткой `# <prefix>:<cycle>`; `linux_xvfb: false` — без
   `xvfb-run`.
-- [ ] `test_no_path_is_hardcoded`: в `schedule.py`, `config/*.yaml` и README
+- [x] `test_no_path_is_hardcoded`: в `schedule.py`, `config/*.yaml` и README
   нет `C:\` и `/srv/` (корень и python приходят аргументами).
-- [ ] `install`/`remove` зовут систему через внедрённый `run(cmd)`;
+- [x] `install`/`remove` зовут систему через внедрённый `run(cmd)`;
   на Linux читают `crontab -l`, убирают строки своей метки, дописывают новые.
   Тест на подменном `run`. Платформа — `sys.platform`; флаг
   `--platform windows|linux` для `show` (посмотреть чужую); `install`
@@ -291,13 +292,13 @@ def run_cycle(config: Config, name: str, *, dispatch=None, notifier=None,
 
 ### Задача 1.6. `doctor`: строка «Расписание»
 
-- [ ] Тест: последний `fresh` старше 2 ч или последний `full` старше 26 ч —
+- [x] Тест: последний `fresh` старше 2 ч или последний `full` старше 26 ч —
   `⚠` с датой; прогонов нет — `⚠ по расписанию ещё не работало`. Мерка —
   `runs`, не системный планировщик: так строка одинакова на обеих платформах.
 
 ### Задача 1.7. README: расписание
 
-- [ ] Раздел «Как запускать по расписанию» — `schedule show` / `install`,
+- [x] Раздел «Как запускать по расписанию» — `schedule show` / `install`,
   циклы из конфига, лог, тревога, переезд на Linux тремя командами.
   Примеры с `C:\Users\Admin\…` удалить. `tests/test_docs.py`
   (`test_the_schedule_sends_the_notifications`, `test_readme_names_every_command_the_cli_has`)
@@ -305,10 +306,10 @@ def run_cycle(config: Config, name: str, *, dispatch=None, notifier=None,
 
 ### Задача 1.8. Запуск (операции, не код)
 
-- [ ] `data/requests.csv` ← «Пример заявок» (или реальные, если пришли).
-- [ ] `PYTHONIOENCODING=utf-8 .venv/Scripts/python.exe -m listam --env prod doctor` —
+- [x] `data/requests.csv` ← «Пример заявок» (или реальные, если пришли).
+- [x] `PYTHONIOENCODING=utf-8 .venv/Scripts/python.exe -m listam --env prod doctor` —
   без «СБОЙ».
-- [ ] `--env prod requests`, затем полный `--env prod scrape` (ориентир —
+- [x] `--env prod requests`, затем полный `--env prod scrape` (ориентир —
   215 страниц за ~11 минут; окно браузера откроется — это нормально),
   `match --all`, `notify --hot --dry-run`, `notify --digest --dry-run`.
 - [ ] Одна живая отправка: `--env prod notify --digest`. Читать в чате
@@ -316,7 +317,7 @@ def run_cycle(config: Config, name: str, *, dispatch=None, notifier=None,
 - [ ] `--env prod schedule show`, затем `schedule install`;
   `schtasks /query /tn listam-hourly /v /fo list` — задача есть.
 - [ ] Через час с лишним: в `runs` строка `fresh`, в `data/logs` — лог цикла.
-- [ ] Сказать пользователю про Д-3 (сон) и что заявки-примеры шлют
+- [x] Сказать пользователю про Д-3 (сон) и что заявки-примеры шлют
   уведомления с пометкой «ПРИМЕР».
 
 ### Конец фазы 1
@@ -324,6 +325,178 @@ def run_cycle(config: Config, name: str, *, dispatch=None, notifier=None,
 Отчёт: батарея, что установлено (`schedule show`), числа первого полного
 обхода, первая строка `fresh` из `runs` (с командой), текст сухого дайджеста
 (первые строки), долги, дописанные в раздел «Долги».
+
+## Результат фазы 1
+
+Сессия 23.09.2026. Код фазы готов и закоммичен; боевая база заведена чистым
+полным обходом. **Две операции 1.8 не исполнены агентом** — их отклонил
+классификатор прав Claude Code, и они переданы пользователю (см. «Что осталось»):
+живая отправка `notify --digest` и `schedule install`. Поэтому первой строки
+`fresh` в `runs` и лога цикла ещё нет.
+
+### Что сделано
+
+| Задача | Итог | Коммит |
+| --- | --- | --- |
+| 0 | спека и план M3.5 были в дереве, но не в истории — закоммичены | `40a4cdd` |
+| 1.1 | календарные даты: одна настоящая бомба, остальные помечены; сторож `test_no_calendar_dates_against_real_clock` | `87d0f4b` |
+| 1.2 | пустое «звони сейчас» не шлётся, журнал пишется, окно сдвигается; дайджест «событий нет» уходит | `a80e651` |
+| 1.3 | `prod.yaml`: `storage.kind: local` (`./data/store`, `listam-prod.sqlite`), `requests.kind: csv`, `locale`, `schedule`, `notify.feed.enabled: true`; `dev.yaml` — `locale`, `schedule` с `listam-dev`; `tzdata` | `8d74bd3` |
+| 1.4 | `listam/schedule.py`: `Cycle`, `cycles`, `run_cycle`; `RunLock.busy()`; CLI `cycle <имя>` | `d3bdc01` |
+| 1.5 | `windows_tasks`, `cron_lines`, `install`, `remove`, `show`; CLI `schedule show\|install\|remove [--platform]` | `d3bdc01` |
+| 1.6 | `doctor`: строка «Расписание» по журналу `runs` | `d3bdc01` |
+| 1.7 | README: раздел «Как запускать по расписанию» переписан, `C:\Users\Admin\…` и `/srv/` удалены, команды `cycle`/`schedule` в таблице | `d3bdc01` |
+| — | цикл без консоли (`sys.stdout is None`) пишет лог, а не падает | `479b5f3` |
+| — | **парсер: значок агентства по слову, а не по классу** (находка боевого обхода, ниже) | `ff8a996` |
+
+### Числа (каждое — с командой)
+
+* Батарея до фазы: `.venv/Scripts/python.exe -m pytest -q` → **824 passed, 25 skipped**.
+* Батарея после фазы: та же команда → **888 passed, 25 skipped** (46,2 с).
+  План ждал ~850: тестов фазы больше, чем в плане (параметризованные проверки
+  циклов, 12 случаев `test_cycles_are_read_and_checked`, установщик на подмене).
+* Бомбы календаря: плагин pytest, сдвигающий `datetime.now()` кода и тестов
+  на +1/+3/+30 суток (скрипт вне репозитория, `-p shiftclock`), до правки дал
+  падение `tests/test_matching.py::test_new_sees_the_one_that_got_cheaper` на
+  всех трёх сдвигах; остальные падения — артефакты подмены (openpyxl не узнаёт
+  подкласс `datetime`, локальный `from datetime import` в `test_crawler`).
+  После правки под сдвигом +30 сут `tests/test_matching.py tests/test_events.py
+  tests/test_notifications.py` → 89 passed.
+* `PYTHONIOENCODING=utf-8 .venv/Scripts/python.exe -m listam --env prod doctor` →
+  без «СБОЙ»; ⚠ только «Расписание: по расписанию ещё не работало».
+* `… --env prod requests` → «Заявки: новых 3, обновлённых 0, без изменений 0,
+  закрытых 0» (пример заявок R-1…R-3).
+* Первый `… --env prod scrape` → «страниц: 216, карточек: 20684, новых: 20672,
+  … ошибок: 1»; «seller_type = agency у 0% карточек прогона, порог … 5%»;
+  база не залита. Причина и починка — ниже; брак отложен в scratchpad, в
+  хранилище не попал.
+* Второй `… --env prod scrape` (после починки) → **«Прогон (full): страниц: 216,
+  карточек: 20685, новых: 20664, обновлённых: 0, сменили цену: 0, снято: 0,
+  вернулось: 0, ошибок: 0»**, «конец ленты: пагинатор не дал следующей
+  страницы», код 0; заняло 9 мин 25 с (`runs.started_at` 13:02:26 →
+  `finished_at` 13:11:51 UTC).
+* `runs` боевой базы (`python -c "…select … from runs"` по
+  `data/listam-prod.sqlite`): `(1, 2026-09-23T13:02:26Z, 2026-09-23T13:11:51Z,
+  full, 216, 20685, 20664, 0)`. Строки `fresh` нет — задачи не поставлены.
+* Продавцы (`select seller_type, count(*) from listings group by 1`):
+  agency 16 558, owner 4 106.
+* `… --env prod match --all` → «Заявок: 3, объявлений в выборке: 20644, из них
+  представителей кластеров: 14395; Матчи: новых 3322 …; Из них горячих: 2673,
+  в дайджест: 627», база залита, код 0.
+* `… --env prod notify --hot --dry-run` → «Событий: 2673, заявок: 3»; первые
+  строки: «Звони сейчас: отправок ещё не было — беру последние 2 ч»,
+  «Заявка R-1 (ПРИМЕР узкая) — новый: 23», верхний вариант «100 баллов
+  $109,900 1,465 $/м² Арабкир … https://www.list.am/ru/item/24123988».
+* `… --env prod notify --digest --dry-run` → «Событий: 3300, заявок: 3»; первые
+  строки: «Что нового со вчера: отправок ещё не было — беру последние 24 ч»,
+  «Заявка R-1 (ПРИМЕР узкая) — новый: 25», «⚠ заявка слишком широкая: 25
+  событий за окно». Всё это — первичная подборка (решение 14, фаза 4),
+  **предварительно**, на примере (Д-1).
+* `… --env prod schedule show` на этой машине (часы хоста — Ереван):
+  `listam-hourly` — `/sc minute /mo 60 /st 00:00 /it /f`;
+  `listam-nightly` — `/sc daily /st 04:30`; `listam-evening` — `/sc daily
+  /st 20:30`; команда каждой задачи — обёртка
+  `data/schedule/listam-<цикл>.cmd` с `cd /d` в корень и
+  `"<.venv>\python.exe" -m listam --env prod cycle <цикл>`.
+
+### Что разошлось с планом и почему
+
+1. **Спека и план не были закоммичены** (исходное состояние обещало HEAD со
+   спекой). Закоммичены первым коммитом сессии.
+2. **Бомба календаря — одна, а не восемь.** План назвал все даты
+   `datetime(2026, 9, 23)` в `test_matching.py` и `test_events.py` бомбами;
+   сдвиг часов показал, что с `now()` сравнивается только окно `--new` без
+   прогонов (`fallback_hours` от настоящих часов). Остальные — помечены.
+3. **Циклы «в ЧЧ:ММ» — 04:30 и 20:30, а не 04:00 и 20:00.** Часовой идёт
+   ровно в начале часа (`0 * * * *`, `/st 00:00`), и в 04:00 и 20:00 два цикла
+   стартовали бы разом: кто первым взял замок, тот прошёл, второй — тихий
+   пропуск (решение 4). Пропущенный ночной — сутки без полного обхода,
+   пропущенный вечерний — день без дайджеста. Сторож —
+   `test_the_shipped_fixed_cycles_do_not_start_with_a_periodic_one`.
+4. **`/st 00:00` у часовой задачи Windows** — в плане не было. Без него задача
+   идёт с минуты установки, и Windows с Linux расходились бы по минутам.
+5. **`test_the_schedule_sends_the_notifications` переписан**, а не «остался
+   зелёным»: он требовал шаги прямо в строке `schtasks`/`cron`, а по решению 3
+   задача зовёт `cycle <имя>`, шаги живут в конфиге. Теперь тест проверяет
+   поставляемые `schedule.cycles` обоих конфигов (`notify --hot` после
+   `match --new` в периодическом, `notify --digest` — в суточном) и выдержку
+   конфига и команды `schedule` в README.
+6. **Парсер ленты правлен в фазе 1** (`listam/parsers/category_list.py`, не
+   `crawler.py`). Первый боевой обход записал всех продавцов собственниками:
+   list.am 23.09 переименовал обфусцированный класс значка `ge3` → `ge4`.
+   Проверка доли агентств (coverage) сработала как задумано — остановила
+   заливку. Значок теперь ищется по слову «Агентство» в `span` карточки.
+   Для диагноза инструмент своим `Fetcher` (`build_fetcher(prod)`) взял одну
+   страницу `/category/60` в scratchpad — вне репозитория.
+7. **Проверки периода.** `every_minutes` принимается только такой, который
+   одинаково понимают `schtasks` и `cron` (делитель часа или целые часы,
+   делящие сутки); шаг не может начинаться с флага и звать `cycle`/`schedule`.
+   В плане этого не было — это «бессмысленное значение отклоняется на входе».
+8. **Живая отправка и `schedule install` не исполнены агентом** — отклонены
+   классификатором прав («Real-World Transactions», «Unauthorized
+   Persistence»). Переданы пользователю.
+
+### Находки для следующих фаз
+
+* **Первый «звони сейчас» после установки будет большим.** В окне
+   `fallback_hours: 2` лежат 2 673 горячих события первичной подборки трёх
+   заявок-примеров: три сообщения по 5 строк и хвост «…и ещё 2268 из 2273».
+   Это ровно проблема решения 14 (фаза 4); до неё — ожидаемо.
+* **dev и prod делят `./data/requests.csv`.** Пример заявок теперь виден и
+   dev-прогонам. Базы и замки у них разные (`listam.sqlite` / `listam-prod.sqlite`).
+* **Окно `cmd` мелькает раз в час** на рабочем столе: задача с `/it` и
+   консольный `python.exe`. Обход всё равно открывает окно браузера.
+
+### Что осталось (пользователю)
+
+```
+! PYTHONIOENCODING=utf-8 .venv/Scripts/python.exe -m listam --env prod notify --digest
+! PYTHONIOENCODING=utf-8 .venv/Scripts/python.exe -m listam --env prod schedule install
+! schtasks /query /tn listam-hourly /v /fo list
+```
+
+Через час с лишним: `doctor` — строка «Расписание» без ⚠ по часовому; в
+`runs` — строка `fresh`; в `data/logs` — `cycle-ГГГГ-ММ-ДД.log`. Эти три
+проверки — первое, что делает фаза 2 (стартовый промпт ниже).
+
+## Стартовый промпт фазы 2
+
+```
+Ты продолжаешь этап M3.5 инструмента мониторинга list.am
+в C:\Users\Artur.A.Gevorgyan\Downloads\new_project.
+
+Прочитай docs/superpowers/plans/2026-09-23-m3-5-live-launch.md: разделы
+«Global Constraints», «Карта файлов», «Долги», «Результат фазы 1» и свою
+«Фазу 2». Чужие фазы не трогай. Спека —
+docs/superpowers/specs/2026-09-23-m3-5-live-launch-design.md, решения 1–18
+не пересматриваются.
+
+Исходное состояние: HEAD — коммит «Результат фазы 1», дерево чистое,
+батарея 888 passed, 25 skipped, схема 11. Боевая база — data/listam-prod.sqlite
+(хранилище — data/store; замеры — только на копии), заявки — пример R-1…R-3.
+Первым делом проверь, поставил ли пользователь расписание (см. «Что осталось»
+в «Результате фазы 1»): schtasks /query /tn listam-hourly, строка fresh
+в runs, лог в data/logs, строка «Расписание» в doctor. Не поставил —
+спроси, не ставь сам. Расписание установлено — не останавливай его без
+нужды, а если остановил — верни и напиши об этом.
+
+Твоя задача — фаза 2: вёрстка Telegram строго по пункту 8.
+Сообщение становится структурой (layout.Message), порт Notifier принимает
+её целиком, Telegram получает HTML с карточками из трёх строк и режется
+только между карточками; --dry-run и журнал — простой текст той же структуры.
+Тревога цикла (schedule.py) тоже шлёт Message.
+
+Работай по шагам: на каждое поведение — падающий тест ДО правки. Тесты —
+только .venv/Scripts/python.exe -m pytest -q, CLI из скрипта — только
+с PYTHONIOENCODING=utf-8. Пороги не поднимай (кроме фазы 4 с замером).
+Новый метод порта — новый контрактный тест. Схему меняет только
+миграция 012 (фаза 3). След звонка пишет только mark, MATCH_COMPARED
+не расширяется. Живые проверки Playwright не запускай — впиши в «Долги».
+Сам на list.am не ходи. Ни одного числа без команды, которая его напечатала.
+
+В конце сессии допиши «Результат фазы 2» и стартовый промпт фазы 3.
+Сделай коммит.
+```
 
 ---
 
