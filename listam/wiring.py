@@ -42,6 +42,7 @@ def build_storage(config: Config) -> Storage:
         return GDriveStorage(
             folder_id=config.get("storage.folder"),
             credentials_file=config.get("storage.credentials_file"),
+            token_file=config.get("storage.token_file"),
         )
     raise _unknown("storage", kind, ["local", "gdrive"])
 

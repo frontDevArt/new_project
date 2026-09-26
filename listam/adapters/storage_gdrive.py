@@ -4,6 +4,12 @@
 ключу приходят из окружения, в коде их нет. Папку нужно расшарить на адрес
 сервисного аккаунта с правом редактирования.
 
+В личном Drive (не Workspace) сервисный аккаунт папку видит, но создать в ней
+файл не может: своей квоты у него нет, Google отвечает 403 «Service Accounts do
+not have storage quota». Там хранилище ходит токеном владельца папки —
+`token_file` (GDRIVE_TOKEN_FILE); его один раз пишет `python -m listam
+drive-login`. С токеном ключ сервисного аккаунта хранилищу не нужен.
+
 Зависимости ставятся отдельно: pip install -r requirements-gdrive.txt
 """
 from __future__ import annotations
@@ -18,11 +24,13 @@ MIME_BINARY = "application/octet-stream"
 
 
 class GDriveStorage(Storage):
-    def __init__(self, folder_id: str, credentials_file: str | Path):
+    def __init__(self, folder_id: str, credentials_file: str | Path,
+                 token_file: str | Path | None = None):
         if not folder_id:
             raise StorageError("Не задан GDRIVE_FOLDER — идентификатор папки в Drive")
         self.folder_id = folder_id
         self.credentials_file = Path(credentials_file) if credentials_file else None
+        self.token_file = Path(token_file) if token_file else None
         self._service = None
 
     # --- служебное -------------------------------------------------------
@@ -37,6 +45,11 @@ class GDriveStorage(Storage):
                 "Не установлены библиотеки Google API. "
                 "Поставь их: pip install -r requirements-gdrive.txt"
             ) from exc
+        if self.token_file is not None:
+            credentials = _owner_credentials(self.token_file)
+            self._service = build("drive", "v3", credentials=credentials,
+                                  cache_discovery=False)
+            return self._service
         if not self.credentials_file or not self.credentials_file.exists():
             raise StorageError(
                 f"Не найден ключ сервисного аккаунта: {self.credentials_file}. "
@@ -151,3 +164,26 @@ class GDriveStorage(Storage):
                 ),
             )
         return CheckReport(ok=True, details=f"Google Drive, папка «{folder.get('name')}»")
+
+
+def _owner_credentials(token_file: Path):
+    """Токен владельца папки, записанный `drive-login`; обновляется сам."""
+    if not token_file.exists():
+        raise StorageError(
+            f"Нет токена Drive: {token_file}. Войди один раз под владельцем папки: "
+            "python -m listam drive-login"
+        )
+    from google.oauth2.credentials import Credentials
+
+    return Credentials.from_authorized_user_file(str(token_file), SCOPES)
+
+
+def login_owner(client_file: str | Path, token_file: str | Path) -> None:
+    """Вход в браузере под владельцем папки; токен ложится в `token_file`."""
+    from google_auth_oauthlib.flow import InstalledAppFlow
+
+    flow = InstalledAppFlow.from_client_secrets_file(str(client_file), SCOPES)
+    credentials = flow.run_local_server(port=0)
+    token_file = Path(token_file)
+    token_file.parent.mkdir(parents=True, exist_ok=True)
+    token_file.write_text(credentials.to_json(), encoding="utf-8")

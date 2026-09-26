@@ -20,12 +20,29 @@ GDRIVE_READY = bool(os.environ.get("GDRIVE_FOLDER") and os.environ.get("GDRIVE_C
     not GDRIVE_READY, reason="GDRIVE_FOLDER/GDRIVE_CREDENTIALS_FILE не заданы"))])
 def storage(request, tmp_path) -> Storage:
     if request.param == "local":
-        return LocalStorage(directory=tmp_path / "remote")
+        yield LocalStorage(directory=tmp_path / "remote")
+        return
     from listam.adapters.storage_gdrive import GDriveStorage
-    return GDriveStorage(
-        folder_id=os.environ["GDRIVE_FOLDER"],
-        credentials_file=os.environ["GDRIVE_CREDENTIALS_FILE"],
-    )
+
+    def storage_in(folder_id: str) -> GDriveStorage:
+        return GDriveStorage(
+            folder_id=folder_id,
+            credentials_file=os.environ["GDRIVE_CREDENTIALS_FILE"],
+            # личный Drive: сервисному аккаунту писать некуда, пишем токеном владельца
+            token_file=os.environ.get("GDRIVE_TOKEN_FILE") or None,
+        )
+
+    # Своя пустая подпапка на тест, как tmp_path у local: папка Drive одна и
+    # живая — файлы прошлого теста и боевая база тесту не видны и им не задеты.
+    service = storage_in(os.environ["GDRIVE_FOLDER"])._connect()
+    folder = service.files().create(
+        body={"name": f"contract-test-{request.node.name}",
+              "mimeType": "application/vnd.google-apps.folder",
+              "parents": [os.environ["GDRIVE_FOLDER"]]},
+        fields="id", supportsAllDrives=True,
+    ).execute()
+    yield storage_in(folder["id"])
+    service.files().delete(fileId=folder["id"], supportsAllDrives=True).execute()
 
 
 @pytest.fixture

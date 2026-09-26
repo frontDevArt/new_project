@@ -71,6 +71,7 @@ Cloudflare» в `docs/устройство.md`). Компьютер не дол�
 | `python -m listam changes` | Что принёс последний прогон: новое, цены, снятое, вернувшееся. `--hours 24`, `--limit 20` |
 | `python -m listam cycle hourly` | Выполнить цикл расписания руками, как планировщик |
 | `python -m listam schedule show` | Что поставит `install`; `install` — поставить задачи, `remove` — снять свои |
+| `python -m listam drive-login` | Один раз войти в Google Drive под владельцем папки (личный Drive); токен — в `storage.token_file` |
 
 Каждый флаг с объяснением — `docs/устройство.md`, «Команды целиком».
 

@@ -12,6 +12,7 @@
     python -m listam notify          послать уведомление брокеру
     python -m listam find            быстрый поиск по базе без заявки
     python -m listam mark            отметка «звонил» / «отказ» по матчу заявки
+    python -m listam drive-login     один раз войти в Drive под владельцем папки
 
 Окружение выбирается переменной APP_ENV или флагом --env.
 """
@@ -41,6 +42,11 @@ def build_parser() -> argparse.ArgumentParser:
     doctor = commands.add_parser("doctor", help="проверить конфиг, хранилище, курс и права")
     doctor.add_argument("--no-network", action="store_true",
                         help="не ходить в сеть (быстрая проверка)")
+
+    login = commands.add_parser(
+        "drive-login", help="войти в Drive под владельцем папки и сохранить токен")
+    login.add_argument("--client", default="data/gcp-oauth-client.json",
+                       help="JSON OAuth-клиента типа Desktop app из Google Cloud")
 
     scrape = commands.add_parser("scrape", help="пройти по ленте категории и обновить базу")
     scrape.add_argument("--max-pages", type=int,
@@ -208,11 +214,27 @@ def main(argv: list[str] | None = None) -> int:
         return 2
 
 
+def _drive_login(config, client_file: str) -> int:
+    """Токен владельца: сервисному аккаунту в личном Drive писать некуда."""
+    token_file = config.get("storage.token_file")
+    if not token_file:
+        print("Некуда сохранить токен: задай storage.token_file (GDRIVE_TOKEN_FILE)",
+              file=sys.stderr)
+        return 2
+    from listam.adapters.storage_gdrive import login_owner
+
+    login_owner(client_file, token_file)
+    print(f"Токен Drive сохранён: {token_file}")
+    return 0
+
+
 def _dispatch(args, config) -> int:
     if args.command == "doctor":
         report = run_doctor(config, check_network=not args.no_network)
         print(report.render())
         return 0 if report.ok else 1
+    if args.command == "drive-login":
+        return _drive_login(config, args.client)
 
     if args.command == "scrape":
         if args.fresh and args.resume:

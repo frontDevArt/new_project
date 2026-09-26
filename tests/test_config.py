@@ -32,7 +32,8 @@ def test_missing_env_var_raises_named_error(tmp_path, monkeypatch):
     d = write_cfg(tmp_path, "dev", "storage:\n  folder: ${GDRIVE_FOLDER}\n")
     monkeypatch.delenv("GDRIVE_FOLDER", raising=False)
     with pytest.raises(ConfigError) as e:
-        load_config(env="dev", config_dir=d)
+        # свой .env: настоящий в корне проекта может задавать GDRIVE_FOLDER
+        load_config(env="dev", config_dir=d, dotenv_path=tmp_path / "no.env")
     assert "GDRIVE_FOLDER" in str(e.value)
 
 

@@ -8,6 +8,7 @@ storage:
   # kind: gdrive                # для M3.6:
   # folder: ${GDRIVE_FOLDER}
   # credentials_file: ${GDRIVE_CREDENTIALS_FILE}
+  # token_file: ${GDRIVE_TOKEN_FILE}   # личный Drive: пишем токеном владельца (drive-login)
   work_dir: ./data
   db_filename: listam-prod.sqlite   # не делит рабочую копию с dev
   keep_backups: 5               # сколько прежних копий базы держим в хранилище
